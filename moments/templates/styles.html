@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NovelAI 画风预设</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:           #ededed;
+  --card:         #ffffff;
+  --ink:          #181818;
+  --ink-soft:     #555555;
+  --ink-faint:    #888888;
+  --ink-fade:     #b8b8b8;
+  --hairline:     rgba(0,0,0,0.06);
+  --hairline-strong: rgba(0,0,0,0.12);
+  --wxgreen:      #07c160;
+  --danger:       #fa5151;
+  --font-body:    'Noto Sans SC', -apple-system, system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#000; --card:#1c1c1e; --ink:#f0f0f0; --ink-soft:#c0c0c0;
+    --ink-faint:#8a8a8a; --ink-fade:#4a4a4a;
+    --hairline:rgba(255,255,255,0.08); --hairline-strong:rgba(255,255,255,0.16);
+  }
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
+       line-height:1.6; font-size:15px; min-height:100vh; padding-bottom:60px; }
+
+.topbar { position:sticky; top:0; z-index:10; background:var(--bg);
+  border-bottom:1px solid var(--hairline);
+  padding:16px 20px; display:flex; align-items:center; justify-content:space-between;
+  max-width:900px; margin:0 auto; }
+.topbar h1 { font-size:18px; font-weight:600; }
+.btn { border:none; border-radius:8px; padding:8px 16px; font-size:14px;
+  cursor:pointer; font-family:var(--font-body); transition:opacity .15s; }
+.btn:hover { opacity:.85; }
+.btn-primary { background:var(--wxgreen); color:#fff; }
+.btn-ghost { background:transparent; color:var(--ink-soft); border:1px solid var(--hairline-strong); }
+.btn-danger { background:transparent; color:var(--danger); border:1px solid var(--danger); }
+
+.grid { max-width:900px; margin:20px auto; padding:0 20px;
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:16px; }
+.card { background:var(--card); border-radius:14px; overflow:hidden;
+  border:1px solid var(--hairline); position:relative; }
+.card.active { outline:2px solid var(--wxgreen); }
+.card-thumb { width:100%; aspect-ratio:1; background:var(--bg);
+  display:flex; align-items:center; justify-content:center;
+  color:var(--ink-fade); font-size:13px; overflow:hidden; }
+.card-thumb img { width:100%; height:100%; object-fit:cover; }
+.card-body { padding:12px 14px; }
+.card-name { font-weight:600; font-size:15px; display:flex; align-items:center; gap:6px; }
+.badge-active { font-size:11px; background:var(--wxgreen); color:#fff;
+  padding:2px 7px; border-radius:999px; font-weight:400; }
+.card-prefix { font-family:var(--font-mono); font-size:11px; color:var(--ink-faint);
+  margin-top:6px; max-height:2.8em; overflow:hidden; text-overflow:ellipsis;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.card-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+.card-actions .btn { padding:5px 10px; font-size:12px; }
+
+.bot-tabs { max-width:900px; margin:14px auto 0; padding:0 20px;
+  display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.bot-tabs .lbl { font-size:13px; color:var(--ink-soft); margin-right:2px; }
+.bot-tab { padding:6px 14px; border-radius:999px; font-size:14px; cursor:pointer;
+  border:1px solid var(--hairline-strong); background:var(--card); color:var(--ink-soft);
+  font-family:var(--font-body); transition:all .15s; }
+.bot-tab.on { background:var(--wxgreen); color:#fff; border-color:var(--wxgreen); }
+.card-users { font-size:11px; color:var(--wxgreen); margin-top:4px; font-weight:500; }
+.keybar { max-width:900px; margin:10px auto 0; padding:0 20px;
+  display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.keybar .lbl { font-size:13px; color:var(--ink-soft); }
+.keybar .keystat { font-size:12px; color:var(--ink-faint); font-family:var(--font-mono); }
+.keybar input { flex:1; min-width:160px; border:1px solid var(--hairline-strong); border-radius:8px;
+  padding:7px 10px; font-size:13px; background:var(--card); color:var(--ink); font-family:var(--font-mono); }
+
+.modal-mask { position:fixed; inset:0; background:rgba(0,0,0,.4);
+  display:none; align-items:center; justify-content:center; z-index:100; padding:20px; }
+.modal-mask.show { display:flex; }
+.modal { background:var(--card); border-radius:14px; padding:22px;
+  width:100%; max-width:480px; max-height:90vh; overflow-y:auto; }
+.modal h2 { font-size:16px; margin-bottom:16px; }
+.field { margin-bottom:14px; }
+.field label { display:block; font-size:13px; color:var(--ink-soft); margin-bottom:5px; }
+.field input, .field textarea {
+  width:100%; border:1px solid var(--hairline-strong); border-radius:8px;
+  padding:9px 11px; font-size:14px; font-family:var(--font-body); background:var(--bg); color:var(--ink); }
+.field textarea { min-height:80px; resize:vertical; font-family:var(--font-mono); font-size:12.5px; }
+.field-row { display:flex; gap:10px; }
+.field-row .field { flex:1; }
+.modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+.toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+  background:var(--ink); color:var(--card); padding:10px 20px; border-radius:8px;
+  font-size:13px; z-index:200; opacity:0; pointer-events:none; transition:opacity .2s; }
+.toast.show { opacity:1; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>NovelAI 画风预设</h1>
+  <button class="btn btn-primary" onclick="openModal()">+ 新建预设</button>
+</div>
+
+<div class="bot-tabs" id="botTabs"></div>
+
+<div class="keybar">
+  <span class="lbl">🔑 NovelAI Key</span>
+  <span id="keyStatus" class="keystat">…</span>
+  <input type="password" id="keyInput" placeholder="粘贴新 token 覆盖（不回显）" autocomplete="off">
+  <button class="btn btn-ghost" id="keySaveBtn">保存</button>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<div class="modal-mask" id="modalMask">
+  <div class="modal">
+    <h2 id="modalTitle">新建预设</h2>
+    <input type="hidden" id="fId">
+    <div class="field">
+      <label>名称</label>
+      <input type="text" id="fName" placeholder="例如：赛博朋克霓虹风">
+    </div>
+    <div class="field">
+      <label>正面画风前缀（追加在画师串之后，用户内容之前）</label>
+      <textarea id="fPositive" placeholder="留空 = 只用原有前缀，不额外加"></textarea>
+    </div>
+    <div class="field">
+      <label>负面前缀（留空则不覆盖默认负面）</label>
+      <textarea id="fNegative"></textarea>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>steps（留空不覆盖）</label>
+        <input type="number" id="fSteps">
+      </div>
+      <div class="field">
+        <label>cfg_scale（留空不覆盖）</label>
+        <input type="number" step="0.1" id="fCfg">
+      </div>
+      <div class="field">
+        <label>sampler（留空不覆盖）</label>
+        <input type="text" id="fSampler">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveStyle()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let stylesData = { active: "", styles: [] };
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+const BOT_NAMES = {};  // 前端按 bot_id 显示，示例不含具体人设名
+const BOT_ORDER = ['chenlulu'];
+let selectedBot = 'chenlulu';
+
+function renderBotTabs() {
+  const box = document.getElementById('botTabs');
+  box.replaceChildren();
+  box.appendChild(el('span', 'lbl', '正在为谁选画风：'));
+  for (const b of BOT_ORDER) {
+    const t = el('button', 'bot-tab' + (b === selectedBot ? ' on' : ''), BOT_NAMES[b]);
+    t.onclick = () => { selectedBot = b; renderBotTabs(); render(); };
+    box.appendChild(t);
+  }
+}
+
+async function loadStyles() {
+  const res = await fetch('/api/styles');
+  stylesData = await res.json();
+  if (!stylesData.active_by_bot) stylesData.active_by_bot = {};
+  renderBotTabs();
+  render();
+}
+
+function render() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  const abb = stylesData.active_by_bot || {};
+  for (const s of stylesData.styles) {
+    const isActive = s.id === abb[selectedBot];  // 是否为"当前选中 bot"的画风
+    const card = el('div', 'card' + (isActive ? ' active' : ''));
+
+    const thumb = el('div', 'card-thumb');
+    if (s.sample_image) {
+      const img = document.createElement('img');
+      img.src = '/image' + s.sample_image + (s.sample_ts ? '?t=' + s.sample_ts : '');
+      img.alt = s.name;
+      thumb.appendChild(img);
+    } else {
+      thumb.textContent = '暂无示例图';
+    }
+    card.appendChild(thumb);
+
+    const body = el('div', 'card-body');
+    const nameRow = el('div', 'card-name', s.name + ' ');
+    if (isActive) nameRow.appendChild(el('span', 'badge-active', BOT_NAMES[selectedBot] + '当前'));
+    body.appendChild(nameRow);
+    body.appendChild(el('div', 'card-prefix',
+      s.positive_prefix ? s.positive_prefix : '（无追加前缀，用默认画师串）'));
+    // 显示哪些 bot 正在用这个画风
+    const users = BOT_ORDER.filter(b => abb[b] === s.id).map(b => BOT_NAMES[b]);
+    if (users.length) body.appendChild(el('div', 'card-users', '★ ' + users.join(' · ') + ' 在用'));
+
+    const actions = el('div', 'card-actions');
+    if (!isActive) {
+      const b = el('button', 'btn btn-primary', '设为' + BOT_NAMES[selectedBot] + '的');
+      b.onclick = () => setActive(s.id);
+      actions.appendChild(b);
+    }
+    const editBtn = el('button', 'btn btn-ghost', '编辑');
+    editBtn.onclick = () => editStyle(s.id);
+    actions.appendChild(editBtn);
+    const sampleBtn = el('button', 'btn btn-ghost', '生成示例图');
+    sampleBtn.onclick = () => genSample(s.id);
+    actions.appendChild(sampleBtn);
+    const delBtn = el('button', 'btn btn-danger', '删除');
+    delBtn.onclick = () => deleteStyle(s.id);
+    actions.appendChild(delBtn);
+    body.appendChild(actions);
+
+    card.appendChild(body);
+    grid.appendChild(card);
+  }
+}
+
+function openModal() {
+  document.getElementById('modalTitle').textContent = '新建预设';
+  document.getElementById('fId').value = '';
+  document.getElementById('fName').value = '';
+  document.getElementById('fPositive').value = '';
+  document.getElementById('fNegative').value = '';
+  document.getElementById('fSteps').value = '';
+  document.getElementById('fCfg').value = '';
+  document.getElementById('fSampler').value = '';
+  document.getElementById('modalMask').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('modalMask').classList.remove('show');
+}
+
+function editStyle(id) {
+  const s = stylesData.styles.find(x => x.id === id);
+  if (!s) return;
+  document.getElementById('modalTitle').textContent = '编辑预设';
+  document.getElementById('fId').value = s.id;
+  document.getElementById('fName').value = s.name;
+  document.getElementById('fPositive').value = s.positive_prefix || '';
+  document.getElementById('fNegative').value = s.negative_prefix || '';
+  document.getElementById('fSteps').value = (s.params && s.params.steps) || '';
+  document.getElementById('fCfg').value = (s.params && s.params.cfg_scale) || '';
+  document.getElementById('fSampler').value = (s.params && s.params.sampler) || '';
+  document.getElementById('modalMask').classList.add('show');
+}
+
+async function saveStyle() {
+  const name = document.getElementById('fName').value.trim();
+  if (!name) { showToast('请填写名称'); return; }
+  const params = {};
+  const steps = document.getElementById('fSteps').value;
+  const cfg = document.getElementById('fCfg').value;
+  const sampler = document.getElementById('fSampler').value.trim();
+  if (steps) params.steps = parseInt(steps, 10);
+  if (cfg) params.cfg_scale = parseFloat(cfg);
+  if (sampler) params.sampler = sampler;
+
+  const body = {
+    id: document.getElementById('fId').value || undefined,
+    name,
+    positive_prefix: document.getElementById('fPositive').value.trim(),
+    negative_prefix: document.getElementById('fNegative').value.trim(),
+    params,
+  };
+  const res = await fetch('/api/styles', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) { showToast('保存失败'); return; }
+  closeModal();
+  showToast('已保存');
+  loadStyles();
+}
+
+async function setActive(id) {
+  const res = await fetch('/api/styles/active', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id, bot: selectedBot}),
+  });
+  if (!res.ok) { showToast('切换失败'); return; }
+  showToast(BOT_NAMES[selectedBot] + ' 画风已设置');
+  loadStyles();
+}
+
+async function deleteStyle(id) {
+  if (!confirm('确定删除这个预设吗？')) return;
+  const res = await fetch('/api/styles/' + id, { method: 'DELETE' });
+  if (!res.ok) { showToast('删除失败'); return; }
+  showToast('已删除');
+  loadStyles();
+}
+
+async function genSample(id) {
+  showToast('生成中，请稍候…');
+  const res = await fetch(`/api/styles/${id}/sample`, { method: 'POST' });
+  if (!res.ok) { showToast('生成失败'); return; }
+  showToast('示例图已生成');
+  loadStyles();
+}
+
+async function loadKey() {
+  const st = document.getElementById('keyStatus');
+  try {
+    const d = await (await fetch('/api/novelai_key')).json();
+    st.textContent = d.set ? ('已设置 ' + d.masked) : '未设置';
+  } catch (e) { st.textContent = '读取失败'; }
+}
+
+async function saveKey() {
+  const inp = document.getElementById('keyInput');
+  const t = inp.value.trim();
+  if (!t) { showToast('请粘贴 token'); return; }
+  const r = await fetch('/api/novelai_key', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({token: t}),
+  });
+  if (!r.ok) { showToast('保存失败'); return; }
+  inp.value = '';
+  showToast('Key 已保存');
+  loadKey();
+}
+document.getElementById('keySaveBtn').addEventListener('click', saveKey);
+
+loadStyles();
+loadKey();
+</script>
+</body>
+</html>

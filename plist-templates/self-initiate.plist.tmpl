@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.{BOT_ID}-self-initiate</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>~/.claude/dispatcher/self-initiate.sh</string>
+        <string>{BOT_ID}</string>
+        <string>{CHAT_ID}</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>AbandonProcessGroup</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/{BOT_ID}-self-initiate.stdout</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/{BOT_ID}-self-initiate.stderr</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TMUX_TMPDIR</key>
+        <string>/tmp</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:~/.bun/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

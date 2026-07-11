@@ -1,0 +1,14 @@
+{
+  "dmPolicy": "allowlist",
+  "allowFrom": [
+    "YOUR_TELEGRAM_USER_ID"
+  ],
+  "groups": {},
+  "pending": {},
+  "mentionPatterns": [
+    "@your_bot_username"
+  ],
+  "splitOnParagraph": true,
+  "paragraphDelay": 1200,
+  "tmuxSession": "tg-chenlulu"
+}

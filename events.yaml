@@ -1,0 +1,115 @@
+# ════════════════════════════════════════════════════════════
+# 突发事件池（仅 L3b 突发，常驻活动写在 configs/<bot>.yml）
+#
+# 字段说明：
+#   name                     事件名（短）
+#   category                 类别（被 configs/<bot>.yml 的 event_categories 启用）
+#   probability_per_roll     每次掷骰的触发概率（每 6 小时掷 1 次）
+#   duration_hours: [lo, hi] 持续时长范围（小时）；instant 表示瞬时
+#   allowed_activity_states  允许触发的活动状态：[free, busy_class, busy_work, busy_other, any]
+#   constraints              额外约束（可选）
+#     days: [mon,tue,...]    周几才触发
+#     hours: "HH:MM-HH:MM"   时段（支持跨午夜）
+#     weekday_only: weekday/weekend
+#   mood_delta               触发后对 mood 的影响（-0.5 到 +0.5）
+#   keywords                 反重复用的关键词列表（用于检测 bot 是否已提过此事）
+#   effect                   注入 self-initiate 的描述
+# ════════════════════════════════════════════════════════════
+
+- name: 生病感冒
+  category: health
+  probability_per_roll: 0.005
+  duration_hours: [12, 60]
+  allowed_activity_states: [any]
+  mood_delta: -0.25
+  keywords: [感冒, 嗓子, 鼻涕, 生病, 难受, 发烧]
+  effect: "嗓子痛流鼻涕，没什么力气，请假在家躺着"
+
+- name: 例假来了
+  category: health
+  probability_per_roll: 0.04        # base 概率，会被 cycle_days 调整（见 situation.py）
+  cycle_days: 28                    # 月经周期：phase < 0.7 → 0；0.7-1.0 → base；1.0-1.2 → 0.3；>1.2 → 1.0
+  duration_hours: [72, 120]
+  allowed_activity_states: [any]
+  mood_delta: -0.15
+  keywords: [例假, 大姨妈, 痛经, 生理期]
+  effect: "肚子坠痛，情绪化，想吃甜的"
+
+- name: 收到快递
+  category: daily
+  probability_per_roll: 0.03
+  duration: instant
+  allowed_activity_states: [free, busy_other]
+  mood_delta: 0.15
+  keywords: [快递, 拆包, 包裹]
+  effect: "刚拆了快递，[自己想象是什么]"
+
+- name: 朋友约你出去
+  category: social
+  probability_per_roll: 0.02
+  duration_hours: [3, 8]
+  allowed_activity_states: [free]
+  constraints:
+    weekday_only: weekend
+  mood_delta: 0.20
+  keywords: [朋友, 约, 出去玩, 聚]
+  effect: "和朋友出去玩，地点和内容你自己想"
+
+- name: 失眠
+  category: health
+  probability_per_roll: 0.02
+  duration_hours: [1, 4]
+  allowed_activity_states: [any]
+  constraints:
+    hours: "23:00-04:00"
+  mood_delta: -0.10
+  keywords: [失眠, 睡不着, 睡不好]
+  effect: "睡不着，半夜还醒着"
+
+- name: 加班
+  category: work
+  probability_per_roll: 0.04
+  duration_hours: [1, 4]
+  allowed_activity_states: [busy_work]
+  constraints:
+    hours: "18:00-22:00"
+    days: [mon, tue, wed, thu, fri]
+  mood_delta: -0.15
+  keywords: [加班, 下不了班, 还在公司]
+  effect: "今晚要加班，没法准时下班"
+
+- name: 被批评/被点名
+  category: social
+  probability_per_roll: 0.005
+  duration_hours: [1, 6]
+  allowed_activity_states: [busy_class, busy_work]
+  mood_delta: -0.20
+  keywords: [被批评, 被点名, 挨说, 老师, 上司]
+  effect: "刚刚被老师/上司点名/批评了，心里不舒服"
+
+- name: 突发好事
+  category: emotional
+  probability_per_roll: 0.01
+  duration: instant
+  allowed_activity_states: [any]
+  mood_delta: 0.30
+  keywords: [开心, 好事, 惊喜]
+  effect: "刚发生件让你开心的事，[自己想]"
+
+- name: 室友吵架
+  category: social
+  probability_per_roll: 0.008
+  duration_hours: [2, 12]
+  allowed_activity_states: [free]
+  mood_delta: -0.20
+  keywords: [室友, 吵架, 闹矛盾]
+  effect: "和室友闹了点小矛盾"
+
+- name: 想念某人
+  category: emotional
+  probability_per_roll: 0.04
+  duration: instant
+  allowed_activity_states: [free]
+  mood_delta: -0.05
+  keywords: [想念, 想你, 想家]
+  effect: "突然很想用户/家人/朋友"
