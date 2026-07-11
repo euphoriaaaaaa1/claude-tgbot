@@ -1,5 +1,8 @@
 feedparser>=6.0
 PyYAML>=6.0
 lunardate>=0.2.0
+chinese_calendar>=1.10
 requests>=2.31
 flask>=3.0
+# 可选：仅 comfyui 生图(scripts/comfyui_gen.py, anchor_prep.py)需要
+Pillow>=10.0
