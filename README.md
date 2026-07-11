@@ -27,11 +27,16 @@ Telegram ──► dispatcher.ts (每 bot 一个, grammY 长轮询)
 
 ## 依赖
 
-- [Claude Code](https://claude.com/claude-code) CLI（worker 用；已登录）
+- [Claude Code](https://claude.com/claude-code) CLI（worker 用；provider 配置见下方「切换模型来源」）
 - [Bun](https://bun.sh)（跑 dispatcher.ts）
 - `tmux`、Python 3.10+、`pip install -r requirements.txt`
-- 一个 DeepSeek API key（情绪/关系数值裁判用）
-- Mac 或 WSL/Linux 均可
+- 一个 DeepSeek API key（情绪/关系数值裁判用；与上面的 Claude provider 相互独立）
+
+### 平台
+
+- **macOS**：完整支持。dispatcher+worker 核心 + 全套定时/常驻服务（导演、jiwen、主动开口、朋友圈）都靠 **launchd**（`plist-templates/`）。
+- **Linux / WSL**：dispatcher+worker **核心能跑**（bun+tmux+claude CLI），但 `plist-templates/` 是 macOS launchd 专属——那套「数字生命」自动层需自行改用 `cron` / `systemd` / `tmux` 常驻。
+- **Windows**：不能原生跑，须经 **WSL**（同上 Linux 说明）。
 
 ## 快速上手（示例 bot 陈露露）
 
@@ -66,6 +71,48 @@ bash restart-bots.sh               # 起 dispatcher；给 bot 发消息即可
 # 6)（可选）情绪/关系数值引擎，每 5 分钟 tick 一次
 python3 jiwen/tick.py              # 或挂到 launchd/cron 定时
 ```
+
+## 切换模型来源（Provider）
+
+系统有**两处相互独立的模型来源**，分开配、别搞混：
+
+| 用途 | 谁 | 配在哪 | 说明 |
+|------|-----|--------|------|
+| 角色说话（worker） | `claude` CLI | `~/.claude/settings.json` 的 `env` | 换它 = 换角色回复用的模型/中转 |
+| 情绪裁判 + 群导演 | DeepSeek（独立 HTTP） | `configs/_global.yml` 的 `jiwen.delta_llm` | 和 worker provider **无关**，永远单独配一个 DeepSeek key |
+
+**worker 用哪个 provider，只取决于 `~/.claude/settings.json`。** `spawn-worker.sh` 每次起 worker 都会先清掉继承的旧 env、再现读 settings.json 的 `env` 注入。三种配法任选其一：
+
+**A. 官方订阅（最省事）** — `claude` 登录一次 Claude 账号即可；settings.json 的 `env` **不要**写 `ANTHROPIC_BASE_URL`。worker 会自动读系统钥匙串里的 OAuth 凭证并自动续期。
+
+**B. 第三方中转 / API key（手动）** — 编辑 `~/.claude/settings.json`：
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://你的中转站/api",
+    "ANTHROPIC_AUTH_TOKEN": "sk-你的中转key",
+    "ANTHROPIC_MODEL": "claude-sonnet-4-5"
+  }
+}
+```
+
+**C. cc-switch（GUI，推荐给不想手改的）** — 装 [cc-switch](https://github.com/farion1231/cc-switch)，加一个 provider 配置、点切换，它会把上面那段 `env` 写进 settings.json。
+> ⚠️ 别同时用多个「写 settings.json」的工具（cc-switch / ccp / 手改都写同一个 `env` 字段，会互相覆盖）——选一个。
+
+### 🔴 切完必须重启 worker 才生效
+
+worker 是常驻进程，只在**启动时**读 settings.json。切完 provider 要杀掉旧 worker，让它用新配置重生（记忆不丢，会自动 resume）：
+```bash
+export TMUX_TMPDIR=/tmp
+tmux ls | grep -oE 'tg-[a-z0-9]+-worker' | xargs -I{} tmux kill-session -t {}
+# 下一条消息会用新 provider 重新拉起 worker
+```
+
+### 切完就能用了吗？还要满足 3 条
+
+1. **DeepSeek key 已在 `configs/_global.yml` 配好**——切 worker provider 不影响它；不配好，导演/情绪/主动消息都不工作。
+2. **已按上面重启 worker**。
+3. **中转站支持 Claude 的 Messages API 格式**（多数 claude 中转支持；纯 OpenAI 格式的中转不行）。
 
 ## 关系数值怎么工作（治"随叫随到"）
 
