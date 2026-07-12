@@ -55,6 +55,62 @@
 
 > 小结：**只想让 bot 能私聊聊天** → 配前 3 把里的 Telegram token + DeepSeek key + Claude 登录，就够了。生图、朋友圈是锦上添花，用到再配。
 
+### 每把钥匙具体怎么弄
+
+**① Telegram bot token + 你的 user_id**
+1. Telegram 里搜 **@BotFather**，发 `/newbot`，按提示起个名字和用户名 → 它回给你一串 token（形如 `12345678:AAxxxx`），这就是 `TELEGRAM_BOT_TOKEN`。
+2. 再搜 **@userinfobot**，随便发条消息，它回你的数字 **user_id**（填进 `access.json` 的 `allowFrom`）。
+
+**② DeepSeek key**
+1. 打开 [platform.deepseek.com](https://platform.deepseek.com)，注册/登录。
+2. 充值几块钱（后台打分很省，一个月几毛钱）。
+3. 左侧「API keys」→「创建 API key」→ 复制那串 `sk-xxxx`，填进 `configs/_global.yml`。
+
+**③ Claude provider（机器人说话用的模型）—— 二选一**
+- **官方订阅**：有 Claude Pro/Max 订阅的话，终端跑 `claude` 登录一次即可，不用填 key。
+- **第三方中转（没有官方订阅走这个）**：某宝 / 发卡网搜「Claude API 中转」「Claude 镜像站」买一个中转 key，会给你一个**中转地址**和一把 **key**，按下方「切换模型来源」的 B 方案填进 `settings.json`。⚠️ 认准支持 **Claude Messages API 格式**的中转（多数都支持），纯 ChatGPT/OpenAI 格式的不能用。
+
+**④ NovelAI token（可选，只有要 NovelAI 生图才需要）**
+1. 需要一个 NovelAI 订阅账号：官网 [novelai.net](https://novelai.net) 自己订阅（要外币卡/PayPal），或**某宝搜「NovelAI 账号」直接买一个已订阅的**（便宜省事）。
+2. 拿到账号后登录 novelai.net → 右上头像 → **Account / User Settings** → 找 **"Get Persistent API Token"** 生成一串长 token。
+3. 这串 token 填进朋友圈网页（`http://localhost:8765` 的设置页），程序会写进生图 skill 的配置。
+> ⚠️ 生图除了 token 还要**另外装 `novelai-skill`**（本仓库不含）。只想聊天不生图的话，这步整个跳过。
+
+---
+
+## 换成你自己的人设（重要！别一直用陈露露）
+
+**陈露露只是个示例。** 你几乎肯定想要自己的角色。人设写在两个地方：
+
+| 文件 | 改什么 |
+|------|--------|
+| `channels/<bot>/CLAUDE.md` 的 **`# SOUL.md`** 和 **`# USER.md`** 段 | 角色的性格、说话方式、和你的关系、怎么称呼你——**这是核心** |
+| `configs/<bot>.yml` | `display_name`(显示名)、`user_address`(角色怎么叫你)、`bio`、`persona_summary`(一句话摘要) |
+
+（`CLAUDE.md` 最上面的 `# AGENTS.md` 段是通用回复规则，不用动。）
+
+### 两条路，挑一条
+
+**路 A — 让 AI 帮你写（最省事，推荐给小白）**
+把下面这段丢给 ChatGPT 或 Claude，描述你想要的角色，让它生成，然后把结果贴进 `channels/chenlulu/CLAUDE.md` 的 `# SOUL.md` 段（替换掉陈露露那部分）：
+> 「我在做一个 Telegram 角色扮演 bot。请帮我写一份角色人设，包含这些小节：核心设定、外貌特征、性格特征、说话特点、行为准则（含对 NSFW 内容的态度）、关系网（角色和用户是什么关系）、3-4 组示例对话。我想要的角色是：**<在这里描述你的角色：名字、年龄、身份、性格、和你的关系>**。语言口语化、有分寸、像真人。」
+
+**路 B — 照模板手动填**
+仓库里有个填空模板 `channels/_persona_template/`，每一段都标了「这里写什么」。复制它建自己的角色：
+```bash
+# Mac/Linux（把 myrole 换成你的角色英文名）
+cp -r channels/_persona_template ~/.claude/channels/myrole
+# 然后用编辑器打开 ~/.claude/channels/myrole/CLAUDE.md，把每个 < > 占位换成你的角色
+```
+```powershell
+# Windows
+Copy-Item -Recurse channels\_persona_template $env:USERPROFILE\.claude\channels\myrole
+notepad $env:USERPROFILE\.claude\channels\myrole\CLAUDE.md
+```
+用新角色名（如 `myrole`）时，记得同步：`configs/myrole.yml`（复制 `configs/_example.yml` 改）、两处 `BOT_NAMESPACES`、启动脚本的端口——详见文末「加更多机器人」。
+
+> **最简单的玩法**：不想新建，直接改 `channels/chenlulu/CLAUDE.md` 的 `# SOUL.md`/`# USER.md` 两段，把陈露露换成你的角色即可，其它配置都不用动。改完重启一次 bot 生效。
+
 ---
 
 ## 部署（Mac / Linux）
@@ -85,6 +141,9 @@ cp .env.example .env
 nano .env                # 把 TELEGRAM_BOT_TOKEN 改成你从 @BotFather 拿的 token
 nano access.json         # 把 allowFrom 里的 YOUR_TELEGRAM_USER_ID 改成你自己的数字 user_id
 cd ~/claudebotlife       # 回到仓库目录
+
+# ⑤.5 换成你自己的人设（强烈建议！别一直用陈露露）——详见下方「换成你自己的人设」
+#      最省事：编辑器打开 ~/.claude/channels/chenlulu/CLAUDE.md，改里面的 # SOUL.md 段
 
 # ⑥ 启动！
 cp restart-bots.example.sh restart-bots.sh
@@ -126,6 +185,9 @@ Copy-Item .env.example .env
 notepad .env                # 把 TELEGRAM_BOT_TOKEN 改成 @BotFather 给的 token
 notepad access.json         # 把 allowFrom 里的 YOUR_TELEGRAM_USER_ID 改成你自己的数字 user_id
 cd $env:USERPROFILE\claudebotlife    # 回到仓库目录
+
+# ⑤.5 换成你自己的人设（强烈建议！别一直用陈露露）——详见下方「换成你自己的人设」
+#      最省事：notepad $env:USERPROFILE\.claude\channels\chenlulu\CLAUDE.md，改里面的 # SOUL.md 段
 
 # ⑥ 启动！（首次若提示"禁止运行脚本"，前面加 -ExecutionPolicy Bypass）
 powershell -ExecutionPolicy Bypass -File windows\start-bots.ps1
