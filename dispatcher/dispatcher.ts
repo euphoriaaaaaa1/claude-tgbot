@@ -3,11 +3,11 @@
  * Per-bot Telegram dispatcher — grammY long-poll + HTTP server.
  *
  * Runs one process per bot (e.g. chenlulu). Owns the Telegram bot token,
- * performs gate+route, writes inbound messages to per-chat inbox files,
- * and exposes /send /react /download /add_group_alias for workers.
+ * performs gate+route, writes inbound messages to inbox files, and exposes
+ * /send /react /download /add_group_alias /ensure_worker /status /inject.
  *
- * Workers (claude --session-id <uuidv5>) are spawned on demand by
- * spawn-worker.sh into tmux sessions named tg-<bot>-<chat_id>.
+ * Worker (headless claude, stream-json) 由同进程的 worker-manager.ts 托管：
+ * inbox → stdin 注入，崩溃自动 --resume，跨平台（macOS/Windows/Linux 无 tmux）。
  */
 
 import { Bot, GrammyError, InputFile, type Context } from 'grammy'
@@ -17,7 +17,7 @@ import {
 } from 'fs'
 import { join, extname } from 'path'
 import { homedir } from 'os'
-import { spawn, spawnSync } from 'child_process'
+import { getManager, unifiedSessionUuid } from './worker-manager.ts'
 
 // ─── env ──────────────────────────────────────────────────────────────
 const CHANNEL_DIR = process.env.CHANNEL_DIR || ''
@@ -71,8 +71,6 @@ mkdirSync(CHATS_DIR, { recursive: true })
 mkdirSync(MEDIA_DIR_DM, { recursive: true })
 mkdirSync(MEDIA_DIR_GROUP, { recursive: true })
 mkdirSync(GROUP_TRANSCRIPTS_DIR, { recursive: true })
-
-const SPAWN_SH = join(homedir(), '.claude', 'dispatcher', 'spawn-worker.sh')
 
 process.on('unhandledRejection', err => process.stderr.write(`dispatcher: unhandledRejection: ${err}\n`))
 process.on('uncaughtException', err => process.stderr.write(`dispatcher: uncaughtException: ${err}\n`))
@@ -287,64 +285,29 @@ function gate(ctx: Context): GateResult {
   return { action: 'drop' }
 }
 
-// ─── UUIDv5 — deterministic per bot ──────────────────────────────────
-// 每个 bot 一个固定的 UUIDv5 命名空间种子，决定它的 session 目录。
-// **dispatcher.ts / spawn-worker.sh / chat_history.py 三处必须完全一致**，否则
-// worker 会读错 session = 丢记忆。加新 bot：这三处各加一行、UUID 随便换一位即可。
-const BOT_NAMESPACES: Record<string, string> = {
-  chenlulu: '550e8400-e29b-41d4-a716-446655440001',
-}
-// unified session：群+私聊同一个 worker 会话，uuid5(ns, "unified")（不再按 chat_id 分）。
+// ─── worker 管理（跨平台，见 worker-manager.ts）────────────────────────
+// unified session：群+私聊同一个 worker 会话，uuid5(ns, "unified")。
+// 命名空间表在 worker-manager.ts 的 BOT_NAMESPACES（与 chat_history.py 必须一致）。
 function sessionUuid(): string {
-  const ns = BOT_NAMESPACES[BOT_NAME]
-  if (!ns) throw new Error(`no UUIDv5 namespace for bot '${BOT_NAME}'`)
-  const out = spawnSync('python3', ['-c',
-    `import uuid,sys; print(uuid.uuid5(uuid.UUID(sys.argv[1]), sys.argv[2]))`,
-    ns, 'unified'], { encoding: 'utf8' })
-  const u = out.stdout.trim()
-  if (!u) throw new Error(`uuidv5 failed: ${out.stderr}`)
-  return u
+  return unifiedSessionUuid(BOT_NAME)
 }
 
 // ─── pause 检查 ───────────────────────────────────────────────────────
 // 与 claudebotlife/pause.py 同路径：全局 ~/.claudebotlife.pause / 单 bot
-// /tmp/claudebotlife-pause-<bot>。pause 时连 DM 也不回（原先 dispatcher 不查
-// pause，只挡 self-initiate → 用户 pause 后 DM 照样触发 worker 回复）。
+// ~/.claudebotlife.pause-<bot>（跨平台：不再用 /tmp，py/ts 两侧一致）。
+// pause 时连 DM 也不回。
 function isPaused(): string | null {
   if (existsSync(join(homedir(), '.claudebotlife.pause'))) return 'global'
-  if (existsSync(`/tmp/claudebotlife-pause-${BOT_NAME}`)) return `bot:${BOT_NAME}`
+  if (existsSync(join(homedir(), `.claudebotlife.pause-${BOT_NAME}`))) return `bot:${BOT_NAME}`
   return null
 }
 
-// ─── worker spawn ─────────────────────────────────────────────────────
-function ensureWorkerRunning(chatId: string): { uuid: string; spawned: boolean } {
-  // unified：每个 bot 一个会话 tg-<bot>（去掉 chat 后缀）。chatId 仍传给 spawn-worker
-  // 仅作兼容/日志，session 名与 uuid 都用 per-bot unified。
-  const sessionName = `tg-${BOT_NAME}-worker`
-  const has = spawnSync('tmux', ['has-session', '-t', sessionName])
-  const uuid = sessionUuid()
-  if (has.status === 0) return { uuid, spawned: false }
-  const dispatcherUrl = `http://127.0.0.1:${DISPATCHER_PORT}`
-  const r = spawnSync('bash', [SPAWN_SH, BOT_NAME, chatId, uuid, dispatcherUrl], {
-    stdio: 'inherit',
-    env: { ...process.env },
-  })
-  if (r.status !== 0) process.stderr.write(`dispatcher: spawn-worker.sh exited ${r.status}\n`)
-  return { uuid, spawned: true }
-}
-
-// Poll tmux pane until claude TUI prompt is visible. Without this, a cold-spawn
-// worker's boot (3-8s) will race send-keys and the keystrokes get lost or hit
-// the pre-TUI shell. Only used by slash-bridge (inbox delivery doesn't need it).
-async function waitClaudeReady(sessionName: string, timeoutMs = 20000): Promise<boolean> {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    const r = spawnSync('tmux', ['capture-pane', '-t', sessionName, '-p'], { encoding: 'utf8' })
-    if (r.status === 0 && typeof r.stdout === 'string' &&
-        /\?\s*for shortcuts|esc to interrupt/i.test(r.stdout)) return true
-    await new Promise(res => setTimeout(res, 300))
-  }
-  return false
+// ─── worker spawn（经 worker-manager，headless 子进程，无 tmux）────────
+function ensureWorkerRunning(_chatId: string): { uuid: string; spawned: boolean } {
+  const mgr = getManager()
+  const spawned = !mgr.isAlive()
+  void mgr.ensure()
+  return { uuid: mgr.sessionUuid, spawned }
 }
 
 // ─── attachment download (post-gate) ──────────────────────────────────
@@ -423,8 +386,8 @@ function writeGroupTranscript(ctx: Context, text: string, imagePath?: string, at
 
 // ─── slash bridge intercept ───────────────────────────────────────────
 // Match anything starting with `/word` — forwards every slash command to the
-// worker's claude TUI. Unknown commands just show "Unknown command" in TUI
-// (user sees "已下发: /foo" in Telegram, no functional harm). Leading @mention
+// worker (headless streaming 会话里 slash 当 user 消息喂，claude 原生处理
+// /compact //clear //model 等；未知命令无功能危害)。Leading @mention
 // is stripped so `@yourbot /compact` works in groups.
 const SLASH_RE = /^\/[a-zA-Z][\w-]*(\s|$)/
 async function slashBridgeIfApplicable(ctx: Context, text: string): Promise<boolean> {
@@ -435,20 +398,9 @@ async function slashBridgeIfApplicable(ctx: Context, text: string): Promise<bool
   const isGroup = chatType === 'group' || chatType === 'supergroup'
   if (isGroup && !hasExplicitEntityMention(ctx)) return false
   const chatId = String(ctx.chat!.id)
-  const sessionName = `tg-${BOT_NAME}-worker`
-  // Spawn worker if missing so /status on cold chat still works.
-  // If we just spawned, wait for claude TUI to render before send-keys,
-  // otherwise the keystrokes hit the pre-TUI shell and get lost.
-  const { spawned } = ensureWorkerRunning(chatId)
-  if (spawned) {
-    const ready = await waitClaudeReady(sessionName)
-    if (!ready) process.stderr.write(`dispatcher: slash-bridge giving up wait on ${sessionName}, sending anyway\n`)
-  }
   const msgId = ctx.message?.message_id
   try {
-    // send literal text, then Enter
-    spawnSync('tmux', ['send-keys', '-t', sessionName, '-l', trimmed])
-    spawnSync('tmux', ['send-keys', '-t', sessionName, 'Enter'])
+    getManager().sendSlash(trimmed)  // 排队走 stdin，manager 自己等 ready，无竞态
     await bot.api.sendMessage(chatId, `已下发: ${trimmed}`,
       msgId != null ? { reply_parameters: { message_id: msgId } } : {})
   } catch (e) {
@@ -514,9 +466,10 @@ async function handleInbound(
   //     Skip synthetic peer-injected msgs and bot senders to avoid loops.
   if (isGroup && !isBotSender && !options?.synthetic && groupChatId &&
       /^\/clearall(@\w+)?$/.test(text.trim())) {
-    // unified：只有一个会话 tg-<bot>（群+私聊同脑）。/clearall 清的是整个 unified 会话。
-    const sessionName = `tg-${BOT_NAME}-worker`
-    const killed = spawnSync('tmux', ['kill-session', '-t', sessionName]).status === 0
+    // unified：只有一个 worker（群+私聊同脑）。/clearall 杀 worker（jsonl 保留，下次 resume）。
+    const mgr = getManager()
+    const killed = mgr.isAlive()
+    mgr.kill({ intentional: true })
     process.stderr.write(`dispatcher[${BOT_NAME}]: /clearall chat=${groupChatId} killed=${killed}\n`)
     const msgId = ctx.message?.message_id
     await bot.api.sendMessage(groupChatId, `[${BOT_NAME}] ${killed ? '已清空本群记忆' : '本群无活跃 worker'}`,
@@ -725,6 +678,18 @@ const server = Bun.serve({
     const url = new URL(req.url)
     try {
       if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
+
+      // ─── worker 管理端点（免 body；跨进程查活/状态，替代 tmux has-session/ls）────
+      if (url.pathname === '/ensure_worker') {
+        const mgr = getManager()
+        const running = mgr.isAlive()
+        void mgr.ensure()
+        return Response.json({ ok: true, running, spawned: !running, uuid: mgr.sessionUuid })
+      }
+      if (url.pathname === '/status') {
+        return Response.json({ ok: true, ...getManager().status() })
+      }
+
       const body = await req.json() as any
 
       if (url.pathname === '/send') {
@@ -909,6 +874,14 @@ const server = Bun.serve({
         writeFileSync(tmp, JSON.stringify(parsed, null, 2) + '\n', { mode: 0o600 })
         renameSync(tmp, ACCESS_FILE)
         return Response.json({ ok: true, field, alias: aliasRaw, total: arr.length })
+      }
+
+      if (url.pathname === '/inject') {
+        // 调试端点：手动注入任意文本到 worker stdin（替代 tmux attach 打字）。仅本机可达。
+        const text = String(body.text ?? '').trim()
+        if (!text) return new Response('text required', { status: 400 })
+        getManager().injectRaw(text)
+        return Response.json({ ok: true })
       }
 
       if (url.pathname === '/peer_inbound') {

@@ -9,21 +9,23 @@
 """
 import subprocess
 import os
+import sys
 import json
 import re
 
-ONESHOT_CWD = "/tmp/claudebotlife-oneshot"
+import tempfile
+ONESHOT_CWD = os.path.join(tempfile.gettempdir(), "claudebotlife-oneshot")
 os.makedirs(ONESHOT_CWD, exist_ok=True)
 
-CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "/opt/homebrew/bin/claude")
+import shutil as _shutil
+CLAUDE_BIN = os.environ.get("CLAUDE_BIN") or _shutil.which("claude") or "claude"
 
 
 def _build_env() -> dict:
     """构造调用环境：unset OAuth env token + 固定 PATH/TMUX_TMPDIR。"""
     env = os.environ.copy()
-    env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)  # 强制走 keychain refresh
-    env["TMUX_TMPDIR"] = "/tmp"
-    if "/opt/homebrew/bin" not in env.get("PATH", ""):
+    env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)  # 强制走平台凭证 refresh
+    if sys.platform == "darwin" and "/opt/homebrew/bin" not in env.get("PATH", ""):
         env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + env.get("PATH", "")
     return env
 

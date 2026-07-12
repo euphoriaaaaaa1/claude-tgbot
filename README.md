@@ -12,9 +12,11 @@
 Telegram ──► dispatcher.ts (每 bot 一个, grammY 长轮询)
                 │  gate + 路由，写 inbox 文件
                 ▼
-          spawn-worker.sh ──► tmux 里的 claude worker（读人设+记忆+关系数值，生成回复）
-                                   │ reply 工具
-                                   └──► dispatcher /send ──► Telegram
+        worker-manager (dispatcher 内嵌) ──► headless claude worker 子进程
+                │  inbox → stdin 注入(带人设+记忆+关系数值)   (stream-json, 跨平台)
+                │                                │ reply 工具
+                │                                └──► dispatcher /send ──► Telegram
+                └─ 崩溃自动 --resume 复活 · 对话流落 logs/chat.log 随时 tail 查看
 
 后台幕后（都用 DeepSeek，独立于 worker 的主模型）：
   · director.py     群聊导演：决定群里这一轮谁开口（可选，多 bot 才需要）
@@ -28,15 +30,15 @@ Telegram ──► dispatcher.ts (每 bot 一个, grammY 长轮询)
 ## 依赖
 
 - [Claude Code](https://claude.com/claude-code) CLI（worker 用；provider 配置见下方「切换模型来源」）
-- [Bun](https://bun.sh)（跑 dispatcher.ts）
-- `tmux`、Python 3.10+、`pip install -r requirements.txt`
+- [Bun](https://bun.sh)（跑 dispatcher.ts；首次 `cd dispatcher && bun install` 装依赖）
+- Python 3.10+、`pip install -r requirements.txt`
 - 一个 DeepSeek API key（情绪/关系数值裁判用；与上面的 Claude provider 相互独立）
 
-### 平台
+### 平台（跨平台架构，无 tmux 依赖）
 
-- **macOS**：完整支持。dispatcher+worker 核心 + 全套定时/常驻服务（导演、jiwen、主动开口、朋友圈）都靠 **launchd**（`plist-templates/`）。
-- **Linux / WSL**：dispatcher+worker **核心能跑**（bun+tmux+claude CLI），但 `plist-templates/` 是 macOS launchd 专属——那套「数字生命」自动层需自行改用 `cron` / `systemd` / `tmux` 常驻。
-- **Windows**：不能原生跑，须经 **WSL**（同上 Linux 说明）。
+- **macOS**：完整支持。定时/常驻服务用 **launchd**（`plist-templates/`）。
+- **Windows 10/11（原生，无需 WSL）**：完整支持。启动/调度脚本在 `windows/`（PowerShell + 任务计划程序），部署见下方「Windows 部署」。
+- **Linux**：核心可跑（bun+claude CLI+python）；定时/常驻服务自行用 systemd/cron 挂 `scripts/self_initiate.py`、`jiwen/tick.py` 等。
 
 ## 快速上手（示例 bot 陈露露）
 
@@ -48,7 +50,7 @@ git clone <this-repo> ~/claudebotlife && cd ~/claudebotlife
 
 # 1) 装依赖
 pip install -r requirements.txt
-bun --version   # 确认有 bun
+(cd dispatcher && bun install)     # dispatcher 的 JS 依赖(grammy/MCP SDK)
 
 # 2) 全局配置：填 DeepSeek key
 cp configs/_global.example.yml configs/_global.yml
@@ -64,13 +66,48 @@ cp .env.example .env
 $EDITOR .env                       # 填 TELEGRAM_BOT_TOKEN
 $EDITOR access.json                # 把 allowFrom 的 YOUR_TELEGRAM_USER_ID 换成你的 user_id
 
-# 5) 启动
+# 5) 启动（macOS/Linux；Windows 用 windows\start-bots.ps1，见下方 Windows 部署）
 cp restart-bots.example.sh restart-bots.sh
 bash restart-bots.sh               # 起 dispatcher；给 bot 发消息即可
 
 # 6)（可选）情绪/关系数值引擎，每 5 分钟 tick 一次
-python3 jiwen/tick.py              # 或挂到 launchd/cron 定时
+python3 jiwen/tick.py              # 或挂到 launchd/cron/任务计划 定时
 ```
+
+## Windows 部署（原生，无需 WSL）
+
+```powershell
+# 0) 装依赖：Python 3.10+、Bun (https://bun.sh)、Claude Code CLI（并登录/配好 provider）
+# 1) 克隆 + 装依赖
+git clone <this-repo> $env:USERPROFILE\claudebotlife
+cd $env:USERPROFILE\claudebotlife
+pip install -r requirements.txt
+cd dispatcher; bun install; cd ..
+
+# 2) 配置（同上面 2-4 步：_global.yml 的 DeepSeek key、channels\chenlulu、.env、access.json）
+mkdir $env:USERPROFILE\.claude\channels -Force
+Copy-Item -Recurse channels\chenlulu $env:USERPROFILE\.claude\channels\
+
+# 3) 启动 dispatcher
+powershell -File windows\start-bots.ps1
+
+# 4) 注册后台任务（开机自启 + self-initiate + jiwen + 朋友圈 + 记忆压缩）
+#    先编辑 windows\register-tasks.ps1 里的 YOUR_TELEGRAM_USER_ID
+powershell -File windows\register-tasks.ps1
+
+# 实时看 bot 对话（替代 tmux attach）
+powershell -File windows\watch-bot.ps1 chenlulu
+```
+
+常用运维：`windows\restart-bots.ps1` 重启全部、`Invoke-RestMethod -Method Post http://127.0.0.1:17801/status` 看 worker 状态、`windows\unregister-tasks.ps1` 卸载后台任务。
+
+## 查看后台对话（所有平台）
+
+worker 是 headless 子进程，没有可 attach 的界面——看 `channels/<bot>/logs/`：
+- `chat.log`：人话对话流（谁说了什么/调了什么工具）。Mac/Linux `tail -f`，Windows `Get-Content -Wait` 或 `watch-bot.ps1`。
+- `stream.jsonl`：原始事件流（调试用）。
+- 要交互式翻历史：先停 worker（`/status` 拿 pid 后杀掉，或 restart 脚本），再 `claude --resume <session_uuid>` 打开同一会话聊；退出后 worker 下条消息自动复活。⚠️ 两端不可同时挂同一会话。
+- 手动给 worker 注入文本（调试）：`curl -X POST http://127.0.0.1:17801/inject -H 'Content-Type: application/json' -d '{"text":"/compact"}'`
 
 ## 切换模型来源（Provider）
 
@@ -81,7 +118,7 @@ python3 jiwen/tick.py              # 或挂到 launchd/cron 定时
 | 角色说话（worker） | `claude` CLI | `~/.claude/settings.json` 的 `env` | 换它 = 换角色回复用的模型/中转 |
 | 情绪裁判 + 群导演 | DeepSeek（独立 HTTP） | `configs/_global.yml` 的 `jiwen.delta_llm` | 和 worker provider **无关**，永远单独配一个 DeepSeek key |
 
-**worker 用哪个 provider，只取决于 `~/.claude/settings.json`。** `spawn-worker.sh` 每次起 worker 都会先清掉继承的旧 env、再现读 settings.json 的 `env` 注入。三种配法任选其一：
+**worker 用哪个 provider，只取决于 `~/.claude/settings.json`。** worker-manager 每次起 worker 都会先清掉继承的旧 env、再现读 settings.json 的 `env` 注入。三种配法任选其一：
 
 **A. 官方订阅（最省事）** — `claude` 登录一次 Claude 账号即可；settings.json 的 `env` **不要**写 `ANTHROPIC_BASE_URL`。worker 会自动读系统钥匙串里的 OAuth 凭证并自动续期。
 
@@ -101,11 +138,10 @@ python3 jiwen/tick.py              # 或挂到 launchd/cron 定时
 
 ### 🔴 切完必须重启 worker 才生效
 
-worker 是常驻进程，只在**启动时**读 settings.json。切完 provider 要杀掉旧 worker，让它用新配置重生（记忆不丢，会自动 resume）：
+worker 是常驻进程，只在**启动时**读 settings.json。切完 provider 重启 dispatcher（worker 是它的子进程，一起重启；记忆不丢，自动 resume）：
 ```bash
-export TMUX_TMPDIR=/tmp
-tmux ls | grep -oE 'tg-[a-z0-9]+-worker' | xargs -I{} tmux kill-session -t {}
-# 下一条消息会用新 provider 重新拉起 worker
+bash restart-bots.sh                      # macOS/Linux
+powershell -File windows\restart-bots.ps1  # Windows
 ```
 
 ### 切完就能用了吗？还要满足 3 条
@@ -128,15 +164,16 @@ tmux ls | grep -oE 'tg-[a-z0-9]+-worker' | xargs -I{} tmux kill-session -t {}
 
 1. `cp configs/_example.yml configs/<bot>.yml` 改人设摘要。
 2. `cp -r channels/chenlulu ~/.claude/channels/<bot>`，改 `CLAUDE.md`（人设）、`access.json`、`.env`，删掉 `relationship.json`（或按新关系改初值）。
-3. **三处 UUID 命名空间必须同步加一行且完全一致**（否则丢记忆）：
-   `dispatcher/dispatcher.ts` 的 `BOT_NAMESPACES`、`dispatcher/spawn-worker.sh` 的 `case`、`chat_history.py` 的 `_BOT_NAMESPACES`。
-4. `restart-bots.sh` 的 `BOTS` 加 `"<bot>:<新端口>"`。
+3. **两处 UUID 命名空间必须同步加一行且完全一致**（否则丢记忆）：
+   `dispatcher/worker-manager.ts` 的 `BOT_NAMESPACES`、`chat_history.py` 的 `_BOT_NAMESPACES`。
+4. `restart-bots.sh` 的 `BOTS`（或 `windows/start-bots.ps1` 的 `$Bots`）加 `"<bot>:<新端口>"`。
 5. 多 bot 群聊由 `director.py` 调度（可选，单 bot 不需要）。
 
 ## 目录
 
 ```
-dispatcher/     dispatcher.ts / worker-plugin.ts / spawn-worker.sh —— Telegram 收发 + 拉起 worker
+dispatcher/     dispatcher.ts / worker-manager.ts / worker-plugin.ts —— Telegram 收发 + worker 托管
+windows/        start-bots / restart-bots / register-tasks / watch-bot —— Windows 部署脚本
 jiwen/          情绪引擎 + DeepSeek 关系数值裁判 + 5 分钟 tick
 relationship.py 四维关系数值（昼夜精力/淫欲阵发/门槛提示）
 director.py     多 bot 群聊导演（可选）

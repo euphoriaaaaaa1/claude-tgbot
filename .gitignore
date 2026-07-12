@@ -30,3 +30,6 @@ venv/
 # ── 各 bot 运行时会长出的私有内容（示例只保留 chenlulu 出厂种子）──
 channels/*/memory/*.md
 !channels/chenlulu/memory/MEMORY.md
+
+# JS 依赖
+node_modules/

@@ -15,9 +15,12 @@ from datetime import datetime
 
 
 def _project_slug_for(bot_dir: str) -> str:
-    """把 / 和 . 都换成 -。"""
+    """Claude Code 官方 slug 规则：绝对路径里**非字母数字字符全部**替换为 '-'。
+    覆盖 Windows 的反斜杠/盘符冒号（旧版只换 / 和 . 在 Windows 上会算错=丢记忆）。
+    与 dispatcher/worker-manager.ts 的 projectSlug() 必须同规则。"""
+    import re as _re
     abs_dir = os.path.abspath(bot_dir)
-    return abs_dir.replace("/", "-").replace(".", "-")
+    return _re.sub(r"[^a-zA-Z0-9]", "-", abs_dir)
 
 
 def _project_dir(bot_dir: str) -> str:

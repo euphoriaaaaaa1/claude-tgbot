@@ -53,5 +53,6 @@ def _extract_media_path(claude_output: str) -> str | None:
 
 
 def _log_fail(bot_id: str, reason: str):
-    with open("/tmp/claudebotlife-image-fail.log", "a") as f:
+    import tempfile
+    with open(os.path.join(tempfile.gettempdir(), "claudebotlife-image-fail.log"), "a") as f:
         f.write(f"[{datetime.now().isoformat()}] [{bot_id}] {reason}\n")

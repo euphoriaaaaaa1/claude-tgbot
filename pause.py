@@ -9,7 +9,8 @@ PAUSE_FILE_GLOBAL = os.path.expanduser("~/.claudebotlife.pause")
 
 
 def _per_bot_path(bot_id: str) -> str:
-    return f"/tmp/claudebotlife-pause-{bot_id}"
+    # 跨平台：放 home（与 dispatcher.ts isPaused 一致，不再用 /tmp）
+    return os.path.expanduser(f"~/.claudebotlife.pause-{bot_id}")
 
 
 def is_paused(bot_id: str) -> str | None:

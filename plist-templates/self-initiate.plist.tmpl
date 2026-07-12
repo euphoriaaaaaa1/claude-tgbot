@@ -5,22 +5,26 @@
     <key>Label</key>
     <string>com.example.{BOT_ID}-self-initiate</string>
 
+    <!-- 每 10 分钟 tick，脚本内部随机 30min-24h 自节流（开口时机不可预测） -->
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>~/.claude/dispatcher/self-initiate.sh</string>
+        <string>/usr/bin/python3</string>
+        <string>{REPO_DIR}/scripts/self_initiate.py</string>
         <string>{BOT_ID}</string>
         <string>{CHAT_ID}</string>
     </array>
 
     <key>StartInterval</key>
-    <integer>3600</integer>
+    <integer>600</integer>
 
     <key>RunAtLoad</key>
     <false/>
 
     <key>AbandonProcessGroup</key>
     <true/>
+
+    <key>WorkingDirectory</key>
+    <string>{REPO_DIR}</string>
 
     <key>StandardOutPath</key>
     <string>/tmp/{BOT_ID}-self-initiate.stdout</string>
@@ -29,8 +33,6 @@
 
     <key>EnvironmentVariables</key>
     <dict>
-        <key>TMUX_TMPDIR</key>
-        <string>/tmp</string>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:~/.bun/bin:/usr/bin:/bin</string>
     </dict>

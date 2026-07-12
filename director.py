@@ -288,19 +288,18 @@ def _mark_decided(st: dict, m: dict) -> None:
 
 
 def _ensure_worker_alive(bot: str, chat_id: str) -> None:
-    """unified session：每个 bot 只有一个 worker 会话 tg-<bot>（群+私聊同脑），
-    session-id 用 uuid5(bot,"unified")（与 dispatcher.ts / spawn-worker.sh 一致）。
-    chat_id 仍传给 spawn-worker 仅作兼容/日志。"""
-    if os.environ.get("DIRECTOR_NO_SPAWN"):  # 测试模式：不碰 tmux
+    """unified session：每个 bot 只有一个 worker（群+私聊同脑），由该 bot 的 dispatcher
+    内嵌 worker-manager 托管。这里 POST /ensure_worker 查活+拉起（原子，替代 tmux）。
+    dispatcher 不在 = worker 定义上就是死的；照常写 inbox，dispatcher 起来后 drain 兜住。"""
+    if os.environ.get("DIRECTOR_NO_SPAWN"):  # 测试模式：不真拉 worker
         return
-    session = f"tg-{bot}-worker"
-    env = {**os.environ, "TMUX_TMPDIR": "/tmp"}
-    if subprocess.run(["tmux", "has-session", "-t", session],
-                      env=env, capture_output=True).returncode == 0:
-        return
-    su = chat_history.unified_session_uuid(bot) or __import__("uuid").uuid4().hex
-    subprocess.Popen(["bash", os.path.expanduser("~/.claude/dispatcher/spawn-worker.sh"),
-                      bot, chat_id, su, f"http://127.0.0.1:{BOT_PORTS[bot]}"], env=env)
+    import urllib.request
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{BOT_PORTS[bot]}/ensure_worker", method="POST")
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        print(f"[director] ensure_worker({bot}) 失败(dispatcher 未起?): {e}", flush=True)
 
 
 def inject(bot: str, chat_id: str, history: list[dict],

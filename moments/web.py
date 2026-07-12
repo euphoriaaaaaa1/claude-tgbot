@@ -383,32 +383,20 @@ _BOT_PORTS = {"chenlulu": "17801"}
 
 
 def _ensure_worker_alive(bot_id: str, chat_id: str, bot_dir: str):
-    import subprocess, glob
-    session = f"tg-{bot_id}-{chat_id}"
-    # tmux 检查（和 self-initiate.sh 同 TMUX_TMPDIR）
-    env = {**os.environ, "TMUX_TMPDIR": "/tmp"}
-    r = subprocess.run(["tmux", "has-session", "-t", session],
-                        env=env, capture_output=True)
-    if r.returncode == 0:
-        return  # 已活
-    # 没活：调 spawn-worker.sh
+    """POST 该 bot dispatcher 的 /ensure_worker：查活+拉起原子完成（跨平台，替代 tmux）。
+    session uuid/slug 由 dispatcher 内部算，这里不再猜（旧版按 mtime 猜 uuid + 手拼
+    slug 是丢记忆隐患，且旧 per-chat 会话名根本匹配不上 unified worker）。"""
+    import urllib.request
     port = _BOT_PORTS.get(bot_id)
     if not port:
         sys.stderr.write(f"[ensure_worker] 未知 bot {bot_id}，跳过 spawn\n")
         return
-    proj_slug = os.path.abspath(bot_dir).replace("/", "-").replace(".", "-")
-    proj_dir = os.path.expanduser(f"~/.claude/projects/{proj_slug}")
-    jsonls = sorted(glob.glob(f"{proj_dir}/*.jsonl"),
-                     key=os.path.getmtime, reverse=True)
-    if jsonls:
-        uuid = os.path.basename(jsonls[0])[:-len(".jsonl")]
-    else:
-        import uuid as _u
-        uuid = str(_u.uuid4())
-    spawn = os.path.expanduser("~/.claude/dispatcher/spawn-worker.sh")
-    subprocess.Popen(["bash", spawn, bot_id, chat_id, uuid, f"http://127.0.0.1:{port}"],
-                      env=env)
-    sys.stderr.write(f"[ensure_worker] spawned {session}\n")
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/ensure_worker", method="POST")
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        sys.stderr.write(f"[ensure_worker] {bot_id} 失败(dispatcher 未起?): {e}\n")
 
 
 @app.route("/api/moment", methods=["POST"])
