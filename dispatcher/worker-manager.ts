@@ -286,6 +286,8 @@ function buildEnv(): NodeJS.ProcessEnv {
   env.CHANNEL_DIR = CHANNEL_DIR
   env.TELEGRAM_WORKER_BOT = BOT
   env.TELEGRAM_DISPATCHER_URL = DISPATCHER_URL
+  // 仓库根（dispatcher/ 的上一级）→ comfyui-skill 靠它定位 scripts/comfyui_gen.py 和 configs/
+  env.CLAUDEBOTLIFE_REPO = join(import.meta.dir, '..')
   // 订阅模式不注入静态 token：claude 自己读平台凭证并自动续期（darwin=keychain, win=DPAPI）
   return env
 }
@@ -315,6 +317,13 @@ type QueueItem =
 const RESULT_TIMEOUT_MS = 5 * 60_000        // result 事件超时 → 认定卡死
 const BACKOFF_MS = [1_000, 5_000, 30_000, 60_000]
 
+// 冷轮（全新会话 / /clear 之后）无历史示范惯性，模型易直接吐文本忘调 reply → 用户收不到。
+// 只在冷轮给下一条真人消息前置一次性提醒，不动沉默权（选择不回仍可不调 reply）。
+const REPLY_REMINDER =
+  '【系统提醒·仅本轮】你在 Telegram 上和用户对话。要让对方真正收到你的话，'
+  + '必须调用 reply 工具发送——直接输出文本用户是看不到的。'
+  + '（若你按当下人设选择不回复，那就不调 reply、直接结束本轮，这没问题。）'
+
 export class WorkerManager {
   private proc: ChildProcessWithoutNullStreams | null = null
   private phase: 'stopped' | 'starting' | 'ready' = 'stopped'
@@ -323,6 +332,7 @@ export class WorkerManager {
   private queue: QueueItem[] = []
   private restartAttempt = 0
   private intentionalKill = false
+  private needsReplyReminder = false      // 冷轮标记：下一条真人消息前置 REPLY_REMINDER
   private stdoutBuf = ''
   private watchers: FSWatcher[] = []
   private resultTimer: ReturnType<typeof setTimeout> | null = null
@@ -346,6 +356,8 @@ export class WorkerManager {
 
   sendSlash(text: string): void {
     this.queue.push({ kind: 'raw', content: text, label: `slash ${text.split(' ')[0]}` })
+    // /clear 清空上下文 → 之后第一条真人消息是冷轮，易忘调 reply，补一次提醒
+    if (/^\/clear\b/.test(text.trim())) this.needsReplyReminder = true
     void this.ensure().then(() => this.pump())
   }
 
@@ -395,6 +407,7 @@ export class WorkerManager {
 
     if (existsSync(jsonl)) cleanClearResidue(jsonl)
     const resume = existsSync(jsonl)
+    this.needsReplyReminder = !resume       // 全新会话首轮属冷轮，补 reply 提醒
     const claude = resolveClaude()
 
     if (resume) {
@@ -607,7 +620,14 @@ export class WorkerManager {
     this.inFlight = item
     this.inFlightSince = Date.now()
     this.resultTimer = setTimeout(() => this.checkStuck(), RESULT_TIMEOUT_MS + 1000)
-    const line = JSON.stringify({ type: 'user', message: { role: 'user', content } })
+    // 冷轮前置 reply 提醒（slash 命令本身不加，且提醒只加一次就清标记）
+    const isSlash = item.kind === 'raw' && item.label.startsWith('slash')
+    let payload = content
+    if (this.needsReplyReminder && !isSlash) {
+      this.needsReplyReminder = false
+      payload = `${REPLY_REMINDER}\n\n${content}`
+    }
+    const line = JSON.stringify({ type: 'user', message: { role: 'user', content: payload } })
     this.proc.stdin.write(line + '\n')
     logChat(`👤 ${content.slice(0, 500)}${content.length > 500 ? '…' : ''}`)
     if (deletePath) rmSync(deletePath, { force: true })
