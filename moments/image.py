@@ -48,7 +48,8 @@ def generate_image(scene_description: str, bot_id: str) -> str | None:
 
 def _extract_media_path(claude_output: str) -> str | None:
     """从 'MEDIA: /path/to/image.jpg' 提取路径。"""
-    m = re.search(r'MEDIA:\s*(/Users/[^\s]+\.(?:jpg|png|jpeg|webp))', claude_output)
+    # 任意绝对路径（Mac /Users、Linux /home、Windows C:\ 都能抓），不写死 /Users/
+    m = re.search(r'MEDIA:\s*(\S+\.(?:jpg|png|jpeg|webp))', claude_output)
     return m.group(1) if m else None
 
 

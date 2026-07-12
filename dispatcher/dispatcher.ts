@@ -787,16 +787,14 @@ const server = Bun.serve({
 
         for (const f of files) {
           const ext = extname(f).toLowerCase()
-          const kind = PHOTO_EXTS.has(ext) ? 'photo' : 'document'
           const replyToId = (replyTo != null && replyMode !== 'off') ? replyTo : undefined
-          const fResp = await fetch('http://127.0.0.1:7788/send_file', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ bot_token: bot.token, chat_id: chatId, file_path: f, kind, reply_to_message_id: replyToId }),
-          })
-          if (!fResp.ok) throw new Error(`voice-bridge send_file ${fResp.status}: ${await fResp.text().catch(() => '')}`)
-          const { message_id } = await fResp.json() as { message_id: number }
-          sentIds.push(message_id)
+          const opts = replyToId != null ? { reply_parameters: { message_id: replyToId } } : {}
+          // 直连 Telegram 发图/文件（grammy），不再经 voice-bridge——发图本就无需外部服务。
+          const input = new InputFile(f)
+          const sent = PHOTO_EXTS.has(ext)
+            ? await bot.api.sendPhoto(chatId, input, opts)
+            : await bot.api.sendDocument(chatId, input, opts)
+          sentIds.push(sent.message_id)
         }
         // Peer inject (groups only; fire-and-forget). Bypass Telegram's
         // bot-to-bot invisibility by notifying peer dispatchers directly.
