@@ -24,7 +24,8 @@ app.register_blueprint(styles_bp)
 
 USER_ADDRESS_FALLBACK = "哥哥"
 USER_DISPLAY_FALLBACK = "我"
-MOMENT_REPLY_SCRIPT = os.path.expanduser("~/claudebotlife/scripts/moment_reply.py")
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MOMENT_REPLY_SCRIPT = os.path.join(_REPO_ROOT, "scripts", "moment_reply.py")
 PYTHON_BIN = os.environ.get("CLAUDEBOTLIFE_PYTHON", sys.executable)
 
 
@@ -321,12 +322,13 @@ def _trigger_bot_moment_reply(cfg: dict, moment: dict, user_text: str,
     )
 
     is_public = (moment.get("visibility") or "public") != "private"
+    _del_script = os.path.join(_REPO_ROOT, "scripts", "moment_delete_comment.py")
     public_warn = (
         "⚠️【公开朋友圈泄密风险】\n"
         f"原朋友圈是公开的，所有朋友都能看到评论。绝对不要在回复正文里用「{user_address}」这种亲密称呼，\n"
         f"也不要透露你和 {user_address} 的私密关系。装作和 ta 是普通朋友、像回复任何一个评论一样。\n"
         "如果发现自己之前的回复（在【历史评论】里）已经泄密了亲密称呼，请用 Bash 工具删除：\n"
-        f"  {PYTHON_BIN} ~/claudebotlife/scripts/moment_delete_comment.py <comment_id>\n"
+        f"  {PYTHON_BIN} {_del_script} <comment_id>\n"
     ) if is_public else (
         "（这是私密朋友圈，仅 " + user_address + " 可见，可以放开亲密称呼。）\n"
     )

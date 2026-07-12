@@ -78,11 +78,12 @@ def call_claude(prompt: str, timeout: int = 60, cwd: str = None,
     args = [CLAUDE_BIN, "--print", "--no-session-persistence"]
     if model:
         args += ["--model", model]
-    args.append(full_prompt)
-    # Windows 上 claude 是 .cmd/.bat shim，直接 subprocess 会 WinError 193 → 需 shell 执行
+    # prompt 走 stdin，**不进 argv**：prompt 含用户聊天/MEMORY.md 全文，放命令行会撞
+    # Windows cmd 的引号转义(注入)、8191 字符上限、%VAR% 展开三个坑。claude --print 无位置
+    # 参数时从 stdin 读 prompt。
     _win_cmd = sys.platform == "win32" and str(CLAUDE_BIN).lower().endswith((".cmd", ".bat"))
     proc = subprocess.run(
-        args, cwd=cwd, env=_build_env(),
+        args, cwd=cwd, env=_build_env(), input=full_prompt,
         capture_output=True, text=True, timeout=timeout,
         shell=_win_cmd,
     )

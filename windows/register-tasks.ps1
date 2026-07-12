@@ -6,11 +6,10 @@ $Py      = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $Py) { $Py = (Get-Command python3).Source }
 $User    = "$env:USERDOMAIN\$env:USERNAME"
 # 让定时任务里的 Python 用 UTF-8 读写/输出（防 GBK 控制台 UnicodeEncodeError）
-$Env0 = "cmd.exe"
-function PyAction($Args) {
-    # 经 cmd 包一层设 PYTHONUTF8=1；引号用 '' 包整条
+# 注意：参数名不能叫 $Args（PowerShell 保留自动变量，PS7 直接报错、5.1 被遮蔽为空）。
+function PyAction($PyArgs) {
     New-ScheduledTaskAction -Execute "cmd.exe" `
-        -Argument "/c set PYTHONUTF8=1&& `"$Py`" $Args" -WorkingDirectory $RepoDir
+        -Argument "/c set PYTHONUTF8=1&& `"$Py`" $PyArgs" -WorkingDirectory $RepoDir
 }
 
 # 无限重复：不给 Duration 在部分 Windows 只触发一次 → 显式给 ~10 年

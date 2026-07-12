@@ -4,6 +4,7 @@
 - 朋友圈门槛比 self-initiate 低（不打扰用户)
 """
 import os
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 import sys
 import json
 import time
@@ -353,7 +354,7 @@ def _gen_image_comfyui(bot_id: str, moment_id: int, text: str, visibility: str):
     import subprocess
     import config_loader as _cfg
     PYBIN = os.environ.get("CLAUDEBOTLIFE_PYTHON", sys.executable)
-    SCRIPT = os.path.expanduser("~/claudebotlife/scripts/comfyui_gen.py")
+    SCRIPT = os.path.join(_REPO_ROOT, "scripts", "comfyui_gen.py")
 
     # 读 bot yml（必拿到 bot_cfg 以便降级时调 _gen_image_novelai）
     # 注：face_traits 由 comfyui_gen.py 自动从 bot yml 读取并拼接，post.py 不再读
@@ -525,7 +526,7 @@ def _gen_image_novelai(bot_id: str, bot_cfg: dict, moment_id: int,
     inbox = os.path.join(bot_dir, "chats", chat_id, "inbox")
     os.makedirs(inbox, exist_ok=True)
     PYBIN = os.environ.get("CLAUDEBOTLIFE_PYTHON", sys.executable)
-    SET_IMG = os.path.expanduser("~/claudebotlife/scripts/moment_set_image.py")
+    SET_IMG = os.path.join(_REPO_ROOT, "scripts", "moment_set_image.py")
     label = "私密" if visibility == "private" else "公开"
     inbox_text = (
         f"[moment-image-gen] 你刚发了一条朋友圈（{label}），要配图：\n"

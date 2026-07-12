@@ -64,10 +64,25 @@ export function projectSlug(absDir: string): string {
 export function killTree(pid: number, force = true): void {
   if (!pid || pid <= 0) return
   if (platform() === 'win32') {
-    try { spawnSync('taskkill', ['/PID', String(pid), '/T', ...(force ? ['/F'] : [])]) } catch {}
+    // Windows 无 /F 对控制台进程基本无效 → 恒带 /F；身份校验交给调用方（孤儿路径）
+    try { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F']) } catch {}
   } else {
     try { process.kill(pid, force ? 'SIGKILL' : 'SIGTERM') } catch {}
   }
+}
+
+// 判断 pid 是否"像我们的 worker 进程"——孤儿清理前校验，防 Windows PID 复用后误杀无辜进程树。
+function looksLikeWorker(pid: number): boolean {
+  if (!pid || pid <= 0) return false
+  try {
+    if (platform() === 'win32') {
+      const r = spawnSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8' })
+      const name = (r.stdout || '').split(',')[0].replace(/"/g, '').toLowerCase()
+      return ['cmd.exe', 'claude.exe', 'node.exe', 'bun.exe'].includes(name)
+    }
+    const r = spawnSync('ps', ['-o', 'comm=', '-p', String(pid)], { encoding: 'utf8' })
+    return /claude|node|bun|cmd/i.test(r.stdout || '')
+  } catch { return false }
 }
 
 // ─── claude 可执行解析 ─────────────────────────────────────────────────
@@ -76,7 +91,12 @@ function resolveClaude(): { bin: string; viaCmd: boolean } {
   if (override) return { bin: override, viaCmd: /\.(cmd|bat)$/i.test(override) }
   const isWin = platform() === 'win32'
   const probe = spawnSync(isWin ? 'where' : 'which', ['claude'], { encoding: 'utf8' })
-  const found = (probe.stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0]
+  const lines = (probe.stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+  // Windows: npm 装的 claude 会同时列出无扩展名的 bash shim(在前) + claude.cmd。
+  // 直接 spawn 那个 bash shim → WinError 193。必须优先挑可执行的 .exe/.cmd/.bat。
+  const found = isWin
+    ? (lines.find(l => /\.(exe|cmd|bat)$/i.test(l)) || lines[0])
+    : lines[0]
   if (found) return { bin: found, viaCmd: /\.(cmd|bat)$/i.test(found) }
   return { bin: 'claude', viaCmd: false } // 交给 PATH，起不来会在 spawn error 里报清楚
 }
@@ -336,7 +356,10 @@ export class WorkerManager {
 
   kill(opts: { intentional?: boolean } = {}): void {
     this.intentionalKill = opts.intentional === true
-    if (this.proc?.pid) killTree(this.proc.pid)  // 按树杀：Windows 连 cmd 包装的 claude 子进程一起带走
+    // intentional(如 /clearall) 在 POSIX 走 SIGTERM 让 claude 优雅收尾 jsonl（防写半行损坏）；
+    // Windows taskkill 恒 /F（不带对控制台进程无效）。this.proc.pid 确定是我们刚起的，无需校验。
+    if (this.proc?.pid) killTree(this.proc.pid, !this.intentionalKill)
+    try { rmSync(join(CHANNEL_DIR, '.worker.pid'), { force: true }) } catch {}  // 进程已死，别留陈旧 pid
     this.phase = 'stopped'
     this.proc = null
   }
@@ -359,7 +382,10 @@ export class WorkerManager {
     const pidFile = join(CHANNEL_DIR, '.worker.pid')
     try {
       const stale = parseInt(readFileSync(pidFile, 'utf8').trim(), 10)
-      if (stale > 0) { killTree(stale); logSpawn(`杀掉孤儿 worker 进程树 pid=${stale}`) }
+      // ⚠️ 杀前必须校验：陈旧 pid 可能已被系统复用给无辜进程（Windows PID 复用频繁），
+      // 直接 taskkill /T /F 会误杀整树。只有映像名像 worker 才杀。
+      if (stale > 0 && looksLikeWorker(stale)) { killTree(stale); logSpawn(`杀掉孤儿 worker 进程树 pid=${stale}`) }
+      rmSync(pidFile, { force: true })  // 无论杀没杀，陈旧 pid 文件都清掉
     } catch {}
 
     const botDir = CHANNEL_DIR
@@ -399,12 +425,21 @@ export class WorkerManager {
     const extraPath = platform() === 'darwin'
       ? [join(homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin']
       : [join(homedir(), '.bun', 'bin')]
-    env.PATH = [...extraPath, env.PATH || ''].join(delimiter)
+    // Windows 环境变量键是 'Path'(大小写不敏感)；直接写 env.PATH 会造出 PATH/Path 双键，
+    // 传给子进程哪个生效未定义 → 找不到 bun。找出现有键名(不区分大小写)覆盖它。
+    const pathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || 'PATH'
+    env[pathKey] = [...extraPath, env[pathKey] || ''].join(delimiter)
 
     logSpawn(`spawn worker: ${resume ? '--resume' : '--session-id'} ${this.sessionUuid} (claude=${claude.bin})`)
-    const proc = claude.viaCmd
-      ? spawn('cmd', ['/c', claude.bin, ...args], { cwd: botDir, env, stdio: ['pipe', 'pipe', 'pipe'] })
-      : spawn(claude.bin, args, { cwd: botDir, env, stdio: ['pipe', 'pipe', 'pipe'] })
+    // Windows .cmd：走 cmd /s /c + windowsVerbatimArguments，自己给含空格/特殊字符的参数加引号
+    // （路径可能含空格如 C:\Users\My Name\...，node 默认加引号规则在 cmd /c 下会碎）。
+    let proc
+    if (claude.viaCmd) {
+      const line = [claude.bin, ...args].map(a => /[\s&|<>^()"]/.test(a) ? `"${a}"` : a).join(' ')
+      proc = spawn('cmd', ['/s', '/c', line], { cwd: botDir, env, stdio: ['pipe', 'pipe', 'pipe'], windowsVerbatimArguments: true })
+    } else {
+      proc = spawn(claude.bin, args, { cwd: botDir, env, stdio: ['pipe', 'pipe', 'pipe'] })
+    }
     this.proc = proc as ChildProcessWithoutNullStreams
     try { writeFileSync(pidFile, String(proc.pid ?? '')) } catch {}
 
@@ -476,6 +511,7 @@ export class WorkerManager {
 
   private onExit(code: number): void {
     logSpawn(`worker exit code=${code}${this.intentionalKill ? ' (intentional)' : ''}`)
+    try { rmSync(join(CHANNEL_DIR, '.worker.pid'), { force: true }) } catch {}  // 进程死了，pid 文件作废
     this.proc = null
     this.phase = 'stopped'
     const wasInFlight = this.inFlight

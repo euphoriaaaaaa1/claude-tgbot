@@ -37,8 +37,9 @@ _BOT_NAMESPACES = {
 
 def unified_session_uuid(bot_name: str) -> str | None:
     """unified session：每个 bot 只有一个 worker 会话（群+私聊同脑），
-    uuid = uuid5(namespace[bot], "unified")，与 dispatcher.ts / spawn-worker.sh 一致。"""
-    ns = _BOT_NAMESPACES.get(bot_name)
+    uuid = uuid5(namespace[bot], "unified")，与 dispatcher/worker-manager.ts 一致。
+    env BOT_NAMESPACE 优先（与 TS 侧对齐——部署时用它免改源码，两侧必须一致）。"""
+    ns = os.environ.get("BOT_NAMESPACE") or _BOT_NAMESPACES.get(bot_name)
     if not ns:
         return None
     return str(uuid.uuid5(uuid.UUID(ns), "unified"))
