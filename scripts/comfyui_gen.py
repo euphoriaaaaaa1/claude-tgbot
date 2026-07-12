@@ -130,10 +130,7 @@ def patch_workflow(workflow: dict, prompt: str, negative: str,
     return wf
 
 
-COMFYUI_INPUT_DIR = os.path.expanduser("~/Desktop/app/comfyui/ComfyUI/input")
-
-
-def _stage_init_image(abs_path: str, target_size: tuple = None) -> str | None:
+def _stage_init_image(abs_path: str, input_dir: str, target_size: tuple = None) -> str | None:
     """把 init-image 复制到 ComfyUI/input/ 用 unique 名字，返回文件名供 LoadImage 用。
 
     target_size=(target_w, target_h)：cover-crop 到精确目标尺寸。
@@ -145,7 +142,7 @@ def _stage_init_image(abs_path: str, target_size: tuple = None) -> str | None:
     """
     if not abs_path or not os.path.exists(abs_path):
         return None
-    os.makedirs(COMFYUI_INPUT_DIR, exist_ok=True)
+    os.makedirs(input_dir, exist_ok=True)
 
     if target_size:
         from PIL import Image
@@ -175,7 +172,7 @@ def _stage_init_image(abs_path: str, target_size: tuple = None) -> str | None:
         # 现在比例匹配，resize 到精确目标尺寸
         img = img.resize((target_w, target_h), Image.LANCZOS)
         fname = f"_init_{int(time.time())}_{secrets.token_hex(3)}.png"
-        dest = os.path.join(COMFYUI_INPUT_DIR, fname)
+        dest = os.path.join(input_dir, fname)
         img.save(dest, "PNG")
         print(f"[comfyui] init image {w0}x{h0} → {target_w}x{target_h} "
               f"(cover-crop, ratio src={src_ratio:.2f} dst={dst_ratio:.2f})",
@@ -185,7 +182,7 @@ def _stage_init_image(abs_path: str, target_size: tuple = None) -> str | None:
     # 不需要缩 → 直接 copy
     ext = os.path.splitext(abs_path)[1] or ".png"
     fname = f"_init_{int(time.time())}_{secrets.token_hex(3)}{ext}"
-    dest = os.path.join(COMFYUI_INPUT_DIR, fname)
+    dest = os.path.join(input_dir, fname)
     shutil.copy2(abs_path, dest)
     return fname
 
@@ -263,6 +260,10 @@ def generate(bot_id: str, prompt: str, out_path: str = None,
     cfy = img_cfg.get("comfyui", {})
     comfyui_url = cfy.get("url", "http://127.0.0.1:8188")
     output_dir = cfy.get("output_dir")
+    # ComfyUI 的 input 目录：优先配置 input_dir，否则取 output_dir 的同级 input（ComfyUI 标准布局）
+    input_dir = cfy.get("input_dir")
+    if not input_dir and output_dir:
+        input_dir = os.path.join(os.path.dirname(os.path.expanduser(output_dir)), "input")
 
     # 有 init_image 且 workflow_img2img 配了 → 走 img2img；否则走 txt2img
     use_img2img = bool(init_image and os.path.exists(init_image)
@@ -286,7 +287,7 @@ def generate(bot_id: str, prompt: str, out_path: str = None,
 
     # img2img: 把 anchor 按 size 预设等比缩放，控制输出尺寸=控制速度
     target_size = SIZE_PRESETS.get(size, SIZE_PRESETS[DEFAULT_SIZE]) if init_image else None
-    init_image_name = _stage_init_image(init_image, target_size) if init_image else None
+    init_image_name = _stage_init_image(init_image, input_dir, target_size) if init_image else None
     wf = patch_workflow(
         workflow, full_pos, neg,
         cfy.get("prompt_placeholder", "%prompt%"),
@@ -306,7 +307,7 @@ def generate(bot_id: str, prompt: str, out_path: str = None,
         return None
 
     if out_path is None:
-        save_dir = fos.path.expanduser("~/resource/media/{bot_id}/comfyui")
+        save_dir = os.path.expanduser(f"~/resource/media/{bot_id}/comfyui")
         os.makedirs(save_dir, exist_ok=True)
         out_path = os.path.join(save_dir, f"comfyui_{int(time.time())}_{secrets.token_hex(4)}.png")
 

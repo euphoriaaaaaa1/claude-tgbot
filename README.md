@@ -80,7 +80,17 @@
    - Mac/Linux：`cp -r skills/novelai-skill ~/.claude/skills/`
    - Windows：`Copy-Item -Recurse skills\novelai-skill $env:USERPROFILE\.claude\skills\`
 4. 这串 token 填进朋友圈网页（`http://localhost:8765` 的设置页），程序会写进 skill 的 `.env.local`。
-> 只想聊天不生图的话，这几步整个跳过。生图默认走 NovelAI；也可改用本地 ComfyUI（`_global.yml` 里配）。
+> 只想聊天不生图的话，这几步整个跳过。
+
+**④' 改用本机 ComfyUI 生图（可选，NovelAI 的替代，不花钱不用外币卡）**
+1. 本机装好并启动 ComfyUI（监听 `http://127.0.0.1:8188`），准备一个 txt2img 的 workflow API JSON。
+2. `configs/_global.yml` 里 `moments.image_generation.comfyui` 段填上你的 `workflow`（API JSON 路径）、`output_dir`（ComfyUI 的 output 目录）；`url` 默认 `127.0.0.1:8188`。
+3. 装 ComfyUI 生图 skill（和 novelai-skill **二选一**，别同时装，触发词会打架）：
+   - Mac/Linux：`cp -r skills/comfyui-skill ~/.claude/skills/`（如已装 novelai-skill 先 `rm -rf ~/.claude/skills/novelai-skill`）
+   - Windows：`Copy-Item -Recurse skills\comfyui-skill $env:USERPROFILE\.claude\skills\`（如已装 novelai-skill 先删掉那个目录）
+4. 跑生图脚本的 Python 需装 `PyYAML`（就是你跑朋友圈网页那个 Python）。ComfyUI 是本地服务，**无需任何 key**。
+
+> **谁用哪个引擎**：**聊天里发图** = 你装了哪个 skill（novelai-skill 或 comfyui-skill）就用哪个；**朋友圈配图** = `configs/_global.yml` 里 `image_generation.provider` 填 `novelai` 还是 `comfyui`。两者独立。
 
 ---
 
@@ -363,6 +373,7 @@ configs/        _global.yml + 每个 bot 一个 yml（模板见 _example.yml）
 channels/chenlulu/  示例人设（CLAUDE.md 人设 + access.json + 出厂关系种子）
 channels/_persona_template/  填空人设模板（做自己的角色照它填）
 skills/novelai-skill/  NovelAI 生图 skill（可选，复制到 ~/.claude/skills/ 启用）
+skills/comfyui-skill/  本机 ComfyUI 生图 skill（可选，与 novelai-skill 二选一）
 ```
 
 ---
