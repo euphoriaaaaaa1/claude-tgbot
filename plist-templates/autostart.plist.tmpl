@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.claudebotlife-autostart</string>
+
+    <!-- 登录时跑一次 restart-bots.sh，把各 bot 的 dispatcher 拉起（它们常驻在 tmux 里）。 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>{REPO_DIR}/restart-bots.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>WorkingDirectory</key>
+    <string>{REPO_DIR}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:~/.bun/bin:/usr/bin:/bin</string>
+        <key>TMUX_TMPDIR</key>
+        <string>/tmp</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/claudebotlife-autostart.stdout</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/claudebotlife-autostart.stderr</string>
+</dict>
+</plist>

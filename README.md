@@ -210,6 +210,32 @@ powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 
 ---
 
+## 启动 / 停止 / 开机自启 / 后台服务
+
+| 操作 | Mac / Linux | Windows |
+|------|-------------|---------|
+| **启动 / 重启全部 bot** | `bash restart-bots.sh` | `powershell -File windows\restart-bots.ps1` |
+| **停止全部 bot** | `cp stop-bots.example.sh stop-bots.sh && bash stop-bots.sh` | `powershell -File windows\stop-bots.ps1` |
+| **开机自启** | 见下方 | `windows\register-tasks.ps1`（已含 dispatcher 登录自启，一步到位） |
+
+**Mac 开机自启**（Windows 用户跳过——`register-tasks.ps1` 已经全包了）：
+```bash
+# 1) 填模板：把 {REPO_DIR} 换成仓库真实路径（如 ~/claudebotlife），生成正式 plist
+sed "s#{REPO_DIR}#$HOME/claudebotlife#g" plist-templates/autostart.plist.tmpl \
+  > ~/Library/LaunchAgents/com.example.claudebotlife-autostart.plist
+# 2) 加载（以后每次登录自动跑 restart-bots.sh 起 bot）
+launchctl load ~/Library/LaunchAgents/com.example.claudebotlife-autostart.plist
+```
+`plist-templates/` 里还有 `self-initiate`（主动消息）、`jiwen-tick`（情绪引擎）、`moments-web`（朋友圈网页）、`memory-compactor`（记忆压缩）等模板，同样 `sed` 填占位（`{REPO_DIR}`/`{BOT_ID}`/`{CHAT_ID}`）后 `launchctl load` 挂上，是可选的后台服务。
+
+## 朋友圈网页（`:8765`，可选）
+
+启动 moments-web 服务后，浏览器开 `http://localhost:8765` 能：刷各 bot 的朋友圈、点赞/评论（bot 会异步读到并回应）、**画风设置**、**切生图引擎**、填 **NovelAI key**。
+
+- **怎么起**：Windows 走 `register-tasks.ps1` 登录自启；Mac 挂 `moments-web` plist，或手动 `python3 -m moments.web`。
+- ⚠️ **画风页和 NovelAI key 设置依赖你已装 `novelai-skill`**（`cp -r skills/novelai-skill ~/.claude/skills/`）——没装的话这两个页面是空的（不报错，只是没内容）。朋友圈刷帖/点赞/评论不依赖 skill，正常可用。
+- 朋友圈里要有帖子，得后台的 `self-initiate` / `jiwen` / 生图任务在跑（即上面那些可选服务挂上）。
+
 ## 查看后台对话（所有平台）
 
 worker 是后台进程，没有能 attach 的窗口——看 `channels/<bot>/logs/` 下的日志：
@@ -269,7 +295,7 @@ cd dispatcher && bun test-e2e.ts     # Windows: cd dispatcher; bun test-e2e.ts
 - **C. [cc-switch](https://github.com/farion1231/cc-switch)（图形界面，不想手改用它）**：加个 provider 点切换，它替你写 `settings.json`。
   > ⚠️ 别同时用多个「写 settings.json」的工具（cc-switch / 手改会互相覆盖），选一个。
 
-**切完必须重启一次**（worker 只在启动时读 settings.json）：`bash restart-bots.sh`（Windows：`windows\restart-bots.ps1`）。
+**切完必须重启一次**（worker 只在启动时读 settings.json）：`bash restart-bots.sh`（Windows：`windows\restart-bots.ps1`）。重启有几秒窗口，但**消息不丢**（Telegram 会补投）、**记忆不丢**（worker 自动 `--resume` 续上）——不是零中断，是"断几秒、无损"。
 另外要能用还需：① `configs/_global.yml` 的 DeepSeek key 已配好；② 中转站支持 Claude 的 **Messages API** 格式（多数 claude 中转支持，纯 OpenAI 格式的不行）。
 
 ---
