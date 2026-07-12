@@ -174,9 +174,11 @@ function el(tag, cls, text) {
   return e;
 }
 
-const BOT_NAMES = {};  // 前端按 bot_id 显示，示例不含具体人设名
-const BOT_ORDER = ['chenlulu'];
-let selectedBot = 'chenlulu';
+// bot 列表由后端从 configs/*.yml 动态注入（id → 显示名），不再硬编码
+const BOTS = {{ bots|tojson }};
+const BOT_NAMES = Object.fromEntries(BOTS.map(b => [b.id, b.name || b.id]));
+const BOT_ORDER = BOTS.map(b => b.id);
+let selectedBot = BOT_ORDER[0] || '';
 
 function renderBotTabs() {
   const box = document.getElementById('botTabs');
