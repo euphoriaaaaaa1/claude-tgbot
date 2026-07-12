@@ -5,6 +5,9 @@
 内附一个示例人设 **陈露露**（35 岁小学语文老师，慢热高冷，从陌生人起步）演示整套机制。
 
 > ⚠️ 成人向角色扮演项目，仅供授权的个人娱乐用途。请遵守当地法律与 Telegram / 模型服务条款。
+>
+> ✅ **单 bot 私聊**（主链路）已在 macOS 与原生 Windows 双平台端到端验证通过。
+> 🧪 **朋友圈生图、多 bot 群聊导演**是进阶功能，代码齐全但尚未在所有平台完整跑通，用到时留意。
 
 ---
 
@@ -220,6 +223,26 @@ worker 是后台进程，没有能 attach 的窗口——看 `channels/<bot>/log
 - **翻历史 / 手动介入**：先停掉该 bot（重启脚本，或 `/status` 查到 pid 后结束进程），再 `claude --resume <会话uuid>` 打开同一会话手动聊；退出后 worker 会在下条消息自动复活。⚠️ 同一会话两端不能同时开。
 
 ---
+
+## 装完自检 + 常见报错速查
+
+**先自检环境**（不碰 Telegram，最快确认整条链路 OK）：
+```bash
+cd dispatcher && bun test-e2e.ts     # Windows: cd dispatcher; bun test-e2e.ts
+```
+打出 **`5 过 / 0 挂`** = 这台机器能跑。有红叉照下表查。
+
+| 症状 | 原因 / 解法 |
+|------|-------------|
+| `bun: command not found` / `claude: command not found` | 装完没刷新 PATH → **重开一个终端窗口**再试。Windows 上 claude 若还找不到，设环境变量 `CLAUDE_BIN` 指向 `claude.cmd` 全路径。 |
+| `pip install` 卡在 `chinese_calendar` 或 `Pillow` | 这俩是可选（只管节假日判定/生图）。装不上就先跳过，不影响私聊：`pip install feedparser PyYAML lunardate requests flask` 单独装必需的即可。 |
+| dispatcher 起来了，但**给 bot 发消息没反应** | ① `access.json` 的 `allowFrom` 是不是填了**你自己的**数字 user_id（不是用户名）② `.env` 的 `TELEGRAM_BOT_TOKEN` 对不对 ③ 看 `channels/<bot>/logs/chat.log`（新架构）或 `tmux attach`（旧架构）有没有收到消息。 |
+| bot 收到了但**不回复 / 报错** | 多半是 Claude provider 没配好 → 终端跑一次 `claude` 确认能对话；或看 `logs/stream.jsonl` 里的报错。 |
+| **导演/情绪/主动消息不工作** | `configs/_global.yml` 的 DeepSeek `api_key` 没填或填错。 |
+| 端口被占 `EADDRINUSE` / `address in use` | 已有一个 dispatcher 在跑同端口 → 先停掉（`restart-bots.sh` / `windows\restart-bots.ps1`）再起。 |
+| Windows 日志乱码 | 见上方「查看后台对话」——用 `watch-bot.ps1`，或 `Get-Content -Encoding UTF8`，emoji 用 Windows Terminal。 |
+
+> **让 AI 帮你部署时**：直接把本 README 甩给它，让它照着一步步来。到「填 key」那几步（DeepSeek key / Telegram token / user_id）AI 会停下来问你要——这些只有你能提供，按上方「每把钥匙具体怎么弄」拿到后给它即可。
 
 ## 切换模型来源（Provider）
 
