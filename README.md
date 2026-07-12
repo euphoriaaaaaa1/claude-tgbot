@@ -313,6 +313,31 @@ cd dispatcher && bun test-e2e.ts     # Windows: cd dispatcher; bun test-e2e.ts
 
 ---
 
+## 让 bot 活起来（主动私聊 / 朋友圈 / 群聊）
+
+**默认状态：示例陈露露只会「被动回复」——你不发，她不主动。** 这是**故意的**，不是坏了：她的设定是「刚在网上认识的陌生人」，一上来就深夜私聊你、主动发朋友圈反而不符人设。她的 `configs/chenlulu.yml` 里 `moments.enabled: false`，也没配作息/爱好。
+
+想让 bot 有「自己的生活」（像真人一样随时段作息、随机主动找你、发朋友圈），按需开这三样：
+
+### ① 主动私聊（因自己的生活想起你，随机来消息）
+给这个 bot 的 `configs/<bot>.yml` 补上「生活作息」——直接照 `configs/_example.yml`（小明模板）里这几段抄：
+- `sleep_hours`（睡觉时段，这些时段不会发消息）
+- `recurring_activities`（每天在干嘛的时间表：上班/午休/自由时间…）
+- `personal_hobbies`（爱好，free 时段随机触发）
+- `interest_keywords` + `rss_feeds`（可选，让 ta 聊到关心的新闻）
+
+配好后，`self_initiate.py` 后台任务（Windows 的 `register-tasks.ps1` 已挂、Mac 挂 `self-initiate` plist）会每隔一段**随机时间（30 分钟～24 小时）**判断要不要主动找你——不是定时打卡，是像活人一样不可预测。
+
+### ② 随机发朋友圈
+在上面基础上：`configs/<bot>.yml` 里把 `moments.enabled` 改成 `true` → 起 `moments-web`（朋友圈网页 `:8765`）→ 挂上 `jiwen`（情绪引擎）任务。之后 bot 会按心情/情境随机发圈，你能在 `:8765` 看、点赞、评论，ta 会异步读到并回应。
+
+### ③ 群聊里自己聊
+需要**至少 2 个 bot**（单个陈露露没群友可聊）。建好多个 bot（见下方「加更多机器人」）+ 把它们拉进同一个 Telegram 群 + 配 `director.py`（群聊导演，决定每轮谁开口）。之后 bot 之间会像真人闺蜜群一样你一句我一句地聊，你只是群里一员。
+
+> **最省事**：想直接要个「一上来就有丰富生活、会主动私聊发圈」的 bot，别改陈露露——照 `configs/_example.yml`（小明模板，作息/爱好/RSS 都配好了）建一个新 bot 更快。
+>
+> 🧪 **诚实提醒**：这三个「主动行为」在跨平台新架构下代码齐全、逻辑通，但**尚未在真机端到端完整验证**（已验证的是「你发消息 bot 回」这条被动链路）。建议先开①主动私聊在你的机器上试通，再开②③。有问题欢迎反馈。
+
 ## 加更多机器人
 
 1. `cp configs/_example.yml configs/<新bot>.yml`，改里面的人设摘要。
