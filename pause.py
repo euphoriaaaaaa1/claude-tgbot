@@ -24,7 +24,7 @@ def is_paused(bot_id: str) -> str | None:
 
 
 def pause_global():
-    open(PAUSE_FILE_GLOBAL, "w").close()
+    open(PAUSE_FILE_GLOBAL, "w", encoding="utf-8").close()
 
 
 def resume_global():
@@ -33,7 +33,7 @@ def resume_global():
 
 
 def pause_bot(bot_id: str):
-    open(_per_bot_path(bot_id), "w").close()
+    open(_per_bot_path(bot_id), "w", encoding="utf-8").close()
 
 
 def resume_bot(bot_id: str):

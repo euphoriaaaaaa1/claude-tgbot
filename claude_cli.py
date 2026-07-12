@@ -79,9 +79,12 @@ def call_claude(prompt: str, timeout: int = 60, cwd: str = None,
     if model:
         args += ["--model", model]
     args.append(full_prompt)
+    # Windows 上 claude 是 .cmd/.bat shim，直接 subprocess 会 WinError 193 → 需 shell 执行
+    _win_cmd = sys.platform == "win32" and str(CLAUDE_BIN).lower().endswith((".cmd", ".bat"))
     proc = subprocess.run(
         args, cwd=cwd, env=_build_env(),
         capture_output=True, text=True, timeout=timeout,
+        shell=_win_cmd,
     )
     if proc.returncode != 0:
         raise RuntimeError(

@@ -370,7 +370,7 @@ def _trigger_bot_moment_reply(cfg: dict, moment: dict, user_text: str,
         "ts": iso_ts,
         "message_id": str(ms),
     }
-    with open(fname, "w") as f:
+    with open(fname, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
 
     # 关键：worker 没活就 spawn（dispatcher 监听的是 telegram 不是 inbox）
@@ -539,7 +539,7 @@ def _trigger_bot_see_user_moment(bot_cfg: dict, moment_id: int, text: str,
         "chat_type": "private", "is_bot_sender": False,
         "ts": iso_ts, "message_id": str(ms),
     }
-    with open(fname, "w") as f:
+    with open(fname, "w", encoding="utf-8") as f:
         _json.dump(payload, f, ensure_ascii=False)
     _ensure_worker_alive(bot_id, chat_id, bot_dir)
 
@@ -598,7 +598,7 @@ def api_image_provider():
         return jsonify({"error": "scope must be moment|telegram or omitted"}), 400
 
     import yaml
-    with open(global_path, "w") as f:
+    with open(global_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(g, f, allow_unicode=True, sort_keys=False, width=4096)
     return jsonify({"provider": new_provider, "scope": scope or "all", "ok": True})
 

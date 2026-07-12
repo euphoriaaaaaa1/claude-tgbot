@@ -550,7 +550,7 @@ def _gen_image_novelai(bot_id: str, bot_cfg: dict, moment_id: int,
         "chat_type": "private", "is_bot_sender": False,
         "ts": iso_ts, "message_id": str(ms),
     }
-    with open(fname, "w") as f:
+    with open(fname, "w", encoding="utf-8") as f:
         _json.dump(payload, f, ensure_ascii=False)
     from moments.web import _ensure_worker_alive
     _ensure_worker_alive(bot_id, chat_id, bot_dir)

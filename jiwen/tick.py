@@ -105,7 +105,7 @@ def load_state(path: str) -> engine.State:
     if not os.path.exists(path):
         return engine.State(last_tick_ts=int(time.time()))
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             d = json.load(f)
         return engine.state_from_dict(d)
     except Exception as e:
@@ -117,9 +117,9 @@ def save_state(path: str, state: engine.State):
     """原子写：先写 .tmp 再 rename。"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w") as f:
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(engine.state_to_dict(state), f, ensure_ascii=False, indent=2)
-    os.rename(tmp, path)
+    os.replace(tmp, path)  # replace 跨平台原子覆盖(Windows rename 覆盖会抛错)
 
 
 # ─── 对话扫描（找新 user 消息）─────────────────────────────
@@ -154,7 +154,7 @@ def find_recent_messages(channel_dir: str, since_ts: int, limit: int = 12) -> tu
     max_user_ts = since_ts
 
     try:
-        with open(latest) as f:
+        with open(latest, encoding="utf-8") as f:
             lines = f.readlines()
     except Exception as e:
         print(f"[jiwen.tick] 读 jsonl 失败 {latest}: {e}", file=sys.stderr)

@@ -1,6 +1,8 @@
-# start-bots.ps1 — 启动全部 bot 的 dispatcher（Windows）
+﻿# start-bots.ps1 — 启动全部 bot 的 dispatcher（Windows）
 # 每加一个 bot：往 $Bots 加一行 @{ Name="botname"; Port=17802 }
 $ErrorActionPreference = "Stop"
+# 保证任务计划/隐藏会话里能找到 bun（登录会话 PATH 未必含 ~/.bun/bin）
+$env:PATH = "$env:USERPROFILE\.bun\bin;$env:PATH"
 $RepoDir  = Split-Path -Parent $PSScriptRoot
 $Channels = Join-Path $env:USERPROFILE ".claude\channels"
 $LogDir   = Join-Path $env:TEMP "claude-tgbot-logs"

@@ -46,7 +46,7 @@ const server = Bun.serve({
 process.env.BOT_NAME = BOT
 process.env.CHANNEL_DIR = CHAN
 process.env.DISPATCHER_PORT = String(PORT)
-const { getManager, BOT_NAMESPACES } = await import('./worker-manager.ts')
+const { getManager, BOT_NAMESPACES, killTree } = await import('./worker-manager.ts')
 BOT_NAMESPACES[BOT] = '550e8400-e29b-41d4-a716-446655449999' // 测试专用命名空间
 const mgr = getManager()
 
@@ -85,7 +85,7 @@ check(await waitFor(() =>
 // ─── T3: 崩溃自动 resume ───
 console.log('── T3: kill -9 worker → 自动 --resume → 记忆连续 ──')
 const pid = (mgr.status() as any).pid
-if (pid) process.kill(pid, 'SIGKILL')
+if (pid) killTree(pid)  // 跨平台按树杀(Windows 连 cmd 包装的 claude 一起)
 await sleep(3000)
 const before = received.length
 const ms2 = Date.now()

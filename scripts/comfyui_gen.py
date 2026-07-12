@@ -281,7 +281,7 @@ def generate(bot_id: str, prompt: str, out_path: str = None,
     neg = (neg_prefix + ", " + negative_extra).strip(", ") if negative_extra else neg_prefix
     full_pos = (pos_prefix + ", " + prompt).strip(", ") if pos_prefix else prompt
 
-    with open(workflow_path) as f:
+    with open(workflow_path, encoding="utf-8") as f:
         workflow = json.load(f)
 
     # img2img: 把 anchor 按 size 预设等比缩放，控制输出尺寸=控制速度

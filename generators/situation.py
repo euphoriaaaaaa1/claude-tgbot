@@ -193,7 +193,7 @@ _EVENTS_PATH = os.path.join(
 def _load_sporadic_events() -> list[dict]:
     if not os.path.exists(_EVENTS_PATH):
         return []
-    with open(_EVENTS_PATH) as f:
+    with open(_EVENTS_PATH, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return data if isinstance(data, list) else []
 

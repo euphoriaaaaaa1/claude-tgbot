@@ -306,7 +306,7 @@ def last_user_msg_ts(bot_dir: str, chat_id: str = None,
         marker = os.path.join(state_dir, f"{marker_key}-{chat_id}.last-user")
         if os.path.exists(marker):
             try:
-                return int(open(marker).read().strip())
+                return int(open(marker, encoding="utf-8").read().strip())
             except Exception:
                 pass
     # 兜底：扫最近 jsonl
@@ -428,7 +428,7 @@ def mins_since_last_user_msg(bot_dir: str, chat_id: str = None,
         marker = os.path.join(state_dir, f"{marker_key}-{chat_id}.last-user")
         if os.path.exists(marker):
             try:
-                last = int(open(marker).read().strip())
+                last = int(open(marker, encoding="utf-8").read().strip())
                 return (int(time.time()) - last) // 60
             except Exception:
                 pass

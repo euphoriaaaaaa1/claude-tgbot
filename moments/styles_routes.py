@@ -5,6 +5,7 @@
 - generate_novelai_image.py 通过 apply_active_style() 在生图前读取该文件生效
 """
 import os
+import sys
 import json
 import time
 import threading
@@ -22,7 +23,7 @@ SKILL_ROOT = Path(os.path.expanduser("~/.claude/skills/novelai-skill"))
 STYLES_PATH = SKILL_ROOT / "assets" / "styles.json"
 DEFAULT_CONFIG_PATH = SKILL_ROOT / "assets" / "default_config.json"
 GENERATE_SCRIPT = SKILL_ROOT / "scripts" / "generate_novelai_image.py"
-PYTHON_BIN = os.environ.get("NOVELAI_PYTHON", "python3")
+PYTHON_BIN = os.environ.get("NOVELAI_PYTHON") or sys.executable
 SAMPLE_DIR = Path(os.path.expanduser("~/resource/media/__styles__"))
 SAMPLE_PROMPT = ("1girl, year 2024, cover page, -1::monocrome, flat color, simple background, "
                  "text logo::, masterpiece, best quality, very aesthetic, absurdres, solo, "

@@ -68,7 +68,7 @@ def compact_one(bot_cfg: dict) -> bool:
 
     p = memory_path(bot_dir)
     try:
-        current = open(p).read()
+        current = open(p, encoding="utf-8").read()
     except Exception as e:
         sys.stderr.write(f"[{bot_id}] 读 memory.md 失败：{e}\n")
         return False

@@ -44,8 +44,9 @@ export function uuidv5(namespace: string, name: string): string {
 }
 
 export function unifiedSessionUuid(bot: string): string {
-  const ns = BOT_NAMESPACES[bot]
-  if (!ns) throw new Error(`no UUIDv5 namespace for bot '${bot}' — add it to BOT_NAMESPACES (3 places, see README)`)
+  // env BOT_NAMESPACE 优先（部署时免改源码；与 chat_history.py 的表保持一致仍是你的责任）
+  const ns = process.env.BOT_NAMESPACE || BOT_NAMESPACES[bot]
+  if (!ns) throw new Error(`no UUIDv5 namespace for bot '${bot}' — set env BOT_NAMESPACE or add to BOT_NAMESPACES`)
   return uuidv5(ns, 'unified')
 }
 
@@ -55,6 +56,18 @@ export function unifiedSessionUuid(bot: string): string {
 // ⚠️ Windows 真实规则以 Phase 0 实测为准；spawn 后有断言兜底（不匹配 fail-loud）。
 export function projectSlug(absDir: string): string {
   return absDir.replace(/[^a-zA-Z0-9]/g, '-')
+}
+
+// ─── 跨平台按进程树杀 ──────────────────────────────────────────────────
+// Windows 上 worker 经 cmd /c 包装 → proc.pid 是 cmd 的，claude 是它的子进程。
+// process.kill(cmd_pid) 只杀 cmd、留孤儿 claude(继续写同一 jsonl=记忆损坏)。必须按树杀。
+export function killTree(pid: number, force = true): void {
+  if (!pid || pid <= 0) return
+  if (platform() === 'win32') {
+    try { spawnSync('taskkill', ['/PID', String(pid), '/T', ...(force ? ['/F'] : [])]) } catch {}
+  } else {
+    try { process.kill(pid, force ? 'SIGKILL' : 'SIGTERM') } catch {}
+  }
 }
 
 // ─── claude 可执行解析 ─────────────────────────────────────────────────
@@ -323,9 +336,7 @@ export class WorkerManager {
 
   kill(opts: { intentional?: boolean } = {}): void {
     this.intentionalKill = opts.intentional === true
-    if (this.proc) {
-      try { this.proc.kill() } catch {}
-    }
+    if (this.proc?.pid) killTree(this.proc.pid)  // 按树杀：Windows 连 cmd 包装的 claude 子进程一起带走
     this.phase = 'stopped'
     this.proc = null
   }
@@ -348,7 +359,7 @@ export class WorkerManager {
     const pidFile = join(CHANNEL_DIR, '.worker.pid')
     try {
       const stale = parseInt(readFileSync(pidFile, 'utf8').trim(), 10)
-      if (stale > 0) { try { process.kill(stale) ; logSpawn(`杀掉孤儿 worker pid=${stale}`) } catch {} }
+      if (stale > 0) { killTree(stale); logSpawn(`杀掉孤儿 worker 进程树 pid=${stale}`) }
     } catch {}
 
     const botDir = CHANNEL_DIR

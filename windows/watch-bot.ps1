@@ -1,4 +1,4 @@
-# watch-bot.ps1 [bot] — 实时看某 bot 的对话流（替代 tmux attach）
+﻿# watch-bot.ps1 [bot] — 实时看某 bot 的对话流（替代 tmux attach）
 param([string]$Bot = "chenlulu")
 $log = Join-Path $env:USERPROFILE ".claude\channels\$Bot\logs\chat.log"
 if (-not (Test-Path $log)) {

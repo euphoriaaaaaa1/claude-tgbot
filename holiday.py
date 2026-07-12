@@ -26,7 +26,7 @@ def _load_cache() -> dict:
         if not os.path.exists(path):
             continue
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             continue
@@ -37,9 +37,9 @@ def _save_cache(d: dict):
     """原子写 cache 同时写一份 backup（用于 cache 损坏时兜底）"""
     os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
     tmp = CACHE_PATH + ".tmp"
-    with open(tmp, "w") as f:
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
-    os.rename(tmp, CACHE_PATH)
+    os.replace(tmp, CACHE_PATH)  # replace 跨平台原子覆盖(Windows rename 覆盖会抛错)
     # 同步 backup（任意一份完整即可救场）
     try:
         import shutil

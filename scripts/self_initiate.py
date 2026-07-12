@@ -47,18 +47,18 @@ def main() -> int:
     marker = os.path.join(STATE_DIR, f"{bot}-{chat}.last")
     interval_f = os.path.join(STATE_DIR, f"{bot}-{chat}.interval")
     try:
-        last = int(open(marker).read().strip())
+        last = int(open(marker, encoding="utf-8").read().strip())
     except Exception:
         last = 0
     try:
-        target = int(open(interval_f).read().strip())
+        target = int(open(interval_f, encoding="utf-8").read().strip())
     except Exception:
         target = COOLDOWN_MIN
     if last and now - last < target:
         print(f"skip: 距上次 {now-last}s < 随机目标 {target}s", file=sys.stderr)
         return 0
-    open(marker, "w").write(str(now))
-    open(interval_f, "w").write(str(random.randint(COOLDOWN_MIN, COOLDOWN_MAX)))
+    open(marker, "w", encoding="utf-8").write(str(now))
+    open(interval_f, "w", encoding="utf-8").write(str(random.randint(COOLDOWN_MIN, COOLDOWN_MAX)))
 
     bot_dir = os.path.expanduser(f"~/.claude/channels/{bot}")
     inbox = os.path.join(bot_dir, "inbox")
@@ -68,7 +68,7 @@ def main() -> int:
     since_min = "unknown"
     lu = os.path.join(STATE_DIR, f"{bot}-{chat}.last-user")
     try:
-        since_min = str((now - int(open(lu).read().strip())) // 60)
+        since_min = str((now - int(open(lu, encoding="utf-8").read().strip())) // 60)
     except Exception:
         pass
 

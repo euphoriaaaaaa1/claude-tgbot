@@ -24,7 +24,7 @@ def read_memory_brief(bot_channel_path: str, max_chars: int = 800) -> str:
     if not os.path.exists(p):
         return ""
     try:
-        with open(p) as f:
+        with open(p, encoding="utf-8") as f:
             content = f.read()
     except Exception:
         return ""
@@ -69,7 +69,7 @@ def pick_memory_hook(bot_channel_path: str, chat_id: str = "") -> str:
     if not os.path.exists(p):
         return ""
     try:
-        content = open(p).read()
+        content = open(p, encoding="utf-8").read()
     except Exception:
         return ""
     facts = _extract_life_facts(content)
@@ -83,7 +83,7 @@ def pick_memory_hook(bot_channel_path: str, chat_id: str = "") -> str:
     bot = os.path.basename(os.path.abspath(bot_channel_path))
     state_f = os.path.join(state_dir, f"{bot}-{chat_id}.mem-recall")
     try:
-        used = json.load(open(state_f))
+        used = json.load(open(state_f, encoding="utf-8"))
     except Exception:
         used = []
     fresh = [f for f in facts if _h(f) not in used]
@@ -92,7 +92,7 @@ def pick_memory_hook(bot_channel_path: str, chat_id: str = "") -> str:
     # 记住最近用过的（保留 max(3, 总数-1) 条，保证轮转不会立刻重复）
     used = ([_h(pick)] + [u for u in used if u != _h(pick)])[: max(3, len(facts) - 1)]
     try:
-        json.dump(used, open(state_f, "w"))
+        json.dump(used, open(state_f, "w", encoding="utf-8"))
     except Exception:
         pass
     return pick
@@ -111,8 +111,8 @@ def ensure_memory_exists(bot_channel_path: str, display_name: str):
     # 父目录可能不存在（bot 还没跑过任何 session）
     os.makedirs(os.path.dirname(p), exist_ok=True)
     template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory_template.md")
-    with open(template_path) as f:
+    with open(template_path, encoding="utf-8") as f:
         tmpl = f.read()
     content = tmpl.replace("{DISPLAY_NAME}", display_name)
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         f.write(content)

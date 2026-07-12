@@ -10,7 +10,7 @@ GLOBAL_CFG_PATH = os.path.join(CONFIGS_DIR, "_global.yml")
 def load_global() -> dict:
     if not os.path.exists(GLOBAL_CFG_PATH):
         return {}
-    with open(GLOBAL_CFG_PATH) as f:
+    with open(GLOBAL_CFG_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
@@ -18,7 +18,7 @@ def load_bot(bot_id: str) -> dict:
     p = os.path.join(CONFIGS_DIR, f"{bot_id}.yml")
     if not os.path.exists(p):
         raise FileNotFoundError(f"配置不存在：{p}")
-    with open(p) as f:
+    with open(p, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
