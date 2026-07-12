@@ -145,7 +145,7 @@ OBSESSION_PROB_PER_ROLL = 0.20    # 短期痴迷单次掷骰概率
 def sample_hobby_if_free(bot_id: str, now: datetime, cfg: dict) -> dict | None:
     if get_current_recurring(cfg, now).state != "free":
         return None
-    # 默认 4h hobby cooldown，bot 可在 yml 覆盖（如 bot2 反差人妻独处反复发情 → 1h）
+    # 默认 4h hobby cooldown，bot 可在 yml 覆盖（如 bot2 反差人妻独处反复想亲密 → 1h）
     cooldown_hours = float(cfg.get("hobby_cooldown_hours", 4))
     if db.hours_since_last_hobby(bot_id) < cooldown_hours:
         return None

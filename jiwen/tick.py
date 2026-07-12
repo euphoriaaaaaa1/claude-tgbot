@@ -340,7 +340,7 @@ def tick_one_bot(bot_id: str, jiwen_cfg: dict, state_dir: str, dry_run: bool = F
                 )
                 state.last_user_msg_ts = max_user_ts
 
-    # 3.5 关系数值：energy 随时段漂移(治随叫随到) + 复用 jiwen delta 慢速推进 好感/信任/淫欲
+    # 3.5 关系数值：energy 随时段漂移(治随叫随到) + 复用 jiwen delta 慢速推进 好感/信任/nsfw
     try:
         import relationship as _rel
         from datetime import datetime as _dt3
@@ -361,7 +361,7 @@ def tick_one_bot(bot_id: str, jiwen_cfg: dict, state_dir: str, dry_run: bool = F
                                         affection=_rstats.get("affection", 50), event=_event, profile=_prof)
         if _jiwen_delta:  # 有新对话 → 映射到关系数值(保守系数，慢速累积)
             _vd = float(_jiwen_delta.get("valence", 0))
-            # 判官若给了专门的 desire(性张力)用它，否则退回 arousal*正向(见 deepseek_delta)
+            # 判官若给了专门的 desire(nsfw 张力)用它，否则退回 arousal*正向(见 deepseek_delta)
             _dd = float(_jiwen_delta.get("desire", _jiwen_delta.get("arousal", 0)))
             # 例假/生病在场：不涨 desire(否则热聊几句就把压制顶穿)
             _ev_suppress = bool(_event and any(k in (_event.get("name", "") or "")
@@ -374,7 +374,7 @@ def tick_one_bot(bot_id: str, jiwen_cfg: dict, state_dir: str, dry_run: bool = F
         if not dry_run:
             _rel.save(_bot_dir, _rstats)
         summary["actions"].append(
-            f"关系 好感{_rstats['affection']:.0f}/信任{_rstats['trust']:.0f}/淫欲{_rstats['desire']:.0f}/精力{_rstats['energy']:.0f}")
+            f"关系 好感{_rstats['affection']:.0f}/信任{_rstats['trust']:.0f}/nsfw{_rstats['desire']:.0f}/精力{_rstats['energy']:.0f}")
     except Exception as e:
         summary["actions"].append(f"关系数值 skip: {e}")
 

@@ -3,8 +3,8 @@
 
 - affection 好感：整体喜欢/亲近程度
 - trust     信任：愿意交心/卸下防备的程度（决定关系阶段解锁）
-- desire    淫欲：情欲被撩起的程度（没到就不主动露骨、爱爱要铺垫）
-- energy    精力：体力/兴致（低=累/困→对爱爱没兴致，会拒绝或敷衍）→ 治"随叫随到"
+- desire    nsfw：亲密欲望被撩起的程度（没到就不主动露骨、亲密要铺垫）
+- energy    精力：体力/兴致（低=累/困→对亲密没兴致，会拒绝或敷衍）→ 治"随叫随到"
 
 数值由 jiwen tick 的裁判(deepseek_delta)按对话涨跌 + energy 随时段漂移。
 describe() 把数值翻成给 worker 的行为提示，注入到回复上下文里，让 bot 按当前状态拿捏。
@@ -150,7 +150,7 @@ def _rng_uniform(lo: float, hi: float) -> float:
 def drift_desire(stats: dict, now: datetime, mins: float,
                  affection: float = 50.0, event: dict | None = None,
                  profile: str = "established") -> dict:
-    """淫欲：情境压制 + 阵发自发尖峰(治'突然想要') + 平时向基线冷却。不写死、有随机。"""
+    """nsfw：情境压制 + 阵发自发尖峰(治'突然想要') + 平时向基线冷却。不写死、有随机。"""
     des = stats.get("desire", 0)
     # 1) 情境压制：例假/生病在场 → 压顶并略降
     if event and any(k in (event.get("name", "") or "") for k in ("例假", "生病", "感冒", "痛经", "姨妈")):
@@ -183,7 +183,7 @@ def describe(stats: dict) -> tuple[str, str]:
     """返回 (阶段名, 注入给 worker 的行为提示)。"""
     aff, tru, des, ene = (stats.get(k, 0) for k in STATS)
     stage = _trust_stage(tru)
-    lines = [f"【当前关系状态】好感{aff:.0f}/信任{tru:.0f}/淫欲{des:.0f}/精力{ene:.0f}，处于「{stage}」阶段。按此拿捏分寸："]
+    lines = [f"【当前关系状态】好感{aff:.0f}/信任{tru:.0f}/nsfw{des:.0f}/精力{ene:.0f}，处于「{stage}」阶段。按此拿捏分寸："]
 
     # 信任阶段门槛
     if tru < 25:
@@ -197,20 +197,20 @@ def describe(stats: dict) -> tuple[str, str]:
     else:
         lines.append("- 交心亲密：可以完全放开、亲密无间。")
 
-    # 淫欲门槛
+    # nsfw门槛
     if des < 30:
-        lines.append(f"- 淫欲低({des:.0f})：情欲没起来，**不主动露骨**；对方直接要爱爱会觉得突兀，需要先被撩、有情境才可能。")
+        lines.append(f"- nsfw低({des:.0f})：亲密欲望没起来，**不主动露骨**；对方直接要亲密会觉得突兀，需要先被撩、有情境才可能。")
     elif des < 60:
-        lines.append(f"- 淫欲中({des:.0f})：有点意思了，但要铺垫、要对方continue撩，别自己冲太快。")
+        lines.append(f"- nsfw中({des:.0f})：有点意思了，但要铺垫、要对方continue撩，别自己冲太快。")
     else:
-        lines.append(f"- 淫欲高({des:.0f})：情欲上来了，可以顺势推进。")
+        lines.append(f"- nsfw高({des:.0f})：亲密欲望上来了，可以顺势推进。")
 
     # 精力门槛(治随叫随到)——拒绝要"温柔+补偿"，别冷脸；偶尔拒才真实，别常态拒
     if ene < 25:
-        lines.append(f"- 精力很低({ene:.0f})：真的累/困。对方要爱爱大概率**温柔婉拒并给补偿**"
+        lines.append(f"- 精力很低({ene:.0f})：真的累/困。对方要亲密大概率**温柔婉拒并给补偿**"
                      "('今天累坏了…抱抱我明天好不好''困得睁不开眼了，改天补给你'），撒娇拒绝、别冷脸、别硬配合。")
     elif ene < 50:
-        lines.append(f"- 精力偏低({ene:.0f})：有点乏。爱爱兴致不高，可能半推半就、希望简短温柔点，别自己太主动。")
+        lines.append(f"- 精力偏低({ene:.0f})：有点乏。亲密兴致不高，可能半推半就、希望简短温柔点，别自己太主动。")
     # 精力充足(≥50)：不因精力拒；正常时段该配合就配合，别没事找借口拒（常态拒最扫兴）
 
     lines.append("（这些是你此刻的真实状态，不是必须照做的剧本——结合人设自然表现，别把数值念出来；"
