@@ -405,6 +405,12 @@ export class WorkerManager {
     proc.on('error', (err) => { logSpawn(`spawn error: ${err}`); this.onExit(-1) })
     proc.on('exit', (code) => this.onExit(code ?? 0))
 
+    // spawn 即 ready：stdin 管道会缓冲，claude 启动完自然消费第一条消息。
+    // （不能等 system/init——headless 下它在收到第一条输入后才发，等它=死锁）
+    this.phase = 'ready'
+    logSpawn('worker spawned, 管道就绪')
+    this.pump()
+
     // slug 断言：spawn 后 claude 应在预期 projects 目录写 session；不匹配 = slugify 规则错 = 丢记忆
     setTimeout(() => {
       if (this.phase === 'ready' && !existsSync(projDir)) {
@@ -430,11 +436,11 @@ export class WorkerManager {
 
   private onEvent(ev: any): void {
     if (ev.type === 'system' && ev.subtype === 'init') {
-      this.phase = 'ready'
+      // ⚠️ init 在 headless 下是"收到第一条输入后"才发的（不是启动即发）——
+      // 不能拿它当喂消息的前置门（会互相等死锁）。这里只作确认信号+归零退避。
       this.restartAttempt = 0
-      logSpawn('worker ready (system/init)')
-      logChat('── worker 已就绪 ──')
-      this.pump()
+      logSpawn('worker init 确认 (system/init)')
+      logChat('── worker 会话已确认 ──')
       return
     }
     if (ev.type === 'assistant') {
