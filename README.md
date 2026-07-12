@@ -101,6 +101,14 @@ powershell -File windows\watch-bot.ps1 chenlulu
 
 常用运维：`windows\restart-bots.ps1` 重启全部、`Invoke-RestMethod -Method Post http://127.0.0.1:17801/status` 看 worker 状态、`windows\unregister-tasks.ps1` 卸载后台任务。
 
+### Windows 注意事项
+
+- **Python 3.10+**：`requirements.txt` 含 `chinese_calendar`、`Pillow`(可选)，装不上不影响核心私聊，只影响节假日判定/生图。
+- **Claude CLI**：先 `claude` 登录一次或按上文配好中转 provider（worker 靠它说话）。若 `where claude` 找不到，设环境变量 `CLAUDE_BIN` 指向 `claude.cmd` 全路径。
+- **中文编码**：仓库所有文件读写已显式 UTF-8；若你手动跑脚本遇到中文乱码，`set PYTHONUTF8=1` 或用 Windows Terminal（默认 UTF-8）。
+- **PowerShell 执行策略**：`register-tasks.ps1` 注册的自启已带 `-ExecutionPolicy Bypass`；手动首次跑脚本若被拦，用 `powershell -ExecutionPolicy Bypass -File windows\start-bots.ps1`。
+- **观测**：worker 无 TUI，用 `windows\watch-bot.ps1 <bot>`（等价 `tail -f`）看实时对话。
+
 ## 查看后台对话（所有平台）
 
 worker 是 headless 子进程，没有可 attach 的界面——看 `channels/<bot>/logs/`：
