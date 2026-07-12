@@ -1,0 +1,33 @@
+{
+  "provider": "novelai",
+  "model": "nai-diffusion-4-5-full",
+  "width": 1024,
+  "height": 1024,
+  "steps": 28,
+  "cfg_scale": 5,
+  "sampler": "k_euler_ancestral",
+  "seed": -1,
+  "prompt_max_tokens": 512,
+  "nsfw_prefix": "nsfw",
+  "positive_prefix": "5::best quality, absurdres, very aesthetic, detailed, masterpiece::,1.1::misaka_12003-gou ::, 2::artist:houjou_tsukasa::, 1.8::artist:takeda_hiromitsu::, -2::artist collaboration::, 0.8::dino_(dinoartforame), wanke, liduke ::, year 2025, realistic, 4k, 1.5::photorealistic::, 1.5::photo(medium)::, 1::oily shiny skin ::, 1.5::artist:ero404 ::,  0.5::thick lips::, dramatic shadow, 1.1::flat color::, -0.1::warm color, strange color::,  -2::muscles::, 0.3::pure background::, -2::2koma, border::",
+  "negative_prefix": "bad proportions, out of focus, username, text, bad anatomy, lowres, worstquality, watermark, cropped, bad body, deformed, mutated, disfigured, poorly drawn face, malformed hands, extra arms, extra limb, missing limb, too many fingers, extra legs, bad feet, missing fingers, fused fingers, acnes, floating limbs, disconnected limbs, long neck, long body, mutation, ugly, blurry, low quality, sketches, normal quality, monochrome, grayscale, signature, logo, jpeg artifacts, unfinished, displeasing, chromatic aberration, extra digits, artistic error, scan, abstract, photo, realism, screencap, negativeXL_D, negativeXL, source_furry, extra limbs, deformations, long fingers, fused fingers, inaccurate_anatomy, bad proportions, poorly drawn hands, bad hands, extra_fingers, extra_hand, extra_arm, distorted fingers, ugly hands, creepy hands, six fingers, malformed fingers, long_fingers, interlocked fingers:1.2, ugly, deformed, uneven, asymmetrical, unnatural, missing fingers, extra digit, fewer digits, opaque eyes, small eyes, ugly eyes, blurred eyes, bad face, (bad anatomy, ugly face:1.2), (worst quality, low quality, not detailed, low resolution:1.2), motion_blur, blur, blur_censor, blurry, simple_background, text, error, cropped, normal quality, jpeg artifacts, watermark, logo, signature, username, artist name, lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, worst quality,low quality,artist collaboration, bad anatomy,extra fingers,extra legs, missing legs, missing fingers, mutation, text, watermark, low resolution, 2koma, boder, muscles, strong, strong muscles, excessive muscles, gloves, crown",
+  "novelai_parameters": {
+    "negative_prompt": "",
+    "ucPreset": 0,
+    "sm": false,
+    "sm_dyn": false,
+    "quality_toggle": true,
+    "autoSmea": false,
+    "dynamic_thresholding": false,
+    "legacy": false,
+    "legacy_v3_extend": false,
+    "add_original_image": true,
+    "controlnet_strength": 1.0,
+    "cfg_rescale": 0.0,
+    "noise_schedule": "karras",
+    "prefer_brownian": true,
+    "normalize_reference_strength_multiple": false,
+    "strength": 0.7,
+    "skip_cfg_above_sigma": null
+  }
+}

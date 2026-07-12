@@ -48,7 +48,7 @@
 
 | 密钥/服务 | 配在哪 | 什么时候需要 |
 |-----------|--------|--------------|
-| **NovelAI token** | 朋友圈网页(`:8765`)的设置页填写 → 写进 novelai-skill 的 `.env.local` | 仅当你要**用 NovelAI 生图**（自拍/配图）。⚠️ 生图还需另外装 `novelai-skill`，本仓库不含它 |
+| **NovelAI token** | 朋友圈网页(`:8765`)的设置页填写 → 写进 novelai-skill 的 `.env.local` | 仅当你要**用 NovelAI 生图**（自拍/配图）。生图 skill **仓库已自带**（`skills/novelai-skill/`），把它复制到 `~/.claude/skills/` 即可用 |
 | **ComfyUI** | `configs/_global.yml` 的 `moments.image_generation.comfyui.url` | 用本地 ComfyUI 生图时。是本地服务，**无需 key**，只填地址（默认 `127.0.0.1:8188`） |
 
 **不需要 key 的**：天气（wttr.in）、RSS 热榜（rsshub）、节假日（timor.tech）——都是免费公开接口。
@@ -73,8 +73,11 @@
 **④ NovelAI token（可选，只有要 NovelAI 生图才需要）**
 1. 需要一个 NovelAI 订阅账号：官网 [novelai.net](https://novelai.net) 自己订阅（要外币卡/PayPal），或**某宝搜「NovelAI 账号」直接买一个已订阅的**（便宜省事）。
 2. 拿到账号后登录 novelai.net → 右上头像 → **Account / User Settings** → 找 **"Get Persistent API Token"** 生成一串长 token。
-3. 这串 token 填进朋友圈网页（`http://localhost:8765` 的设置页），程序会写进生图 skill 的配置。
-> ⚠️ 生图除了 token 还要**另外装 `novelai-skill`**（本仓库不含）。只想聊天不生图的话，这步整个跳过。
+3. 把生图 skill 复制到 Claude 的 skills 目录（仓库已自带，脱敏干净）：
+   - Mac/Linux：`cp -r skills/novelai-skill ~/.claude/skills/`
+   - Windows：`Copy-Item -Recurse skills\novelai-skill $env:USERPROFILE\.claude\skills\`
+4. 这串 token 填进朋友圈网页（`http://localhost:8765` 的设置页），程序会写进 skill 的 `.env.local`。
+> 只想聊天不生图的话，这几步整个跳过。生图默认走 NovelAI；也可改用本地 ComfyUI（`_global.yml` 里配）。
 
 ---
 
@@ -284,6 +287,8 @@ moments/        朋友圈网页（Flask，可选）
 generators/     情境 / 心情 / 世界事件生成器
 configs/        _global.yml + 每个 bot 一个 yml（模板见 _example.yml）
 channels/chenlulu/  示例人设（CLAUDE.md 人设 + access.json + 出厂关系种子）
+channels/_persona_template/  填空人设模板（做自己的角色照它填）
+skills/novelai-skill/  NovelAI 生图 skill（可选，复制到 ~/.claude/skills/ 启用）
 ```
 
 ---

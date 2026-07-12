@@ -1,0 +1,35 @@
+{
+  "skill_name": "novelai-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "看看你",
+      "expected_output": "触发出图，生成 AI 单人自拍的结构化中间稿和后续图片流程",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "你自拍一般会摆什么姿势？",
+      "expected_output": "触发出图，并附带一句轻松陪聊回复",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "我想做个拍一个按钮",
+      "expected_output": "不触发出图，只正常回复文字",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "再来一张",
+      "expected_output": "触发续图，沿用上一张主设定，换 seed 再生成一张新图",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "再发一张，动作更放开一点",
+      "expected_output": "触发续图，在上一张主设定上叠加新的动作要求",
+      "files": []
+    }
+  ]
+}
