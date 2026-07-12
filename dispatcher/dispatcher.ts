@@ -10,12 +10,12 @@
  * inbox → stdin 注入，崩溃自动 --resume，跨平台（macOS/Windows/Linux 无 tmux）。
  */
 
-import { Bot, GrammyError, InputFile, type Context } from 'grammy'
+import { Bot, GrammyError, type Context } from 'grammy'
 import type { ReactionTypeEmoji } from 'grammy/types'
 import {
   readFileSync, writeFileSync, mkdirSync, statSync, renameSync, appendFileSync, existsSync,
 } from 'fs'
-import { join, extname } from 'path'
+import { join, extname, basename } from 'path'
 import { homedir } from 'os'
 import { getManager, unifiedSessionUuid } from './worker-manager.ts'
 
@@ -670,6 +670,36 @@ function chunkText(text: string, limit: number, mode: 'length' | 'newline'): str
 }
 const PHOTO_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp'])
 
+// 手工缓冲 multipart 发文件到 Telegram。
+// 为什么不用 grammy 的 bot.api.sendPhoto：它把文件包成流式 body（chunked，无 Content-Length），
+// 而 bun 的 fetch 经 HTTPS_PROXY 发流式 body 会失败（"Network request failed"）。JSON 的
+// sendMessage 能通、curl 传图能通，都因为带 Content-Length。这里把整个 multipart 拼成单个
+// Buffer（bun 自动带 Content-Length，非流式），走同一条 bun fetch 代理 → 稳定，像 curl 一样。
+async function sendFileBuffered(
+  method: 'sendPhoto' | 'sendDocument', field: 'photo' | 'document',
+  chatId: string, filePath: string, replyToId?: number,
+): Promise<number> {
+  const data = readFileSync(filePath)
+  const boundary = `----tgbot${Date.now().toString(16)}${data.length.toString(16)}`
+  const CRLF = '\r\n'
+  const parts: Buffer[] = []
+  const textField = (name: string, value: string) =>
+    parts.push(Buffer.from(`--${boundary}${CRLF}Content-Disposition: form-data; name="${name}"${CRLF}${CRLF}${value}${CRLF}`))
+  textField('chat_id', chatId)
+  if (replyToId != null) textField('reply_to_message_id', String(replyToId))
+  parts.push(Buffer.from(`--${boundary}${CRLF}Content-Disposition: form-data; name="${field}"; filename="${basename(filePath)}"${CRLF}Content-Type: application/octet-stream${CRLF}${CRLF}`))
+  parts.push(data)
+  parts.push(Buffer.from(`${CRLF}--${boundary}--${CRLF}`))
+  const r = await fetch(`https://api.telegram.org/bot${TOKEN}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    body: Buffer.concat(parts),
+  })
+  const j = await r.json() as any
+  if (!j.ok) throw new Error(`${method} ${r.status}: ${j.description || JSON.stringify(j).slice(0, 200)}`)
+  return j.result.message_id
+}
+
 // ─── HTTP server for workers ─────────────────────────────────────────
 const server = Bun.serve({
   port: DISPATCHER_PORT,
@@ -788,13 +818,14 @@ const server = Bun.serve({
         for (const f of files) {
           const ext = extname(f).toLowerCase()
           const replyToId = (replyTo != null && replyMode !== 'off') ? replyTo : undefined
-          const opts = replyToId != null ? { reply_parameters: { message_id: replyToId } } : {}
-          // 直连 Telegram 发图/文件（grammy），不再经 voice-bridge——发图本就无需外部服务。
-          const input = new InputFile(f)
-          const sent = PHOTO_EXTS.has(ext)
-            ? await bot.api.sendPhoto(chatId, input, opts)
-            : await bot.api.sendDocument(chatId, input, opts)
-          sentIds.push(sent.message_id)
+          const isPhoto = PHOTO_EXTS.has(ext)
+          // 缓冲 multipart 直连 Telegram（见 sendFileBuffered 注释：流式 body 过代理会失败）
+          const mid = await sendFileBuffered(
+            isPhoto ? 'sendPhoto' : 'sendDocument',
+            isPhoto ? 'photo' : 'document',
+            chatId, f, replyToId,
+          )
+          sentIds.push(mid)
         }
         // Peer inject (groups only; fire-and-forget). Bypass Telegram's
         // bot-to-bot invisibility by notifying peer dispatchers directly.
