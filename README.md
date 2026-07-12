@@ -34,6 +34,29 @@
 
 ---
 
+## 需要哪些密钥（钥匙清单）
+
+### 必需的 3 把（不配 bot 跑不起来）
+
+| 密钥 | 配在哪 | 干什么 |
+|------|--------|--------|
+| **Telegram bot token** | `channels/<bot>/.env` 的 `TELEGRAM_BOT_TOKEN` | 收发 Telegram 消息（每个 bot 一把，找 `@BotFather` 拿） |
+| **DeepSeek key** | `configs/_global.yml` 的 `jiwen.delta_llm.api_key` | 后台给对话打情绪分、算关系数值、群聊导演、主动消息 |
+| **Claude provider** | `~/.claude/settings.json` 或直接 `claude` 订阅登录 | 机器人「说话」的模型。见下方「切换模型来源」 |
+
+### 可选的（对应功能才需要，不用就不配）
+
+| 密钥/服务 | 配在哪 | 什么时候需要 |
+|-----------|--------|--------------|
+| **NovelAI token** | 朋友圈网页(`:8765`)的设置页填写 → 写进 novelai-skill 的 `.env.local` | 仅当你要**用 NovelAI 生图**（自拍/配图）。⚠️ 生图还需另外装 `novelai-skill`，本仓库不含它 |
+| **ComfyUI** | `configs/_global.yml` 的 `moments.image_generation.comfyui.url` | 用本地 ComfyUI 生图时。是本地服务，**无需 key**，只填地址（默认 `127.0.0.1:8188`） |
+
+**不需要 key 的**：天气（wttr.in）、RSS 热榜（rsshub）、节假日（timor.tech）——都是免费公开接口。
+
+> 小结：**只想让 bot 能私聊聊天** → 配前 3 把里的 Telegram token + DeepSeek key + Claude 登录，就够了。生图、朋友圈是锦上添花，用到再配。
+
+---
+
 ## 部署（Mac / Linux）
 
 > 下面每一行 `#` 后面是"这条命令干什么"的说明。`cd 某目录` = "进入某个文件夹"。
@@ -127,6 +150,8 @@ worker 是后台进程，没有能 attach 的窗口——看 `channels/<bot>/log
   - Mac/Linux：`bash scripts/watch-bot.sh chenlulu`（或 `tail -f ~/.claude/channels/chenlulu/logs/chat.log`）
   - Windows：`powershell -File windows\watch-bot.ps1 chenlulu`
 - **`stream.jsonl`** —— 原始事件流，出 bug 时看这个（含报错、每轮耗时/成本）。
+
+> **Windows 日志中文乱码？** 日志文件本身是 UTF-8、没坏（也不影响 AI 回复）——乱码只是 PowerShell 5.1 默认按 GBK 读文件。`watch-bot.ps1` 已内置 `chcp 65001` + `-Encoding UTF8` 修好了。若你直接 `Get-Content` 看，请加 `-Encoding UTF8`；想让 emoji（👤🤖⚙）也正常显示，用 **Windows Terminal** 而不是老式 cmd 窗口。
 - **翻历史 / 手动介入**：先停掉该 bot（重启脚本，或 `/status` 查到 pid 后结束进程），再 `claude --resume <会话uuid>` 打开同一会话手动聊；退出后 worker 会在下条消息自动复活。⚠️ 同一会话两端不能同时开。
 
 ---
