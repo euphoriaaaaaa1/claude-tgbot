@@ -765,14 +765,19 @@ const server = Bun.serve({
           for (let a = 1; a <= 3; a++) {
             try { return await bot.api.sendMessage(chatId, text, opts) }
             catch (e) {
-              if (e instanceof GrammyError && e.error_code === 429) {
-                const wait = ((e.parameters?.retry_after ?? 1) * 1000)  // 限流=确定没送达，等 retry_after 再试
-                process.stderr.write(`dispatcher[${BOT_NAME}]: 429 限流，${wait}ms 后重试\n`)
+              // 只有"确定没送达"才重试：429 限流，或连接根本没建立(拒连/DNS 失败)。
+              // 其它(连接重置/超时/SSL 中断——可能在 Telegram 已收到之后才断)一律不重试，
+              // 否则重发已送达的段 → 用户看到 A A B B。
+              const notDelivered = e instanceof GrammyError
+                ? e.error_code === 429
+                : /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(String((e as any)?.cause?.code ?? '') + ' ' + String(e))
+              if (notDelivered && a < 3) {
+                const wait = (e instanceof GrammyError ? (e.parameters?.retry_after ?? 1) : 0.4 * a) * 1000
+                process.stderr.write(`dispatcher[${BOT_NAME}]: 发送失败(确定未送达)，${wait}ms 后重试\n`)
                 await new Promise(r => setTimeout(r, wait))
                 continue
               }
-              // 网络抖动/连接重置/Telegram 4xx：可能已送达，重试会重复 → 不重试，跳过该段
-              process.stderr.write(`dispatcher[${BOT_NAME}]: sendMessage 失败，跳过该段避免重复(${String(e).slice(0,120)})\n`)
+              process.stderr.write(`dispatcher[${BOT_NAME}]: 发送失败，跳过该段避免重复(${String(e).slice(0,120)})\n`)
               return null
             }
           }
