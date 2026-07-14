@@ -757,20 +757,26 @@ const server = Bun.serve({
         const sentIds: number[] = []
         const delay = access.splitOnParagraph ? (access.paragraphDelay ?? 0) : 0
 
-        // 每段发送内部重试：代理(7897)偶发网络抖动会让 sendMessage 抛错，若不吸收，
-        // 整条 /send 就 500 → worker 以为整条失败 → 重发整条 → 已送达的段重复(实测 bug)。
-        // 网络类失败通常意味着"没发出去"，重试同段是安全的；重试掉的多是瞬时抖动。
-        const sendChunk = async (text: string, opts: any): Promise<{ message_id: number }> => {
-          let lastErr: unknown
+        // 发送单段。核心坑：代理(7897)会在"Telegram 已收到并投递"之后掐断响应连接 →
+        // fetch 抛网络错误，但消息其实已送达。这种错误【绝不能重试】，否则重发已送达的段 →
+        // 用户看到 A A B B（实测 bug）。只对"确定没送达"的错误重试：429 限流。
+        // 其它错误一律不重试、返回 null 跳过该段（不抛错，避免整条 /send 500 → worker 整条重发）。
+        const sendChunk = async (text: string, opts: any): Promise<{ message_id: number } | null> => {
           for (let a = 1; a <= 3; a++) {
             try { return await bot.api.sendMessage(chatId, text, opts) }
             catch (e) {
-              lastErr = e
-              process.stderr.write(`dispatcher[${BOT_NAME}]: sendMessage 第${a}次失败(${String(e).slice(0,80)})${a<3?'，重试':'，放弃'}\n`)
-              if (a < 3) await new Promise(r => setTimeout(r, 400 * a))
+              if (e instanceof GrammyError && e.error_code === 429) {
+                const wait = ((e.parameters?.retry_after ?? 1) * 1000)  // 限流=确定没送达，等 retry_after 再试
+                process.stderr.write(`dispatcher[${BOT_NAME}]: 429 限流，${wait}ms 后重试\n`)
+                await new Promise(r => setTimeout(r, wait))
+                continue
+              }
+              // 网络抖动/连接重置/Telegram 4xx：可能已送达，重试会重复 → 不重试，跳过该段
+              process.stderr.write(`dispatcher[${BOT_NAME}]: sendMessage 失败，跳过该段避免重复(${String(e).slice(0,120)})\n`)
+              return null
             }
           }
-          throw lastErr
+          return null
         }
 
         for (let i = 0; i < allChunks.length; i++) {
@@ -788,7 +794,7 @@ const server = Bun.serve({
             if (hasDual) {
               const sent = await sendChunk(allChunks[i],
                 shouldReplyTo ? { reply_parameters: { message_id: replyTo! } } : {})
-              sentIds.push(sent.message_id)
+              if (sent) sentIds.push(sent.message_id)
             }
             if (!skipVoice) {
               const vResp = await fetch('http://127.0.0.1:7788/send_voice', {
@@ -811,7 +817,7 @@ const server = Bun.serve({
           } else {
             const sent = await sendChunk(allChunks[i],
               shouldReplyTo ? { reply_parameters: { message_id: replyTo! } } : {})
-            sentIds.push(sent.message_id)
+            if (sent) sentIds.push(sent.message_id)
           }
         }
 
