@@ -14,9 +14,10 @@ import { Bot, GrammyError, type Context } from 'grammy'
 import type { ReactionTypeEmoji } from 'grammy/types'
 import {
   readFileSync, writeFileSync, mkdirSync, statSync, renameSync, appendFileSync, existsSync,
+  readdirSync, rmSync,
 } from 'fs'
 import { join, extname, basename } from 'path'
-import { homedir } from 'os'
+import { homedir, tmpdir } from 'os'
 import { getManager, unifiedSessionUuid } from './worker-manager.ts'
 
 // ─── env ──────────────────────────────────────────────────────────────
@@ -351,6 +352,26 @@ function writeGroupTranscript(ctx: Context, text: string, imagePath?: string, at
   const chatType = ctx.chat?.type
   if (chatType !== 'group' && chatType !== 'supergroup') return
   try {
+    // 跨 bot 去重：同群的 N 个 dispatcher 进程都会收到同一条消息，若各写一行，director
+    // 会看到同一句话 ×N → 误判热度爆表 → 连续指派多个 bot 全部回复（实测 bug）。
+    // 用 O_EXCL 标志文件原子抢占：谁抢到谁写，其余进程静默跳过。放系统临时目录重启自清。
+    if (ctx.message?.message_id != null) {
+      const dedupDir = join(tmpdir(), 'tg-transcript-dedup')
+      mkdirSync(dedupDir, { recursive: true })
+      try {
+        writeFileSync(join(dedupDir, `${ctx.chat!.id}_${ctx.message.message_id}`), botUsername, { flag: 'wx' })
+      } catch { return }  // 已有别的 bot 写过这条 → 跳过
+      // 低频顺手清理 24h+ 的旧标志，防小文件无限堆积
+      if (Math.random() < 0.02) {
+        try {
+          const cutoff = Date.now() - 24 * 3600_000
+          for (const f of readdirSync(dedupDir)) {
+            const p = join(dedupDir, f)
+            try { if (statSync(p).mtimeMs < cutoff) rmSync(p, { force: true }) } catch {}
+          }
+        } catch {}
+      }
+    }
     const tpath = join(GROUP_TRANSCRIPTS_DIR, `${ctx.chat!.id}.jsonl`)
     const line = JSON.stringify({
       ts: new Date((ctx.message?.date ?? Date.now() / 1000) * 1000).toISOString(),
