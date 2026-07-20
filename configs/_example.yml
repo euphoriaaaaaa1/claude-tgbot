@@ -13,6 +13,11 @@ chat_id: ""                             # 留空 enable-bot.sh 会从 access.jso
 # bot 在朋友圈/主动消息里指代用户时用这个词，禁止出现"你"
 user_address: "哥哥"                    # 哥哥 / 主人 / 老板 / 老婆 ... 按你和 bot 的关系定
 
+# ─── 电话模块（voicecall/，可选功能。不用电话可忽略这三行）───
+voice_id: ""                            # voice-bridge/TTS 音色 ID；留空 → 默认音色
+user_name: "对方"                       # 电话里 bot 第三人称指代用户的词，仅 voice-action 提示用
+# dispatcher_port: 17801                # 该 bot dispatcher 端口（默认 17801）
+
 # ─── 个人签名 ───
 # 显示在朋友圈头像下方
 bio: "在这里写一句给所有人看的简介"

@@ -1,0 +1,1070 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>打电话 demo</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<style>
+  :root{
+    --key:rgba(120,120,128,.32);        /* iOS 磨砂灰圆 */
+    --key-on:#f2f2f5;
+    --her:#ffd9a3;                       /* bot 暖色，最亮 */
+    --her-glow:rgba(255,196,120,.5);
+    --me:#c9d2dc;                        /* 用户淡冷 */
+    --ios-red:#ff3b30; --ios-green:#34c759;
+    /* 挂断听筒图标（mask，颜色由 background 决定） */
+    --phone:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.4c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.4 0 .8-.3 1.1l-2.1 2.1z" fill="black"/></svg>');
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%; margin:0}
+  body{
+    color:#fff; background:#000;
+    font-family:"SF Pro Display","PingFang SC","Hiragino Sans GB",system-ui,-apple-system,sans-serif;
+    display:flex; align-items:center; justify-content:center;
+    -webkit-tap-highlight-color:transparent;
+  }
+  /* iPhone 机身：手机端铺满 100dvh，桌面端居中一部 iPhone */
+  .ios{
+    position:relative; width:100%; max-width:430px; height:100dvh;
+    display:flex; flex-direction:column; overflow:hidden;
+    background:linear-gradient(180deg,#0f0f12 0%,#1c1c21 55%,#2b2b31 100%);
+  }
+  @media(min-width:480px){
+    .ios{width:390px; height:min(844px,94vh); border-radius:52px;
+      border:1px solid #2c2c30; box-shadow:0 40px 120px -20px rgba(0,0,0,.9), inset 0 0 0 5px #000;}
+  }
+
+  /* ── iOS 状态栏（纯装饰） ── */
+  .statusbar{flex:0 0 auto; height:52px; padding:0 30px; display:flex; align-items:center; justify-content:space-between; font-size:15px; font-weight:600;}
+  .sb-time{min-width:54px; letter-spacing:.02em}
+  .island{position:absolute; left:50%; top:11px; transform:translateX(-50%); width:116px; height:33px; border-radius:20px; background:#000;}
+  .sb-right{display:flex; align-items:center; gap:7px}
+  .sb-right svg{display:block}
+
+  /* ── 通话人信息 ── */
+  .caller{flex:0 0 auto; padding:12px 24px 4px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:6px;}
+  .cname{font-size:30px; font-weight:500; letter-spacing:.02em}
+  #timer{font-size:19px; color:rgba(255,255,255,.72); font-variant-numeric:tabular-nums; min-height:22px; letter-spacing:.03em}
+  #status{font-size:13px; color:rgba(255,255,255,.5); line-height:1.45; max-width:290px; min-height:18px;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;}
+
+  /* ── 中间·歌词滚动区（三段 flex 的 flex:1 段，永不压按钮） ── */
+  .stage{flex:1; min-height:0; display:flex;}
+  #log{
+    flex:1; min-height:0; overflow-y:auto; overflow-x:hidden;
+    display:flex; flex-direction:column; justify-content:flex-end; gap:15px;
+    padding:40px 34px; scroll-behavior:smooth;
+    -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 18%,#000 80%,transparent 100%);
+    mask-image:linear-gradient(180deg,transparent 0,#000 18%,#000 80%,transparent 100%);
+    scrollbar-width:none;
+  }
+  #log::-webkit-scrollbar{display:none}
+  .bub{max-width:88%; line-height:1.45; white-space:pre-wrap; word-break:break-word;
+    font-size:16px; opacity:.36; transition:opacity .45s, font-size .45s, color .45s;}
+  .bub.her{align-self:flex-start; color:var(--her)}
+  .bub.me{align-self:flex-end; text-align:right; color:var(--me)}
+  .bub.sys{align-self:center; text-align:center; font-size:12px; color:rgba(255,255,255,.4); letter-spacing:.04em; opacity:.55}
+  #log>.bub:last-child{opacity:1; font-size:22px; font-weight:500}          /* 最新一条放大高亮 */
+  #log>.bub.her:last-child{text-shadow:0 0 24px var(--her-glow)}
+  .t{display:none}   /* 计时数字默认藏，双击名字进 debug 才显 */
+  .ios.debug .t{display:block; font-size:10px; color:rgba(255,255,255,.4); margin-top:4px}
+  .playbtn{align-self:flex-start; margin-top:6px; font-size:13px; padding:6px 13px; border-radius:18px; border:1px solid var(--her); background:transparent; color:var(--her); cursor:pointer}
+
+  /* ── 底部 6 键宫格（2 行 × 3 列） ── */
+  .pad{flex:0 0 auto; padding:6px 32px 40px; display:grid; grid-template-columns:repeat(3,1fr); row-gap:22px; justify-items:center;}
+  .cell{display:flex; flex-direction:column; align-items:center; gap:9px}
+  .kbtn{
+    width:74px; height:74px; border-radius:50%; border:none; cursor:pointer; color:#fff;
+    display:grid; place-items:center; background:var(--key);
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+    transition:transform .15s, background .25s, color .25s, box-shadow .25s;
+  }
+  .kbtn:active{transform:scale(.9); background:#fff; color:#000}  /* 按下白高亮，图标随 color 翻黑（真电话按键手感）*/
+  .kbtn svg{width:30px; height:30px}
+  .klbl{font-size:13px; color:#fff; letter-spacing:.02em}
+  #outLabel{max-width:104px; text-align:center; line-height:1.25; color:rgba(255,255,255,.82)}
+  .kbtn.on{background:var(--key-on); color:#000}        /* 免提开=白底黑图标 */
+  .kbtn.warn{background:var(--ios-red); color:#fff}     /* 静音激活=红 */
+  /* 按住说话录音态 */
+  #ptt{user-select:none; -webkit-user-select:none; touch-action:none;}
+  #ptt.rec{background:var(--her); color:#2a1c10; box-shadow:0 0 0 8px rgba(255,190,120,.18); animation:pulse 1.1s ease-in-out infinite}
+  @keyframes pulse{50%{box-shadow:0 0 0 14px rgba(255,190,120,.05)}}
+  /* 接听 / 结束（#call·leaf：JS 写 textContent，故图标走 ::before mask，文字 font-size:0 藏掉） */
+  #call{
+    font-size:0; position:relative; width:74px; height:74px; border-radius:50%; border:none; cursor:pointer;
+    background:var(--ios-green); transition:transform .15s, background .3s;
+  }
+  #call:active{transform:scale(.9)}
+  /* 图标绝对居中：inset:0 + margin:auto 把 32×32 图标钉在圆正中，rotate 以中心为轴、零位移 */
+  #call::before{content:""; position:absolute; inset:0; margin:auto; width:32px; height:32px; background:#fff;
+    transform-origin:center; transition:transform .3s;
+    -webkit-mask:var(--phone) center/contain no-repeat; mask:var(--phone) center/contain no-repeat;}
+  #call.on{background:var(--ios-red)}          /* 仅 callOn=true(已进 callLoop) 时红「结束」，idle 恒绿「接听」 */
+  #call.on::before{transform:rotate(134deg)}
+  .txt{font-size:13px; color:#fff}
+  .callcell .txt::after{content:"接听"}
+  #call.on ~ .txt::after{content:"结束"}
+
+  /* ── 来电通知开关（默认关，追加在状态区下方的小胶囊）── */
+  .notifbar{flex:0 0 auto; display:flex; justify-content:center; padding:2px 24px 6px}
+  #notifToggle{
+    font-size:12px; letter-spacing:.03em; color:rgba(255,255,255,.7);
+    background:var(--key); border:none; border-radius:16px; padding:6px 14px; cursor:pointer;
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); transition:background .25s,color .25s;
+  }
+  #notifToggle.on{background:var(--ios-green); color:#fff}
+  #notifToggle[disabled]{opacity:.4; cursor:default}
+
+  /* ── 全屏来电 overlay：Apple 流光风（深色玻璃 + 缓慢流动极光，纯 CSS）── */
+  #incoming{
+    position:absolute; inset:0; z-index:50; display:none; flex-direction:column;
+    align-items:center; justify-content:space-between; padding:84px 30px 64px;
+    background:#07070c; overflow:hidden;
+  }
+  #incoming.show{display:flex}
+  /* 两层错相流光，缓慢漂移 + 旋转缩放，屏幕混合叠出极光 */
+  #incoming::before, #incoming::after{
+    content:""; position:absolute; inset:-45%; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(38% 38% at 28% 30%, rgba(122,168,255,.60), transparent 62%),
+      radial-gradient(34% 34% at 72% 38%, rgba(255,138,205,.50), transparent 62%),
+      radial-gradient(44% 44% at 52% 74%, rgba(120,255,214,.44), transparent 62%);
+    filter:blur(64px); opacity:.72;
+    animation:aurora 20s ease-in-out infinite alternate;
+  }
+  #incoming::after{ animation-duration:29s; animation-direction:alternate-reverse; opacity:.5; mix-blend-mode:screen; }
+  @keyframes aurora{
+    0%{transform:translate(-6%,-4%) rotate(0deg) scale(1.1)}
+    50%{transform:translate(6%,5%) rotate(14deg) scale(1.32)}
+    100%{transform:translate(-4%,7%) rotate(-9deg) scale(1.16)}
+  }
+  /* 压暗玻璃遮罩，保证文字可读 */
+  .inc-glass{position:absolute; inset:0; z-index:0; pointer-events:none;
+    background:linear-gradient(180deg,rgba(5,5,12,.30) 0%,rgba(5,5,12,.55) 100%);
+    backdrop-filter:blur(2px); -webkit-backdrop-filter:blur(2px);}
+  .inc-top, .inc-actions{position:relative; z-index:1}
+  .inc-top{text-align:center; display:flex; flex-direction:column; align-items:center; gap:12px}
+  .inc-sub{font-size:13px; color:rgba(255,255,255,.62); letter-spacing:.42em; text-transform:uppercase; font-weight:300}
+  .inc-name{font-size:38px; font-weight:300; letter-spacing:.07em}
+  .inc-avatar{width:104px; height:104px; border-radius:50%; margin-top:22px;
+    background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.18);
+    display:grid; place-items:center; overflow:hidden;
+    font-size:46px; font-weight:400; color:#fff; letter-spacing:0;
+    text-shadow:0 1px 4px rgba(0,0,0,.35);
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    box-shadow:0 0 54px rgba(180,200,255,.30), inset 0 1px 0 rgba(255,255,255,.30);
+    animation:incpulse 2.6s ease-in-out infinite}
+  @keyframes incpulse{50%{box-shadow:0 0 88px rgba(205,180,255,.48), inset 0 1px 0 rgba(255,255,255,.30)}}
+  .inc-missed{font-size:15px; color:rgba(255,255,255,.72); min-height:20px; letter-spacing:.12em; font-weight:300}
+  /* ── 底部控件：上「滑动以接听」滑块 + 下红色挂断，纵向排列 ── */
+  .inc-actions{display:flex; flex-direction:column; align-items:center; gap:30px; width:100%}
+  .inc-cell{display:flex; flex-direction:column; align-items:center; gap:12px}
+  .inc-cap{font-size:13px; color:rgba(255,255,255,.78); letter-spacing:.06em; font-weight:300}
+
+  /* 滑动以接听：半透明黑玻璃长槽（内凹质感 + 亮顶边高光）*/
+  .slide-track{
+    position:relative; width:100%; max-width:330px; height:70px; border-radius:36px;
+    background:rgba(8,8,14,.55);
+    backdrop-filter:blur(16px) saturate(140%); -webkit-backdrop-filter:blur(16px) saturate(140%);
+    border:1px solid rgba(255,255,255,.10);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.16), inset 0 -2px 5px rgba(0,0,0,.6), 0 10px 34px rgba(0,0,0,.42);
+    overflow:hidden; touch-action:none; user-select:none; -webkit-user-select:none;
+  }
+  /* 跟随 knob 亮起的填充，暗示"再滑一点就接通" */
+  .slide-fill{position:absolute; left:0; top:0; bottom:0; width:70px; border-radius:36px; pointer-events:none;
+    background:linear-gradient(90deg, rgba(52,199,89,0) 0%, rgba(52,199,89,.18) 100%);}
+  /* shimmer 扫光文案（经典 slide-to-unlock：一道高光从右向左循环扫过）*/
+  .slide-shimmer{
+    position:absolute; inset:0; display:grid; place-items:center; padding-left:40px;
+    font-size:17px; font-weight:400; letter-spacing:.14em; white-space:nowrap; pointer-events:none;
+    background:linear-gradient(100deg,
+      rgba(255,255,255,.26) 30%, rgba(255,255,255,.96) 48%, rgba(255,255,255,.26) 66%);
+    background-size:220% 100%;
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    animation:slideShimmer 2.6s linear infinite;
+  }
+  @keyframes slideShimmer{0%{background-position:130% 0} 100%{background-position:-130% 0}}
+  /* 可拖动 knob（玻璃高光圆 + 绿色听筒）*/
+  .slide-knob{
+    position:absolute; left:4px; top:4px; width:62px; height:62px; border-radius:50%;
+    display:grid; place-items:center; cursor:grab; touch-action:none; will-change:transform;
+    background:linear-gradient(160deg,#ffffff 0%,#e7ebf1 100%);
+    box-shadow:0 6px 16px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.95), inset 0 -2px 4px rgba(0,0,0,.14);
+  }
+  .slide-knob svg{width:30px; height:30px; fill:var(--ios-green)}
+  .slide-track.dragging .slide-knob{cursor:grabbing}
+  .slide-track.dragging .slide-shimmer{animation:none}   /* 拖动时停扫光，交给跟手反馈 */
+
+  /* 红色挂断圆按钮 */
+  .inc-hangup{
+    width:66px; height:66px; border-radius:50%; border:none; cursor:pointer; display:grid; place-items:center;
+    background:var(--ios-red);
+    box-shadow:0 10px 30px rgba(255,59,48,.42), inset 0 1px 0 rgba(255,255,255,.3);
+    transition:transform .15s;
+  }
+  .inc-hangup:active{transform:scale(.9)}
+  .inc-hangup svg{width:30px; height:30px; fill:#fff; transform:rotate(134deg)}   /* 听筒旋转=挂断 */
+  #incoming.missed .slide-track{display:none}      /* 未接来电态无可接内容，只留挂断/关闭 */
+
+  /* ── 通话人名 + 编辑备注铅笔（内联在 .caller 顶部）── */
+  .nameRow{display:flex; align-items:center; justify-content:center; gap:8px}
+  #editName{
+    flex:0 0 auto; width:26px; height:26px; border-radius:50%; border:none; cursor:pointer;
+    background:var(--key); color:rgba(255,255,255,.85); display:grid; place-items:center;
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); transition:background .2s,transform .12s;
+  }
+  #editName:active{transform:scale(.88); background:#fff; color:#000}
+  #editName svg{width:14px; height:14px}
+
+  /* ── 通话记录入口胶囊（与来电通知同排）── */
+  #histBtn{
+    font-size:12px; letter-spacing:.03em; color:rgba(255,255,255,.7);
+    background:var(--key); border:none; border-radius:16px; padding:6px 14px; cursor:pointer;
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); transition:background .25s,color .25s;
+  }
+  #histBtn:active{background:#fff; color:#000}
+
+  /* ── 通话记录 overlay（iOS「最近通话」风：列表 + 点进 transcript）── */
+  #history{
+    position:absolute; inset:0; z-index:60; display:none; flex-direction:column;
+    background:linear-gradient(180deg,#111116 0%,#191920 100%);
+  }
+  #history.show{display:flex}
+  .hist-head{flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+    padding:16px 18px 12px; border-bottom:.5px solid rgba(255,255,255,.09)}
+  .hist-head .hbk{min-width:60px; font-size:16px; color:var(--her); background:none; border:none;
+    cursor:pointer; text-align:left; padding:4px 0}
+  .hist-head .htitle{font-size:17px; font-weight:600; letter-spacing:.02em}
+  .hist-head .hspace{min-width:60px}
+  .hist-scroll{flex:1; min-height:0; overflow-y:auto; scrollbar-width:none}
+  .hist-scroll::-webkit-scrollbar{display:none}
+  /* 列表行 */
+  .hrow{display:flex; align-items:center; gap:13px; padding:12px 18px; cursor:pointer;
+    border-bottom:.5px solid rgba(255,255,255,.07); transition:background .15s}
+  .hrow:active{background:rgba(255,255,255,.06)}
+  .havatar{flex:0 0 auto; width:44px; height:44px; border-radius:50%; display:grid; place-items:center;
+    font-size:19px; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.35);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+  .hmeta{flex:1; min-width:0}
+  .hname{font-size:16px; font-weight:500; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .hsub{font-size:12.5px; color:rgba(255,255,255,.5); margin-top:2px}
+  .htime{flex:0 0 auto; font-size:13px; color:rgba(255,255,255,.45); font-variant-numeric:tabular-nums}
+  .hempty{padding:60px 30px; text-align:center; color:rgba(255,255,255,.4); font-size:14px; line-height:1.7}
+  /* transcript 视图 */
+  .hx-head{display:flex; align-items:center; gap:12px; padding:14px 18px; border-bottom:.5px solid rgba(255,255,255,.09)}
+  .hx-head .havatar{width:40px; height:40px; font-size:17px}
+  .hx-name{font-size:17px; font-weight:600}
+  .hx-when{font-size:12px; color:rgba(255,255,255,.45); margin-top:2px}
+  .hx-body{padding:22px 20px 40px; display:flex; flex-direction:column; gap:13px}
+  .hx{max-width:82%; line-height:1.45; white-space:pre-wrap; word-break:break-word; font-size:15.5px;
+    padding:9px 13px; border-radius:16px}
+  .hx.her{align-self:flex-start; color:#2a1c10; background:var(--her)}
+  .hx.me{align-self:flex-end; color:#1c2330; background:var(--me)}
+</style>
+</head>
+<body>
+<div class="ios" id="phone">
+  <!-- iOS 状态栏（装饰） -->
+  <div class="statusbar">
+    <span class="sb-time" id="clock">16:47</span>
+    <span class="island"></span>
+    <span class="sb-right">
+      <svg width="18" height="12" viewBox="0 0 18 12" fill="#fff"><rect x="0" y="7" width="3" height="5" rx="1"/><rect x="5" y="4.5" width="3" height="7.5" rx="1"/><rect x="10" y="2" width="3" height="10" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+      <svg width="17" height="12" viewBox="0 0 17 12" fill="none" stroke="#fff" stroke-width="1.5"><path d="M1 3.6a11 11 0 0115 0"/><path d="M3.6 6.1a7.5 7.5 0 019.8 0"/><path d="M6.1 8.6a4 4 0 014.8 0"/><circle cx="8.5" cy="10.7" r=".9" fill="#fff" stroke="none"/></svg>
+      <svg width="26" height="13" viewBox="0 0 26 13" fill="none"><rect x="1" y="1" width="21" height="11" rx="3" stroke="#fff" stroke-opacity=".45"/><rect x="3" y="3" width="17" height="7" rx="1.5" fill="#fff"/><rect x="23.4" y="4.5" width="1.6" height="4" rx=".8" fill="#fff" fill-opacity=".45"/></svg>
+    </span>
+  </div>
+
+  <!-- 通话人信息 -->
+  <div class="caller">
+    <div class="nameRow">
+      <div class="cname" id="peerName">陈露露</div>
+      <button id="editName" aria-label="编辑备注" title="编辑备注">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5a2 2 0 000-2.8l-1.2-1.2a2 2 0 00-2.8 0L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg>
+      </button>
+    </div>
+    <div id="timer"></div>
+    <div id="status">轻点绿色按钮接通，或按住话筒说话（首次会请求麦克风）。回复稍慢是 Claude 冷启动，正常。</div>
+  </div>
+
+  <!-- 来电通知开关（默认关；点击手势内先 requestPermission 再订阅）-->
+  <div class="notifbar"><button id="notifToggle">🔕 来电通知：关</button><button id="histBtn">🕑 通话记录</button></div>
+
+  <!-- 歌词滚动区 -->
+  <div class="stage"><div id="log"></div></div>
+
+  <!-- 底部 6 键宫格 -->
+  <div class="pad">
+    <div class="cell">
+      <button class="kbtn" id="btnSpeaker" aria-label="当前音频输出">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5v5h3.5L13 19V5L7.5 9.5H4z"/><path d="M16.5 8.8a4.5 4.5 0 010 6.4"/><path d="M19 6.4a8 8 0 010 11.2"/></svg>
+      </button><span class="klbl" id="outLabel">当前输出</span>
+    </div>
+    <div class="cell">
+      <button class="kbtn" id="btnRole" aria-label="换角色">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5"/></svg>
+      </button><span class="klbl">换角色</span>
+    </div>
+    <div class="cell">
+      <button class="kbtn" id="btnMute" aria-label="静音">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0013 0"/><path d="M12 17.5V21"/></svg>
+      </button><span class="klbl">静音</span>
+    </div>
+    <div class="cell">
+      <button class="kbtn" id="btnNew" aria-label="新会话">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 11-2.3-5.6"/><path d="M20 4v4h-4"/></svg>
+      </button><span class="klbl">新会话</span>
+    </div>
+    <div class="cell">
+      <button class="kbtn" id="ptt" aria-label="按住说话">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0013 0"/><path d="M12 17.5V21"/></svg>
+      </button><span class="klbl">按住说话</span>
+    </div>
+    <div class="cell callcell">
+      <button id="call">接听</button><span class="txt"></span>
+    </div>
+  </div>
+
+  <!-- 通话逻辑仍读 #bot.value，保留但隐藏，靠"换角色"键同步 -->
+  <select id="bot" hidden>
+    <option value="chenlulu">陈露露</option>
+  </select>
+
+  <!-- 全屏来电界面（独立层，唤起时 .show）-->
+  <div id="incoming">
+    <div class="inc-glass"></div>
+    <div class="inc-top">
+      <div class="inc-sub">来电</div>
+      <div class="inc-name" id="incName"></div>
+      <div class="inc-avatar" id="incAvatar"></div>
+      <div class="inc-missed" id="incMissed"></div>
+    </div>
+    <div class="inc-actions">
+      <!-- 滑动以接听：拖过阈值→answerCall -->
+      <div class="slide-track" id="slideTrack">
+        <div class="slide-fill" id="slideFill"></div>
+        <div class="slide-shimmer" id="slideLabel">滑动以接听</div>
+        <div class="slide-knob" id="slideKnob" role="button" aria-label="滑动以接听">
+          <svg viewBox="0 0 24 24"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.4c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.4 0 .8-.3 1.1l-2.1 2.1z"/></svg>
+        </div>
+      </div>
+      <!-- 红色挂断：click→rejectCall（未接态则关闭）-->
+      <div class="inc-cell">
+        <button class="inc-hangup" id="incHangup" aria-label="挂断">
+          <svg viewBox="0 0 24 24"><path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.4c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.4 0 .8-.3 1.1l-2.1 2.1z"/></svg>
+        </button><span class="inc-cap" id="incRejectCap">挂断</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通话记录（列表 + transcript，独立层，追加不改任何通话链路）-->
+  <div id="history">
+    <div class="hist-head">
+      <button class="hbk" id="histBack">‹ 返回</button>
+      <div class="htitle" id="histHeadTitle">通话记录</div>
+      <div class="hspace"></div>
+    </div>
+    <div class="hist-scroll">
+      <div id="histList"></div>
+      <div id="histDetail" style="display:none"></div>
+    </div>
+  </div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const logEl=$('#log'), statusEl=$('#status');
+let stream, callOn=false, recording=false, audioUnlocked=false;
+const player=new Audio();  // 复用一个元素,便于解锁自动播放
+
+function setStatus(t){statusEl.textContent=t}
+function add(cls,text,timings){
+  const d=document.createElement('div'); d.className='bub '+cls; d.textContent=text;
+  if(timings){const t=document.createElement('div');t.className='t';
+    t.textContent=`STT ${timings.stt_ms||0}ms · Claude ${timings.llm_ms||0}ms · TTS ${timings.tts_ms||0}ms`; d.appendChild(t);}
+  logEl.appendChild(d); logEl.scrollTop=logEl.scrollHeight; return d;
+}
+function sys(t){add('sys',t)}
+
+// 在用户手势里调一次,解锁后续自动播放(绕过浏览器 autoplay 限制)
+function unlockAudio(){
+  if(audioUnlocked)return;
+  player.src='data:audio/mpeg;base64,//uQx'; // 无效但触发一次 play 手势
+  player.play().then(()=>{player.pause();audioUnlocked=true;}).catch(()=>{audioUnlocked=true;});
+}
+
+// 选浏览器支持的录音格式(Safari 不支持 webm,得用 mp4)
+function pickMime(){
+  const c=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/aac','audio/mpeg',''];
+  for(const m of c){ if(m===''||(window.MediaRecorder&&MediaRecorder.isTypeSupported(m))) return m; }
+  return '';
+}
+
+async function ensureMic(){
+  if(stream) return stream;
+  if(!window.isSecureContext||!navigator.mediaDevices){
+    throw new Error('http 不安全来源，浏览器禁用麦克风。请改用 https 域名访问（Mac 本机可用 http://127.0.0.1:8766）');
+  }
+  stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+  return stream;
+}
+
+// ── barge-in（打断）：播 bot 语音时监听你有没有开口，一开口就让它闭嘴 ──
+// 阈值高于普通VAD(0.018)以躲开 bot 从扬声器回灌进麦克风的声音。
+// 外放容易被bot自己的声音误打断→调高 BARGE_THRESHOLD；戴耳机没有回声→可调低更灵敏。
+const BARGE_THRESHOLD=0.06;
+const BARGE_HOLD_MS=200;   // 持续超阈值这么久才算真打断（防咳嗽/单声杂音）
+const SILENCE_MS=450;      // 说过话后静音这么久自动停录（中文句内停顿常超350ms，别切太狠）
+let _ac=null,_an=null,_buf=null;
+function ensureAnalyser(){
+  if(!stream) return null;
+  if(!_an){
+    _ac=new (window.AudioContext||window.webkitAudioContext)();
+    const src=_ac.createMediaStreamSource(stream);
+    _an=_ac.createAnalyser(); _an.fftSize=512; src.connect(_an);
+    _buf=new Uint8Array(_an.fftSize);
+  }
+  if(_ac.state==='suspended') _ac.resume();
+  return _an;
+}
+function micRms(){
+  if(!_an) return 0;
+  _an.getByteTimeDomainData(_buf);
+  let s=0; for(let i=0;i<_buf.length;i++){const v=(_buf[i]-128)/128;s+=v*v;}
+  return Math.sqrt(s/_buf.length);
+}
+
+function playB64(b64,bubble){
+  player.src='data:audio/ogg;base64,'+b64;
+  const p=player.play();
+  if(p&&p.catch) p.catch(()=>{ // autoplay 被拦 → 给个手动播放按钮
+    const btn=document.createElement('button'); btn.className='playbtn'; btn.textContent='▶️ 点这里播放';
+    btn.onclick=()=>{player.play();btn.remove();}; bubble.parentNode.insertBefore(btn,bubble.nextSibling);
+    setStatus('浏览器拦了自动播放,点"▶️ 播放"');
+  });
+  return new Promise(res=>{
+    let done=false;
+    const finish=(reason)=>{ if(done)return; done=true; res(reason); };
+    player.onended=()=>finish('ended');
+    player.onerror=()=>finish('error');
+    setTimeout(()=>finish('timeout'),20000);
+    // 只在通话模式监听打断（按住说话模式不需要）
+    if(!callOn) return;
+    ensureAnalyser();
+    let voiceStart=0;
+    (function watch(){
+      if(done||!callOn) return;
+      const rms=micRms(), now=Date.now();
+      if(rms>BARGE_THRESHOLD){
+        if(!voiceStart) voiceStart=now;
+        else if(now-voiceStart>BARGE_HOLD_MS){ player.pause(); setStatus('打断了，在听你说…'); finish('interrupted'); return; }
+      } else voiceStart=0;
+      requestAnimationFrame(watch);
+    })();
+  });
+}
+
+// ── 流式一轮：POST /turn_stream，读 NDJSON，逐句进队列边收边播 ──
+let audioQueue=[], qPlaying=false, interrupted=false;
+
+// 返回 true=本轮已完成（含正常收播、被打断、录音太短）；false=流式不可用，需回退非流式 /turn。
+// iOS PWA 独立模式下 fetch 读 response.body 常抛 "load failed"：只要在产出任何内容前失败就回退，
+// 已产出后中途断流则止损收尾（不回退，避免 /turn 重放导致文字/语音重复）。
+async function sendBlobStream(blob){
+  if(!blob||blob.size<1200){setStatus('没录到声音(太短)');return true;}
+  setStatus('识别+思考中…');
+  const fd=new FormData(); fd.append('audio',blob,'a'); fd.append('bot',$('#bot').value);
+  audioQueue=[]; qPlaying=false; interrupted=false;
+  let resp;
+  try{ resp=await fetch('/turn_stream',{method:'POST',body:fd}); }
+  catch(e){ return false; }                       // 连接就失败 → 回退
+  if(!resp || !resp.ok || !resp.body) return false;
+  let reader; try{ reader=resp.body.getReader(); }catch(e){ return false; }
+  const dec=new TextDecoder();
+  let buf='', produced=false;
+  while(true){
+    let chunk; try{ chunk=await reader.read(); }
+    catch(e){ if(!produced) return false; break; }  // 早期读失败→回退；已产出→止损
+    if(chunk.done) break;
+    if(interrupted){ try{reader.cancel();}catch(e){} break; }
+    buf+=dec.decode(chunk.value,{stream:true});
+    let idx;
+    while((idx=buf.indexOf('\n'))>=0){
+      const line=buf.slice(0,idx); buf=buf.slice(idx+1);
+      if(!line.trim()) continue;
+      let d; try{ d=JSON.parse(line); }catch(e){ continue; }
+      if(d.user_text){ add('me',d.user_text); produced=true; }
+      else if(d.note){ sys(d.note); }
+      else if(d.sentence){ enqueueSentence(d.sentence,d.audio_b64); produced=true; }
+    }
+  }
+  if(!interrupted) setStatus('就绪');
+  return true;
+}
+
+function enqueueSentence(text,b64){
+  add('her',text);                 // 文字逐句蹦出
+  audioQueue.push(b64);
+  if(!qPlaying) playQueue();
+}
+
+async function playQueue(){
+  qPlaying=true;
+  while(audioQueue.length && !interrupted){
+    setStatus('播放中…');
+    await playOne(audioQueue.shift());
+  }
+  qPlaying=false;
+}
+
+function playOne(b64){
+  return new Promise(res=>{
+    player.src='data:audio/ogg;base64,'+b64;
+    player.play().catch(()=>{});
+    let done=false; const fin=r=>{ if(done)return; done=true; res(r); };
+    player.onended=()=>fin('ended'); player.onerror=()=>fin('error');
+    setTimeout(()=>fin('timeout'),15000);
+    if(!callOn) return;
+    ensureAnalyser(); let vs=0;
+    (function watch(){
+      if(done||!callOn) return;
+      const rms=micRms(), now=Date.now();
+      if(rms>BARGE_THRESHOLD){
+        if(!vs) vs=now;
+        else if(now-vs>BARGE_HOLD_MS){
+          interrupted=true; audioQueue=[]; player.pause();
+          setStatus('打断了，在听你说…'); fin('interrupted'); return;
+        }
+      } else vs=0;
+      requestAnimationFrame(watch);
+    })();
+  });
+}
+
+async function sendBlob(blob){
+  if(!blob||blob.size<1200){setStatus('没录到声音(太短)');return;}
+  setStatus('识别+思考中…(Claude 冷启动慢,请等十几秒)');
+  const fd=new FormData(); fd.append('audio',blob,'a'); fd.append('bot',$('#bot').value);
+  let d;
+  try{ const r=await fetch('/turn',{method:'POST',body:fd}); d=await r.json(); }
+  catch(e){ sys('网络/服务器错误: '+e.message); setStatus('出错'); return; }
+  if(d.error){ sys('服务器: '+d.error); setStatus('出错'); return; }
+  if(d.user_text) add('me',d.user_text);
+  if(d.note){ sys(d.note); setStatus('就绪'); return; }
+  let bub=null;
+  if(d.reply_text) bub=add('her',d.reply_text,d.timings);
+  if(d.audio_b64&&bub){ setStatus('播放中…'); await playB64(d.audio_b64,bub); }
+  setStatus('就绪');
+}
+
+// 一轮的统一入口：优先流式；流式一旦不可用就本次通话后续都走稳定的非流式 /turn。
+let useStream=true;
+async function sendTurn(blob){
+  if(useStream){
+    const ok=await sendBlobStream(blob);
+    if(ok) return;
+    useStream=false;
+    sys('流式不可用，已切到稳定模式');
+  }
+  await sendBlob(blob);   // 非流式：add me/her + playB64（含 barge-in 打断）
+}
+
+// 录一段:说过话后静音~0.45s 自动停;最长15s;8s没声放弃
+function recordOnce(){
+  return new Promise(async(resolve)=>{
+    await ensureMic();
+    let rec; try{ rec=new MediaRecorder(stream,pickMime()?{mimeType:pickMime()}:undefined); }
+    catch(e){ sys('录音初始化失败: '+e.message); return resolve(null); }
+    const chunks=[]; let spoke=false, lastVoice=Date.now(), started=Date.now();
+    const ac=new (window.AudioContext||window.webkitAudioContext)();
+    const src=ac.createMediaStreamSource(stream), an=ac.createAnalyser(); an.fftSize=512; src.connect(an);
+    const buf=new Uint8Array(an.fftSize);
+    rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
+    rec.onstop=()=>{ac.close();resolve(spoke?new Blob(chunks,{type:rec.mimeType||'audio/webm'}):null)};
+    recording=true; rec.start(100);
+    (function tick(){
+      if(rec.state!=='recording')return;
+      an.getByteTimeDomainData(buf);
+      let s=0; for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;s+=v*v;}
+      const rms=Math.sqrt(s/buf.length), now=Date.now();
+      if(rms>0.018){spoke=true;lastVoice=now;}
+      if(spoke && now-lastVoice>SILENCE_MS){rec.stop();recording=false;return;}
+      if(now-started>15000){rec.stop();recording=false;return;}
+      if(!spoke && now-started>8000){rec.stop();recording=false;return;}
+      requestAnimationFrame(tick);
+    })();
+  });
+}
+
+async function callLoop(){
+  while(callOn){
+    setStatus('在听你说…');
+    let blob=null;
+    try{blob=await recordOnce();}catch(e){sys('麦克风错误:'+e.message);break;}
+    if(!callOn)break;
+    if(!blob)continue;
+    await sendTurn(blob);
+  }
+  setStatus('通话结束。');
+}
+
+// 切换 bot = 换一个通话对象，清空当前显示的转写记录（每个 bot 是独立会话）。
+// 若正在通话中切换，先挂断当前这通（含反向记忆同步）。
+$('#bot').addEventListener('change',()=>{
+  if(callOn){
+    callOn=false;$('#call').textContent='开始通话';$('#call').classList.remove('on');
+    flushCallHistory();   // 切换=挂断切换前那通，先上报到通话记录
+    // 挂断的是「切换前」那个 bot，用 dataset 记住上一个值
+    const prev=$('#bot').dataset.prev;
+    if(prev){const fd=new FormData();fd.append('bot',prev);fetch('/end_call',{method:'POST',body:fd}).catch(()=>{});}
+  }
+  logEl.replaceChildren();  // 清空上一个 bot 的转写记录
+  $('#bot').dataset.prev=$('#bot').value;
+  sys('已切换到 '+dispName($('#bot').value)+' · 新会话');
+});
+$('#bot').dataset.prev=$('#bot').value;
+
+$('#call').onclick=async()=>{
+  unlockAudio();
+  if(callOn){callOn=false;$('#call').textContent='开始通话';$('#call').classList.remove('on');
+    flushCallHistory();     // 挂断→上报这通完整通话到通话记录（空通话自动跳过）
+    // 挂断：把这通电话内容同步给 Telegram 侧 worker（反向记忆）
+    const fd=new FormData(); fd.append('bot',$('#bot').value);
+    fetch('/end_call',{method:'POST',body:fd}).catch(()=>{});
+    return;}
+  try{await ensureMic();}catch(e){sys('要麦克风权限:'+e.message);return;}
+  paintOutput();          // 麦克风授权后能读到输出设备 label，刷新"当前输出"
+  useStream=true;         // 每通新电话都先试流式，失败再降级
+  callOn=true;$('#call').textContent='挂断';$('#call').classList.add('on');
+  startCallRecord($('#bot').value);   // 开始记这通（每轮 me/her 累进 currentCall）
+  callLoop();
+};
+
+// 按住说话
+let pttRec=null,pttChunks=[];
+async function pttStart(){
+  unlockAudio();
+  if(callOn||recording)return;
+  try{await ensureMic();}catch(e){sys('要麦克风权限:'+e.message);return;}
+  try{ pttRec=new MediaRecorder(stream,pickMime()?{mimeType:pickMime()}:undefined); }
+  catch(e){ sys('录音初始化失败: '+e.message); return; }
+  pttChunks=[];
+  pttRec.ondataavailable=e=>{if(e.data.size)pttChunks.push(e.data)};
+  pttRec.onstop=()=>{ $('#ptt').classList.remove('rec'); sendBlob(new Blob(pttChunks,{type:pttRec.mimeType||'audio/webm'})); };
+  pttRec.start(); $('#ptt').classList.add('rec'); setStatus('录音中…松开发送');
+}
+function pttStop(){if(pttRec&&pttRec.state==='recording')pttRec.stop();}
+const ptt=$('#ptt');
+ptt.addEventListener('mousedown',pttStart);
+ptt.addEventListener('mouseup',pttStop);
+ptt.addEventListener('mouseleave',pttStop);
+ptt.addEventListener('touchstart',e=>{e.preventDefault();pttStart()},{passive:false});
+ptt.addEventListener('touchend',e=>{e.preventDefault();pttStop()},{passive:false});
+
+/* ───────────────────────────────────────────────────────────
+   以下全是「显示层 + 按钮接线」，不改动上面任何通话链路。
+   两处“门”都是外层包装：
+   - 静音门 / 免提门 → 包住 recordOnce（reassign，原函数体一字不动，只在前面加判断）
+   - 静音还额外 track.enabled=false 做真实闭麦（覆盖按住说话）
+   ─────────────────────────────────────────────────────────── */
+const nameEl=$('#peerName'), timerEl=$('#timer'), phoneEl=$('#phone');
+const NAMES={chenlulu:'陈露露'};
+// 用户可编辑备注（存服务端 call_aliases.json，跨设备一致）。显示名 = 备注 ?? 默认名。
+let ALIASES={};
+function dispName(bot){ return (ALIASES[bot]||'').trim() || NAMES[bot] || '来电'; }
+// per-bot 头像渐变（iPhone 无联系人照片时的默认头像：姓名首字 monogram + 按联系人分配的纯色/渐变圆）。
+// 单一真源：来电头像、通话记录头像统一用这套，别再新造。
+const BOT_GRADIENT={
+  chenlulu:'linear-gradient(160deg,#8fa9c4 0%,#5b7089 100%)',
+};
+function monogram(bot){ const n=dispName(bot); return n ? [...n][0] : '?'; }  // 首字（[...] 兼容 emoji/汉字）
+function paintAvatar(el,bot){ if(!el)return; el.textContent=monogram(bot); el.style.background=BOT_GRADIENT[bot]||'rgba(255,255,255,.1)'; }
+// handsfree 恒真：它其实只控制通话中是否自动听（callLoop 真录音），与"外放/听筒"路由无关。
+// iOS 网页无法切换音频路由，故不再做假的免提开关，只如实显示当前输出设备。
+let handsfree=true, muted=false;
+
+// 尽力读当前音频输出设备名（需麦克风已授权才有 label；iOS 常读不到 → 显示"跟随系统"）
+async function paintOutput(){
+  const el=$('#outLabel'); if(!el) return;
+  let name='跟随系统（连耳机走耳机）';
+  try{
+    const devs=await navigator.mediaDevices.enumerateDevices();
+    const out=devs.find(d=>d.kind==='audiooutput' && d.label);
+    if(out) name=out.label;
+  }catch(e){}
+  el.textContent=name;
+}
+paintOutput();
+
+// —— 状态栏时钟 HH:MM ——
+function clock(){const d=new Date();$('#clock').textContent=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+clock(); setInterval(clock,15000);
+
+// —— 名字随 bot 变（追加监听，排在原 change 逻辑之后）——
+function paintPeer(){nameEl.textContent=dispName($('#bot').value);}
+$('#bot').addEventListener('change',paintPeer); paintPeer();
+
+// —— 通话记录累进：包住 add()，通话中把每轮 me/her 累进 currentCall（原 add 一字不改）——
+let currentCall=null;   // 通话开始时 {bot,start_ts,turns:[]}；挂断时 flush
+const _add=add;
+add=function(cls,text,timings){
+  if(currentCall && (cls==='me'||cls==='her')) currentCall.turns.push({role:cls,text});
+  return _add(cls,text,timings);
+};
+function startCallRecord(bot){ currentCall={bot:bot,start_ts:Math.floor(Date.now()/1000),turns:[]}; }
+// 通话记录/别名读写端点需 CALL_TOKEN（防 tailnet 无凭证读走通话全文）。直读 localStorage 避免与后面 let CALL_TOKEN 的 TDZ 冲突。
+function tokHdr(base){ return Object.assign({}, base||{}, {'X-Call-Token': localStorage.getItem('call_token')||''}); }
+function flushCallHistory(){
+  const c=currentCall; currentCall=null;
+  if(!c || !c.turns.length) return;   // 空通话不上报
+  c.end_ts=Math.floor(Date.now()/1000);
+  fetch('/call/history',{method:'POST',headers:tokHdr({'content-type':'application/json'}),
+    body:JSON.stringify({bot:c.bot,turns:c.turns,start_ts:c.start_ts,end_ts:c.end_ts})}).catch(()=>{});
+}
+
+// —— 备注编辑：点铅笔 → prompt 改备注 → POST /call/alias → 刷新显示 ——
+function editAlias(bot){
+  const v=prompt('给「'+(NAMES[bot]||'TA')+'」设置备注（留空恢复默认名，≤24 字）：', ALIASES[bot]||'');
+  if(v===null) return;
+  ensureToken();
+  const name=v.trim().slice(0,24);
+  fetch('/call/alias',{method:'POST',headers:tokHdr({'content-type':'application/json'}),
+    body:JSON.stringify({bot,name})}).then(r=>r.json()).then(d=>{
+      if(d&&d.ok){ if(name) ALIASES[bot]=name; else delete ALIASES[bot]; paintPeer(); }
+      else setStatus('备注保存失败');
+    }).catch(()=>setStatus('备注保存失败'));
+}
+$('#editName').onclick=()=>editAlias($('#bot').value);
+
+// —— 首屏加载所有备注（跨设备一致），刷新当前显示名 ——
+(async function loadAliases(){ try{ ALIASES=(await (await fetch('/call/aliases',{headers:tokHdr()})).json())||{}; paintPeer(); }catch(e){} })();
+
+/* ── 通话记录视图（列表 ⇄ transcript，纯读后端，不碰通话链路）── */
+function fmtCallTime(ts){
+  if(!ts) return '';
+  const d=new Date(ts*1000), now=new Date();
+  const hm=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  if(d.toDateString()===now.toDateString()) return hm;
+  if(d.getFullYear()===now.getFullYear()) return (d.getMonth()+1)+'月'+d.getDate()+'日';
+  return d.getFullYear()+'/'+(d.getMonth()+1)+'/'+d.getDate();
+}
+function fmtWhen(ts){
+  if(!ts) return '';
+  const d=new Date(ts*1000);
+  return (d.getMonth()+1)+'月'+d.getDate()+'日 '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+}
+function showHistList(){ $('#histDetail').style.display='none'; $('#histList').style.display='block'; $('#histHeadTitle').textContent='通话记录'; }
+async function openHistory(){
+  $('#history').classList.add('show'); showHistList();
+  ensureToken();
+  const box=$('#histList'); box.innerHTML='<div class="hempty">加载中…</div>';
+  let list=[]; try{ const r=await fetch('/call/history',{headers:tokHdr()}); if(r.status===401){ box.innerHTML='<div class="hempty">需要 CALL_TOKEN 才能看通话记录</div>'; return; } list=await r.json()||[]; }catch(e){ box.innerHTML='<div class="hempty">读取失败</div>'; return; }
+  if(!list.length){ box.innerHTML='<div class="hempty">还没有通话记录<br>接通一次通话，挂断后会记在这里</div>'; return; }
+  box.innerHTML='';
+  for(const it of list){
+    const row=document.createElement('div'); row.className='hrow';
+    const av=document.createElement('div'); av.className='havatar'; paintAvatar(av,it.bot);
+    const meta=document.createElement('div'); meta.className='hmeta';
+    const nm=document.createElement('div'); nm.className='hname'; nm.textContent=dispName(it.bot);
+    const sub=document.createElement('div'); sub.className='hsub'; sub.textContent='通话 · '+(it.turns_count||0)+' 轮';
+    meta.appendChild(nm); meta.appendChild(sub);
+    const tm=document.createElement('div'); tm.className='htime'; tm.textContent=fmtCallTime(it.start_ts);
+    row.appendChild(av); row.appendChild(meta); row.appendChild(tm);
+    row.onclick=()=>openTranscript(it.id);
+    box.appendChild(row);
+  }
+}
+async function openTranscript(id){
+  const box=$('#histDetail'); $('#histList').style.display='none'; box.style.display='block';
+  box.innerHTML='<div class="hempty">加载中…</div>'; $('#histHeadTitle').textContent='通话详情';
+  let d; try{ const r=await fetch('/call/history/'+encodeURIComponent(id),{headers:tokHdr()}); if(!r.ok){ box.innerHTML='<div class="hempty">记录不存在</div>'; return;} d=await r.json(); }
+  catch(e){ box.innerHTML='<div class="hempty">读取失败</div>'; return; }
+  box.innerHTML='';
+  const head=document.createElement('div'); head.className='hx-head';
+  const av=document.createElement('div'); av.className='havatar'; paintAvatar(av,d.bot);
+  const info=document.createElement('div');
+  const nm=document.createElement('div'); nm.className='hx-name'; nm.textContent=dispName(d.bot);
+  const wh=document.createElement('div'); wh.className='hx-when'; wh.textContent=fmtWhen(d.start_ts);
+  info.appendChild(nm); info.appendChild(wh); head.appendChild(av); head.appendChild(info); box.appendChild(head);
+  const body=document.createElement('div'); body.className='hx-body';
+  for(const t of (d.turns||[])){ const b=document.createElement('div'); b.className='hx '+(t.role==='me'?'me':'her'); b.textContent=t.text; body.appendChild(b); }
+  box.appendChild(body);
+}
+$('#histBtn').onclick=openHistory;
+$('#histBack').onclick=()=>{
+  if($('#histDetail').style.display!=='none'){ showHistList(); }   // detail → 回列表
+  else $('#history').classList.remove('show');                    // 列表 → 关闭
+};
+
+// —— 通话计时 mm:ss（纯读 #call.on）——
+let _t0=0;
+setInterval(()=>{
+  if($('#call').classList.contains('on')){ if(!_t0)_t0=Date.now();
+    const s=Math.floor((Date.now()-_t0)/1000);
+    timerEl.textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+  } else { _t0=0; timerEl.textContent=''; }
+},1000);
+
+// —— 免提门 + 静音门：外层包住 recordOnce（原函数体不变）——
+// ponytail: OFF 时 callLoop 每 400ms 空转一次问一遍，可接受；要更省再上事件唤醒
+const _recordOnce=recordOnce;
+recordOnce=function(){
+  if(muted||!handsfree) return new Promise(r=>setTimeout(()=>r(null),400));
+  return _recordOnce();
+};
+function applyMute(){ if(stream) stream.getAudioTracks().forEach(t=>t.enabled=!muted); }
+
+// —— 6 键接线 ——
+// ① 当前输出（非开关）：如实显示输出设备，点一下解释 iOS 路由由系统控制
+$('#btnSpeaker').onclick=()=>{
+  paintOutput();
+  setStatus('音频输出由 iOS 系统控制：连着耳机自动走耳机，否则走听筒/扬声器。网页不能切换。');
+};
+// ② 换角色：循环切 bot，复用隐藏 #bot 的原生 change（挂断+清屏+/end_call+新会话）
+const ORDER=['chenlulu'];
+$('#btnRole').onclick=()=>{
+  const n=ORDER[(ORDER.indexOf($('#bot').value)+1)%ORDER.length];
+  $('#bot').value=n; $('#bot').dispatchEvent(new Event('change'));
+};
+// ③ 静音：muted 门 + 真实闭麦
+$('#btnMute').onclick=()=>{
+  muted=!muted; $('#btnMute').classList.toggle('warn',muted); applyMute();
+  setStatus(muted?'已静音':'取消静音');
+};
+// ④ 新会话：不换人，清屏 + 对当前 bot 走一次 /end_call（在通话中则复用真实挂断）
+$('#btnNew').onclick=()=>{
+  if(callOn){ $('#call').click(); }   // 复用 #call 真实挂断（含 /end_call 反向记忆）
+  else{ const fd=new FormData(); fd.append('bot',$('#bot').value); fetch('/end_call',{method:'POST',body:fd}).catch(()=>{}); }
+  logEl.replaceChildren();
+  sys('新会话 · '+dispName($('#bot').value));
+};
+// ⑤ 按住说话(#ptt) 和 ⑥ 接听/结束(#call) 的监听器在上方原逻辑里已绑定，无需重接。
+
+// 双击名字：切调试角（显示 STT/LLM/TTS 计时）
+$('#peerName').addEventListener('dblclick',()=>phoneEl.classList.toggle('debug'));
+
+/* ───────────────────────────────────────────────────────────
+   来电（PWA 推送 + 前台轮询 + 滑动接听）——全部追加，不改上面任何通话链路。
+   overlay 是独立 DOM 层；接听复用现有 #call 接通路径（callLoop）。
+   ─────────────────────────────────────────────────────────── */
+// VAPID 公钥（非秘密，但绑部署者密钥对）：不硬编码，运行时从 /push/vapid_public 取（服务端读 vapid_public.b64）。
+let VAPID_PUBLIC_KEY='';
+// CALL_TOKEN 不进源码（防随公开仓库泄露）：存浏览器 localStorage，首次开通知时输入一次
+let CALL_TOKEN = localStorage.getItem('call_token') || '';
+function ensureToken(){
+  if(!CALL_TOKEN){
+    const v=(prompt('首次开启来电通知，请输入与后端一致的 CALL_TOKEN：')||'').trim();
+    if(v){ CALL_TOKEN=v; localStorage.setItem('call_token',v); }
+  }
+  return CALL_TOKEN;
+}
+let swReg=null, notifOn=false, currentBot=null;
+
+function b64urlToU8(s){
+  const pad='='.repeat((4-s.length%4)%4);
+  const b=atob((s+pad).replace(/-/g,'+').replace(/_/g,'/'));
+  const u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i); return u;
+}
+function setToggleUI(on){
+  notifOn=on; const t=$('#notifToggle');
+  t.classList.toggle('on',on); t.textContent=on?'🔔 来电通知：开':'🔕 来电通知：关';
+}
+
+// —— 页面加载即注册 SW + 同步开关（不在点击里做，避免 iOS 手势过期，M3）——
+async function initPush(){
+  if('serviceWorker' in navigator){
+    try{ swReg=await navigator.serviceWorker.register('/sw.js'); }catch(e){}
+  }
+  try{ const s=await (await fetch('/push/status')).json(); setToggleUI(!!s.enabled); }catch(e){}
+  if(!swReg || !swReg.pushManager){   // 无 pushManager → 禁用 + 引导（B4 降级）
+    const t=$('#notifToggle'); t.disabled=true; t.textContent='🔕 需先"添加到主屏"并从图标打开';
+    return;
+  }
+  // VAPID 公钥运行时从服务端取（不硬编码进源码）；缺则禁用来电推送
+  try{ VAPID_PUBLIC_KEY=(await (await fetch('/push/vapid_public')).text()).trim(); }catch(e){}
+  if(!VAPID_PUBLIC_KEY){ const t=$('#notifToggle'); t.disabled=true; t.textContent='🔕 来电推送未配置（缺 VAPID 公钥）'; }
+}
+initPush();
+
+$('#notifToggle').onclick=async()=>{
+  const t=$('#notifToggle'); if(t.disabled) return;
+  if(notifOn){   // 关：写后端总闸，必须确认成功，否则保持"开"（防 UI 显示关但服务端还在推）
+    let ok=false;
+    try{ const r=await fetch('/push/toggle',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({token:CALL_TOKEN,enabled:false})}); ok=r.ok; }catch(e){}
+    if(!ok){ setStatus('关闭失败，请重试（服务端可能仍在推）'); return; }  // UI 维持开
+    setToggleUI(false);
+    try{ const s=await (await fetch('/push/status')).json(); setToggleUI(!!s.enabled); }catch(e){}
+    return;
+  }
+  // 开：手势内第一件事即 requestPermission（此前绝无 await fetch，M3）；ensureToken 是同步 prompt
+  ensureToken();
+  let perm; try{ perm=await Notification.requestPermission(); }catch(e){ perm='denied'; }
+  if(perm!=='granted'){ setStatus('通知被拒绝，请在系统设置开启'); return; }
+  try{
+    const sub=await swReg.pushManager.subscribe(
+      {userVisibleOnly:true, applicationServerKey:b64urlToU8(VAPID_PUBLIC_KEY)});
+    const r=await fetch('/push/subscribe',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify(Object.assign({token:CALL_TOKEN},sub.toJSON()))});
+    if(r.status===401){ setStatus('token 无效/未配置'); return; }
+    if(!r.ok){ setStatus('订阅失败'); return; }
+    const tg=await fetch('/push/toggle',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({token:CALL_TOKEN,enabled:true})});
+    if(!tg.ok){ setStatus('开启失败'); return; }
+    setToggleUI(true);
+  }catch(e){ setStatus('订阅失败（前台轮询仍可用）'); }  // 任何失败都不影响通话/轮询（B4 不变式）
+};
+
+// —— 来电 overlay 显隐 + 响铃 ——
+let ringCtx=null, ringTimer=null;
+function startRing(){
+  try{
+    ringCtx=ringCtx||new (window.AudioContext||window.webkitAudioContext)();
+    if(ringCtx.state==='suspended') ringCtx.resume();
+    stopRing();
+    ringTimer=setInterval(()=>{
+      const o=ringCtx.createOscillator(), g=ringCtx.createGain();
+      o.type='sine'; o.frequency.value=480; g.gain.value=0.07;
+      o.connect(g); g.connect(ringCtx.destination);
+      o.start(); o.stop(ringCtx.currentTime+0.4);
+    },1200);
+  }catch(e){}
+}
+function stopRing(){ if(ringTimer){ clearInterval(ringTimer); ringTimer=null; } }
+
+// 响铃 30s 没接 → 自动挂断（视为未接；不 POST，后端惰性判 missed 即可）
+let missTimer=null;
+function clearMissTimer(){ if(missTimer){ clearTimeout(missTimer); missTimer=null; } }
+function startMissTimer(){ clearMissTimer(); missTimer=setTimeout(()=>{ hideIncoming(); },30000); }
+
+function showIncoming(bot,missed){
+  currentBot=bot||null;
+  $('#incName').textContent = missed ? '' : dispName(bot);
+  paintAvatar($('#incAvatar'), bot);   // 头像首字+渐变；未接态也要有头像
+  $('#incMissed').textContent = missed ? '未接来电' : '';
+  $('#incoming').classList.toggle('missed', !!missed);   // 未接态隐藏滑块，挂断变"关闭"
+  $('#incRejectCap').textContent = missed ? '关闭' : '挂断';
+  resetSlide();                                          // 每次来电把 knob 归位到起点
+  $('#incoming').classList.add('show');
+  if(missed){ stopRing(); clearMissTimer(); } else { startRing(); startMissTimer(); }
+}
+function hideIncoming(){ $('#incoming').classList.remove('show'); stopRing(); clearMissTimer(); }
+// 清掉 URL 里的 ?call=1，否则刷新会重新走 handleCallParam 误弹"未接来电"
+function clearCallParam(){ if(location.search) history.replaceState(null,'',location.pathname); }
+
+function postAnswer(outcome){
+  return fetch('/call/answer',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({outcome})}).catch(()=>{});
+}
+function answerCall(){
+  // iOS：必须在用户手势同步栈里先触发接通（ensureMic/getUserMedia），
+  // 不能先 await fetch —— await 会让手势"过期"导致 getUserMedia 失败。POST 改 fire-and-forget。
+  clearMissTimer();
+  clearCallParam();
+  hideIncoming();
+  if(currentBot && $('#bot').value!==currentBot){ $('#bot').value=currentBot; paintPeer(); }
+  if(!callOn){ $('#call').click(); }   // 手势内直接接通；接听键变色规则由 #call 自管
+  postAnswer('answered');              // 不 await，通知后端"已接听"
+}
+async function rejectCall(){
+  clearMissTimer();
+  await postAnswer('rejected');   // 清标志 + 记录拒接，不进通话
+  clearCallParam();
+  hideIncoming();
+}
+
+// —— 红色挂断：拒接→rejectCall；未接态仅关闭 ——
+$('#incHangup').onclick=()=>{
+  if($('#incoming').classList.contains('missed')){ hideIncoming(); clearCallParam(); }
+  else rejectCall();
+};
+
+/* ── 滑动以接听：Pointer Events 1:1 跟手 + rAF 临界阻尼弹回 + 过阈值 answerCall ──
+   手法来自 apple-design（见 .devflow/RESEARCH-apple-design.md）：
+   §2 尊重抓取偏移、setPointerCapture；§3 从当前呈现值出发、可打断；
+   §4 弹簧回弹（未过阈值临界阻尼不弹）；§9 越界 rubber-band 软阻抗。 ──*/
+const slTrack=$('#slideTrack'), slKnob=$('#slideKnob'), slFill=$('#slideFill'), slLabel=$('#slideLabel');
+let slX=0, slMax=0, slDrag=false, slGrab=0, slRaf=0, slLastX=0, slLastT=0, slVx=0;
+const SL_PAD=4, SL_THRESH=0.8;
+function slMetrics(){ slMax=Math.max(0, slTrack.clientWidth - slKnob.offsetWidth - SL_PAD*2); }
+function slSet(v){
+  slX=Math.max(0, Math.min(slMax, v));
+  slKnob.style.transform='translateX('+slX+'px)';
+  slFill.style.width=(slX + slKnob.offsetWidth + SL_PAD)+'px';
+  const p=slMax>0 ? slX/slMax : 0;
+  slLabel.style.opacity=String(Math.max(0, 1 - p*1.25));   // 越滑越淡
+}
+function resetSlide(){ cancelAnimationFrame(slRaf); slDrag=false; if(slTrack) slTrack.classList.remove('dragging'); slSet(0); slVx=0; }
+function slRubber(o){ const c=0.55, d=slTrack.clientWidth||300; return o*d*c/(d + c*Math.abs(o)); }
+// 半隐式弹簧回弹：从当前 slX 出发，继承松手速度，临界阻尼→无过冲平滑归位（§3/§4）
+function slSpring(target){
+  cancelAnimationFrame(slRaf);
+  let pos=slX, vel=slVx/1000*16.67;      // px/s → px/帧
+  const STIFF=0.18, DAMP=0.60;           // 临界阻尼附近，~0.28s 落位、几乎不弹（Apple response≈0.3）
+  let last=performance.now();
+  (function step(now){
+    const dt=Math.min(2, (now-last)/16.67); last=now;
+    vel=(vel + (target-pos)*STIFF) * DAMP;
+    pos += vel*dt;
+    slSet(pos);
+    if(Math.abs(target-pos)<0.5 && Math.abs(vel)<0.5){ slSet(target); return; }
+    slRaf=requestAnimationFrame(step);
+  })(performance.now());
+}
+function slDown(e){
+  if($('#incoming').classList.contains('missed')) return;   // 未接态无滑块
+  slMetrics(); cancelAnimationFrame(slRaf);
+  slDrag=true; slTrack.classList.add('dragging');
+  try{ slKnob.setPointerCapture(e.pointerId); }catch(_){}
+  slGrab = e.clientX - (slTrack.getBoundingClientRect().left + SL_PAD + slX);  // 尊重抓取点
+  slLastX=e.clientX; slLastT=performance.now(); slVx=0;
+  if(e.cancelable) e.preventDefault();
+}
+function slMove(e){
+  if(!slDrag) return;
+  const now=performance.now(), dt=now-slLastT;
+  if(dt>0){ slVx=(e.clientX - slLastX)/dt*1000; slLastX=e.clientX; slLastT=now; }  // 速度历史
+  let raw = e.clientX - slTrack.getBoundingClientRect().left - SL_PAD - slGrab;
+  if(raw>slMax) raw = slMax + slRubber(raw - slMax);   // 越界软阻抗
+  else if(raw<0) raw = -slRubber(-raw);
+  slSet(raw);
+  if(e.cancelable) e.preventDefault();
+}
+function slUp(){
+  if(!slDrag) return;
+  slDrag=false; slTrack.classList.remove('dragging');
+  if(slMax>0 && slX >= slMax*SL_THRESH){ slSet(slMax); answerCall(); resetSlide(); return; }  // 过阈值→接通
+  slSpring(0);   // 未过→弹回起点
+}
+slKnob.addEventListener('pointerdown', slDown);
+slKnob.addEventListener('pointermove', slMove);
+slKnob.addEventListener('pointerup', slUp);
+slKnob.addEventListener('pointercancel', slUp);
+window.addEventListener('resize', ()=>{ if(!slDrag){ slMetrics(); slSet(slX); } });
+
+// —— 前台轮询（可见时每 2s）+ ?call=1 解析（推送点开）——
+async function pollPending(){
+  if(document.visibilityState!=='visible') return;
+  if($('#incoming').classList.contains('show')) return;
+  try{ const d=await (await fetch('/call/pending')).json();
+    if(d && d.bot) showIncoming(d.bot,false);
+  }catch(e){}
+}
+setInterval(pollPending,2000);
+
+(async function handleCallParam(){
+  const p=new URLSearchParams(location.search);
+  if(p.get('call')!=='1') return;
+  try{ const d=await (await fetch('/call/pending')).json();
+    if(d && d.bot) showIncoming(d.bot,false);
+    else showIncoming(p.get('bot'),true);    // {}：推送晚于 TTL 或开关已关 → 未接来电（M2）
+  }catch(e){ showIncoming(p.get('bot'),true); }
+  clearCallParam();   // 处理完即清 ?call=1，避免刷新重弹
+})();
+</script>
+</body>
+</html>

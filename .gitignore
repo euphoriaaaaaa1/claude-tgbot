@@ -34,3 +34,15 @@ channels/*/memory/*.md
 
 # JS 依赖
 node_modules/
+
+# ── 电话模块（voicecall/）私密文件：绝不进仓库 ──
+voicecall/.env
+voicecall/*.pem
+voicecall/vapid_public.b64
+voicecall/push_state.json
+voicecall/call_aliases.json
+voicecall/call_history.json
+voicecall/.pytest_cache/
+# 内部开发产物：测试套件与流程文档不进公开库（部分文件为字符串比对内联了红线字面量）
+voicecall/tests/
+voicecall/.devflow/
