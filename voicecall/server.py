@@ -426,7 +426,8 @@ async def turn_stream(audio: UploadFile, bot: str = Form(DEFAULT_BOT)):
         subprocess.run([FFMPEG, "-y", "-i", raw, "-ar", "16000", "-ac", "1", wav],
                        capture_output=True, timeout=30)
         if not os.path.exists(wav) or os.path.getsize(wav) < 1000:
-            return JSONResponse({"error": "音频转码失败(格式不对?)"})
+            # 422 而非 200：前端 sendBlobStream 按 !resp.ok 回退非流式 /turn，/turn 的 d.error 分支把错误亮给用户
+            return JSONResponse({"error": "音频转码失败(格式不对?)"}, status_code=422)
         t0 = time.time(); user_text = stt(wav); stt_ms = int((time.time() - t0) * 1000)
     print(f"[turn_stream] bot={bot} STT={user_text!r} ({stt_ms}ms)", flush=True)
     if not user_text:
