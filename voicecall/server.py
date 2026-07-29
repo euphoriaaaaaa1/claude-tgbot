@@ -106,13 +106,17 @@ def _thread_block(bot_dir: str, bot_name: str = None) -> str:
 VOICE_LOG_N = 8  # ponytail: 只取尾巴 N 条进 prompt，文件不轮转（纯文本增长慢），要轮转再说
 
 
-def _voice_log_path(bot: str) -> str:
+def _voice_log_path(bot: str):
+    # chat_id 空/纯空白（未 enable-bot）→ None：不落盘。否则 join("chats","",...) 等价
+    # chats/voice_log.jsonl，多个未配 chat_id 的 bot 会共用同一份语音历史互相污染。
+    if not str(BOTS[bot]["chat_id"] or "").strip():
+        return None
     return os.path.join(BOTS[bot]["bot_dir"], "chats", BOTS[bot]["chat_id"], "voice_log.jsonl")
 
 
 def _read_voice_log(bot: str, n: int = VOICE_LOG_N) -> list:
     path = _voice_log_path(bot)
-    if not os.path.exists(path):
+    if path is None or not os.path.exists(path):
         return []
     rows = []
     with open(path, encoding="utf-8") as f:
@@ -128,6 +132,9 @@ def _read_voice_log(bot: str, n: int = VOICE_LOG_N) -> list:
 
 def _append_voice_log(bot: str, role: str, text: str, image_path: str = None) -> None:
     path = _voice_log_path(bot)
+    if path is None:
+        print(f"[voice_log] 跳过：bot {bot} 未配 chat_id（先 enable-bot）", flush=True)
+        return
     os.makedirs(os.path.dirname(path), exist_ok=True)
     rec = {"ts": int(time.time()), "role": role, "text": text, "channel": "voice"}
     if image_path:
@@ -261,8 +268,11 @@ def _recap_call_to_inbox(bot: str) -> bool:
     """P3：挂断时把这通电话用户说的内容注入 worker session（电话→Telegram 反向记忆，
     不改 CLAUDE.md、不重启 worker）。只 recap 上次之后的新轮次，避免重复注入。"""
     uname = BOTS[bot]["user_name"]
+    cid = BOTS[bot]["chat_id"]
+    if not str(cid or "").strip():
+        return False  # chat_id 空：voice_log 本就跳过，无内容可 recap（/end_call 据此回 {"ok": false}）
     rows = _read_voice_log(bot, n=40)
-    state = os.path.join(BOTS[bot]["bot_dir"], "chats", BOTS[bot]["chat_id"], ".voice-recap-ts")
+    state = os.path.join(BOTS[bot]["bot_dir"], "chats", cid, ".voice-recap-ts")
     last = 0
     try:
         last = int(open(state).read().strip())
