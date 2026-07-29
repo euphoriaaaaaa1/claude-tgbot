@@ -656,6 +656,9 @@ function recordOnce(){
       }
       if(rms>vadOn){spoke=true;lastVoice=now;speechMs+=dt;}
       if(spoke && speechMs>=MIN_SPEECH_MS && now-lastVoice>SILENCE_MS){rec.stop();recording=false;return;}
+      // 说过但太短（咳嗽/碰撞类 <MIN_SPEECH_MS）：静默 3s 仍凑不够最小说话时长就按未说话丢弃——
+      // 否则静音切断/8s 放弃两分支都不适用，干等 15s 上限把全静音音频送去 STT（MIN_SPEECH_MS 引入前 0.45s 就停）。
+      if(spoke && speechMs<MIN_SPEECH_MS && now-lastVoice>3000){spoke=false;rec.stop();recording=false;return;}
       if(now-started>15000){rec.stop();recording=false;return;}
       if(!spoke && now-started>8000){rec.stop();recording=false;return;}
       requestAnimationFrame(tick);
