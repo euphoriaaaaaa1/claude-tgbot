@@ -8,7 +8,7 @@ STT/TTS 复用本机 voice-bridge(:7788)；人设/音色/chat_id 全部来自 co
 
 ponytail: 半双工(录一段→回一段),不是全双工/打断。全双工上 pipecat(它内置 STT+TTS+打断)。
 """
-import base64, json, subprocess, tempfile, time, os, sys, re, urllib.request, hmac, asyncio, threading, shutil
+import base64, json, subprocess, tempfile, time, os, sys, re, urllib.request, hmac, hashlib, asyncio, threading, shutil
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)  # voicecall/ 的上一级 = 仓库根（claude_cli/deepseek_client/chat_history/config_loader 所在）
 sys.path.insert(0, REPO_ROOT)      # 复用仓库根模块，无硬编码绝对路径
@@ -967,6 +967,64 @@ def icon_192():
 @app.get("/icon-512.png")
 def icon_512():
     return FileResponse(os.path.join(HERE, "icon-512.png"), media_type="image/png")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  登录门（可选）：设了 ACCESS_PASSWORD 才启用——公网暴露（cloudflared 等）时开。
+#  cookie = HMAC(密码, 固定串)，改密码 → 旧 cookie 全部失效（无服务端会话表）。
+#  未设 ACCESS_PASSWORD → 门关闭，行为与之前完全一致（本机/tailnet 用法不受影响）。
+#  放行清单只含 /login 和 bot 后端用 CALL_TOKEN 自鉴权的端点；其余一律要 cookie。
+# ═══════════════════════════════════════════════════════════════════════════
+_SESSION_COOKIE = "vc_session"
+_ACCESS_OPEN = ("/login", "/call/incoming", "/call/outcome")  # 免 cookie：登录页 + bot 后端(CALL_TOKEN 自鉴权)
+
+_LOGIN_HTML = """<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
+<title>登录</title><body style="display:flex;min-height:90vh;align-items:center;justify-content:center;font-family:sans-serif">
+<form method=post action="/login" style="text-align:center">
+<h3>语音通话 · 登录</h3>
+<input type=password name=password placeholder="访问密码" autofocus style="padding:8px;font-size:16px">
+<button style="padding:8px 16px;font-size:16px">进入</button>
+<p style="color:#c00">{err}</p></form>"""
+
+
+def _access_password() -> str:
+    return os.environ.get("ACCESS_PASSWORD") or ""
+
+
+def _session_token(pw: str) -> str:
+    return hmac.new(pw.encode(), b"voicecall-session-v1", hashlib.sha256).hexdigest()
+
+
+@app.middleware("http")
+async def access_gate(request: Request, call_next):
+    pw = _access_password()
+    if not pw or request.url.path in _ACCESS_OPEN:
+        return await call_next(request)
+    cookie = request.cookies.get(_SESSION_COOKIE) or ""
+    if hmac.compare_digest(cookie, _session_token(pw)):
+        return await call_next(request)
+    return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+
+@app.get("/login")
+def login_page():
+    if not _access_password():
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/", status_code=303)  # 门没开，登录页无意义
+    return HTMLResponse(_LOGIN_HTML.format(err=""))
+
+
+@app.post("/login")
+async def login_submit(request: Request):
+    from fastapi.responses import RedirectResponse
+    pw = _access_password()
+    form = await request.form()
+    if pw and hmac.compare_digest(str(form.get("password") or ""), pw):
+        resp = RedirectResponse("/", status_code=303)
+        resp.set_cookie(_SESSION_COOKIE, _session_token(pw), httponly=True, samesite="lax",
+                        secure=request.url.scheme == "https")  # cloudflared 是 https → Secure；本机 http 不加
+        return resp
+    return HTMLResponse(_LOGIN_HTML.format(err="密码不对"), status_code=401)
 
 
 if __name__ == "__main__":
