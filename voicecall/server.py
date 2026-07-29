@@ -781,6 +781,7 @@ async def call_answer(request: Request):
 
 
 @app.get("/call/outcome")
+@app.post("/call/outcome")  # POST 同语义（bot 后端实现各异）；无 token 同样 401，别 405
 def call_outcome(request: Request, token: str = None):
     """bot 后端查这通有没有被接（需 token，复用 _check_token；失败 401 无副作用）。
     token 走 header `X-Call-Token` 或 query `token`。outcome ∈ ringing|answered|rejected|missed。
@@ -995,6 +996,44 @@ def _session_token(pw: str) -> str:
     return hmac.new(pw.encode(), b"voicecall-session-v1", hashlib.sha256).hexdigest()
 
 
+# /login 爆破延迟，两层：
+# 1) 同 IP 一把 asyncio.Lock 串行化——裸 asyncio.sleep 不阻塞事件循环，并发 100 个请求各睡各的等于
+#    没延迟；持锁后同 IP 吞吐被压到 1/延迟。这层是真正的爆破刹车（真实浏览器/脚本都绕不过）。
+# 2) 递增延迟按服务端签发的 vc_bf cookie（会话罐）分桶：真实浏览器存 cookie → 失败越等越久；
+#    丢 cookie 的脚本永远停在 n=1 的 0.5s，但仍被第 1 层压着。不用裸 IP 计数：全局/按 IP 计数器
+#    会让攻击者的失败连累同 IP 正常用户（等于送攻击者一个 DoS 杠杆），且多客户端共享出口 IP 时互相污染。
+# ponytail: 纯内存，重启清零；分布式爆破(多 IP 轮换)挡不住，要挡上反代限流/fail2ban。
+_LOGIN_FAIL_WINDOW = 600      # 10 分钟滑窗
+_LOGIN_BF = {}                # vc_bf 罐 id -> [失败时间戳]
+_LOGIN_LOCKS = {}             # ip -> asyncio.Lock
+_VC_BF_COOKIE = "vc_bf"
+
+
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")  # 部署在 cloudflared/Tailscale 反代后时取首跳
+    if xff:
+        return xff.split(",")[0].strip() or "?"
+    return request.client.host if request.client else "?"
+
+
+async def _login_fail_delay(request: Request) -> str:
+    """第 n 次失败（10 分钟滑窗内）睡 min(0.5n, 5) 秒；同 IP 持锁串行。返回要回写给客户端的罐 id。"""
+    lock = _LOGIN_LOCKS.setdefault(_client_ip(request), asyncio.Lock())
+    async with lock:
+        jar = request.cookies.get(_VC_BF_COOKIE) or ""
+        fails = _LOGIN_BF.get(jar) if len(jar) <= 64 else None
+        if fails is None:
+            jar = os.urandom(8).hex()
+            fails = []
+            if len(_LOGIN_BF) < 10000:  # 丢 cookie 刷 id 会涨内存：超上限不持久化（本次仍按 n=1 延迟）
+                _LOGIN_BF[jar] = fails
+        now = time.time()
+        fails[:] = [t for t in fails if now - t < _LOGIN_FAIL_WINDOW]
+        fails.append(now)
+        await asyncio.sleep(min(0.5 * len(fails), 5))
+        return jar
+
+
 @app.middleware("http")
 async def access_gate(request: Request, call_next):
     pw = _access_password()
@@ -1003,7 +1042,13 @@ async def access_gate(request: Request, call_next):
     cookie = request.cookies.get(_SESSION_COOKIE) or ""
     if hmac.compare_digest(cookie, _session_token(pw)):
         return await call_next(request)
-    return JSONResponse({"error": "unauthorized"}, status_code=401)
+    # 浏览器地址栏导航（GET/HEAD + Accept 含 text/html）→ 302 去登录页，而不是干巴巴 401。
+    # 严格只认 text/html：脚本/fetch 默认 Accept: */* 仍得 401，不跳转。
+    if request.method in ("GET", "HEAD") and "text/html" in request.headers.get("accept", ""):
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/login", status_code=302)
+    # VC-Gate 头给前端 fetch 包装做判别：门拦的 401 → 跳登录；CALL_TOKEN 的 401（无此头）不跳。
+    return JSONResponse({"error": "unauthorized"}, status_code=401, headers={"VC-Gate": "1"})
 
 
 @app.get("/login")
@@ -1020,9 +1065,20 @@ async def login_submit(request: Request):
     pw = _access_password()
     form = await request.form()
     if pw and hmac.compare_digest(str(form.get("password") or ""), pw):
+        jar = request.cookies.get(_VC_BF_COOKIE)
+        if jar:
+            _LOGIN_BF.pop(jar, None)  # 登录成功清零该罐的失败计数
         resp = RedirectResponse("/", status_code=303)
         resp.set_cookie(_SESSION_COOKIE, _session_token(pw), httponly=True, samesite="lax",
                         secure=request.url.scheme == "https")  # cloudflared 是 https → Secure；本机 http 不加
+        if jar:
+            resp.delete_cookie(_VC_BF_COOKIE)
+        return resp
+    if pw:
+        jar = await _login_fail_delay(request)  # 错密码递增延迟；门没开时保持旧行为不延迟
+        resp = HTMLResponse(_LOGIN_HTML.format(err="密码不对"), status_code=401)
+        resp.set_cookie(_VC_BF_COOKIE, jar, httponly=True, samesite="lax")
+        # 失败 401 不带 VC-Gate 头：与门拦的 401 区分（前端 fetch 包装只认门拦的跳登录）
         return resp
     return HTMLResponse(_LOGIN_HTML.format(err="密码不对"), status_code=401)
 

@@ -377,6 +377,12 @@
 </div>
 <script>
 const $=s=>document.querySelector(s);
+// 登录门统一 401：一层包装（不动各调用点）。只认 vc-gate 标记头——门拦的 401（会话失效）跳登录页；
+// CALL_TOKEN 类 401 无此头，原样透传（openHistory 等既有提示不受影响）。门没开时服务端从不下发该头，零行为变化。
+const _fetch=window.fetch;
+window.fetch=async(...a)=>{ const r=await _fetch(...a);
+  if(r.status===401&&r.headers.get('vc-gate')) location.href='/login';
+  return r; };
 const logEl=$('#log'), statusEl=$('#status');
 let stream, callOn=false, recording=false, audioUnlocked=false;
 const player=new Audio();  // 复用一个元素,便于解锁自动播放
