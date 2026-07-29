@@ -605,12 +605,14 @@ async function sendTurn(blob){
 function recordOnce(){
   return new Promise(async(resolve)=>{
     await ensureMic();
-    let rec; try{ rec=new MediaRecorder(stream,pickMime()?{mimeType:pickMime()}:undefined); }
+    const st=stream;   // 局部捕获本轮回合的流：快死判只判/只杀这条。用全局 stream 会与 visibilitychange
+                       // 重申请竞态——全局换成健康新流 B 后，旧死流 A 的数据判会误杀 B（analyser 还绑着 A）。
+    let rec; try{ rec=new MediaRecorder(st,pickMime()?{mimeType:pickMime()}:undefined); }
     catch(e){ sys('录音初始化失败: '+e.message); return resolve(null); }
     const chunks=[]; let spoke=false, lastVoice=Date.now(), started=Date.now();
     const ac=new (window.AudioContext||window.webkitAudioContext)();
     if(ac.state==='suspended') ac.resume();   // iOS 回前台新建 AC 可能直接挂起 → getByteTimeDomainData 全零
-    const src=ac.createMediaStreamSource(stream), an=ac.createAnalyser(); an.fftSize=512; src.connect(an);
+    const src=ac.createMediaStreamSource(st), an=ac.createAnalyser(); an.fftSize=512; src.connect(an);
     const buf=new Uint8Array(an.fftSize);
     rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
     rec.onstop=()=>{ac.close();resolve(spoke?new Blob(chunks,{type:rec.mimeType||'audio/webm'}):null)};
@@ -630,10 +632,12 @@ function recordOnce(){
       // ②数据判 rms 绝对为零持续 2s（静音 track 喂精确全零，真实底噪再小也不是 0，不误伤安静房间）。
       // 命中即停录走既有 onstop：说过话→送截短音频（真语音送出优于丢弃），没说→null 不送；
       // 并废掉缓存 stream，下一轮 ensureMic 必重申请，不再傻等 8s 无声超时。
-      const trackDead=!stream.getAudioTracks().some(t=>t.readyState==='live'&&!t.muted);
+      const trackDead=!st.getAudioTracks().some(t=>t.readyState==='live'&&!t.muted);
       if(rms===0){ if(!zeroSince) zeroSince=now; } else zeroSince=0;
       if(trackDead || (zeroSince && now-zeroSince>2000)){
-        stream.getTracks().forEach(t=>t.stop()); stream=null;
+        st.getTracks().forEach(t=>t.stop());
+        if(stream===st){ stream=null;   // 全局还是这条才作废（可能已被 visibilitychange 换成新流）；
+          if(_ac){ try{_ac.close();}catch(e){} _ac=null; _an=null; } }  // barge-in 的 analyser 绑死此 stream，不清则 micRms 恒 0 永久失灵
         rec.stop(); recording=false; return;
       }
       if(calib && !spoke && now-started<400) calib.push(rms);
