@@ -18,7 +18,7 @@ import chat_history  # get_thread_tail / _project_slug_for，读 Telegram 对话
 import config_loader  # 从 configs/<bot>.yml 读人设/音色/chat_id，零硬编码
 import httpx  # async 调 voice-bridge 合成每句语音
 from fastapi import FastAPI, UploadFile, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse, RedirectResponse
 import uvicorn
 
 _SENT_END = re.compile(r'[，,。！？；;…~\n]')  # 停顿点（含逗号）：切一段就送去合成，第一段尽快出声
@@ -1063,7 +1063,6 @@ async def access_gate(request: Request, call_next):
     # 浏览器地址栏导航（GET/HEAD + Accept 含 text/html）→ 302 去登录页，而不是干巴巴 401。
     # 严格只认 text/html：脚本/fetch 默认 Accept: */* 仍得 401，不跳转。
     if request.method in ("GET", "HEAD") and "text/html" in request.headers.get("accept", ""):
-        from fastapi.responses import RedirectResponse
         return RedirectResponse("/login", status_code=302)
     # VC-Gate 头给前端 fetch 包装做判别：门拦的 401 → 跳登录；CALL_TOKEN 的 401（无此头）不跳。
     return JSONResponse({"error": "unauthorized"}, status_code=401, headers={"VC-Gate": "1"})
@@ -1072,14 +1071,12 @@ async def access_gate(request: Request, call_next):
 @app.get("/login")
 def login_page():
     if not _access_password():
-        from fastapi.responses import RedirectResponse
         return RedirectResponse("/", status_code=303)  # 门没开，登录页无意义
     return HTMLResponse(_LOGIN_HTML.format(err=""))
 
 
 @app.post("/login")
 async def login_submit(request: Request):
-    from fastapi.responses import RedirectResponse
     pw = _access_password()
     form = await request.form()
     if pw and hmac.compare_digest(str(form.get("password") or ""), pw):

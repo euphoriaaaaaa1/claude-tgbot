@@ -437,7 +437,7 @@ document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState!=='visible') return;
   if(_ac&&_ac.state==='suspended') _ac.resume();
   if(ringCtx&&ringCtx.state==='suspended') ringCtx.resume();
-  if(callOn||recording||pttRec) ensureMic().catch(()=>{});   // mic 活时 ensureMic 秒回，死时才重申请
+  if(callOn||recording||(pttRec&&pttRec.state==='recording')) ensureMic().catch(()=>{});   // mic 活时 ensureMic 秒回，死时才重申请；pttRec 首次用后恒真，须看 state 防纯闲置无谓申请
 });
 
 // ── barge-in（打断）：播 bot 语音时监听你有没有开口，一开口就让它闭嘴 ──
