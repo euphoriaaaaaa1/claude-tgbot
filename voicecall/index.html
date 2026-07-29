@@ -634,9 +634,12 @@ function recordOnce(){
       // 并废掉缓存 stream，下一轮 ensureMic 必重申请，不再傻等 8s 无声超时。
       const trackDead=!st.getAudioTracks().some(t=>t.readyState==='live'&&!t.muted);
       // 数据判先排除"假全零"：AC 挂起（autoplay 策略下 resume 不保证成功，suspended 的 analyser
-      // 吐精确全零，和死 track 无法区分——不累计、顺手再试 resume，否则每 ~2.4s 误杀/重申请健康 mic 死循环）。
+      // 吐精确全零，和死 track 无法区分——不累计、顺手再试 resume，否则每 ~2.4s 误杀/重申请健康 mic 死循环）；
+      // 以及用户自静音（enabled=false 喂精确静音——当普通静音处理，否则快死判会把用户本想静音的半句话发出去）。
+      const selfMuted=!st.getAudioTracks().some(t=>t.enabled);
       if(ac.state!=='running'){ zeroSince=0; ac.resume();
         setStatus('音频被浏览器挂起，点一下屏幕恢复'); }
+      else if(selfMuted) zeroSince=0;
       else if(rms===0){ if(!zeroSince) zeroSince=now; } else zeroSince=0;
       if(trackDead || (zeroSince && now-zeroSince>2000)){
         st.getTracks().forEach(t=>t.stop());
