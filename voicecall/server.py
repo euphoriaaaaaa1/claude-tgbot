@@ -1021,10 +1021,17 @@ _VC_BF_COOKIE = "vc_bf"
 
 
 def _client_ip(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for")  # 部署在 cloudflared/Tailscale 反代后时取首跳
-    if xff:
-        return xff.split(",")[0].strip() or "?"
-    return request.client.host if request.client else "?"
+    # XFF 只在对端是本机时可信：本模块 HOST=127.0.0.1，cloudflared/tailscale serve 都跑在本机，
+    # 反代转来的请求 peer 恒为本机。非本机对端说明没走反代，XFF 是请求头，客户端随便伪造——
+    # 信了的话攻击者每请求换个假 XFF，_LOGIN_LOCKS 按假 IP 分桶，同 IP 串行化这层爆破刹车直接失效。
+    peer = request.client.host if request.client else ""
+    if peer in ("127.0.0.1", "::1"):
+        xff = request.headers.get("x-forwarded-for")
+        # 反代把真实访客 IP 追加在末尾，左边的是客户端自带的可伪造前缀（"junk, 真实IP" 取末尾拿到真实IP）；
+        # 反代覆盖写成单条时 [-1] 也是它。
+        if xff:
+            return xff.split(",")[-1].strip() or "?"
+    return peer or "?"
 
 
 async def _login_fail_delay(request: Request) -> str:
