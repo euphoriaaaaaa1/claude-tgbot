@@ -410,14 +410,35 @@ function pickMime(){
   return '';
 }
 
+// mic 活性检查：iOS/浏览器压后台后 track 会被杀(readyState='ended')或静音(muted)，
+// 缓存的 stream 就是死的——拿死 stream 录音 rms 恒 0，永远停在"在听你说"。三个调用点
+// （这里 / recordOnce 快死判 / visibilitychange）各自内联这行，别抽函数（静态检查契约）。
+let micPromise=null;   // ensureMic 的 in-flight 守卫（见下）
 async function ensureMic(){
-  if(stream) return stream;
-  if(!window.isSecureContext||!navigator.mediaDevices){
-    throw new Error('http 不安全来源，浏览器禁用麦克风。请改用 https 域名访问（Mac 本机可用 http://127.0.0.1:8766）');
-  }
-  stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
-  return stream;
+  if(stream && stream.getAudioTracks().some(t=>t.readyState==='live'&&!t.muted)) return stream;
+  if(micPromise) return micPromise;   // in-flight 守卫：并发调用(visibilitychange 预申请 vs callLoop 下轮)共用同一次申请，不开出两条 stream 互顶
+  micPromise=(async()=>{
+    if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null;
+      if(_ac){ try{_ac.close();}catch(e){} _ac=null; _an=null; } }  // analyser 绑死旧 stream，必须一起重建，否则 barge-in 永久失灵
+    if(!window.isSecureContext||!navigator.mediaDevices){
+      throw new Error('http 不安全来源，浏览器禁用麦克风。请改用 https 域名访问（Mac 本机可用 http://127.0.0.1:8766）');
+    }
+    stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+    applyMute();   // 静音态换了 stream 要重新闭麦（applyMute 是 function 声明，提升可用）
+    return stream;
+  })();
+  try{ return await micPromise; } finally{ micPromise=null; }
 }
+
+// 回前台一次性自愈（不依赖手势）：恢复挂起的 AudioContext；通话/录音中 mic 死了就预重申请。
+// 预申请被浏览器拒（无手势）也不炸——下一次 recordOnce 入口的 ensureMic 抛错会走 callLoop 既有
+// catch → 可见提示 + 结束通话（不是卡死），用户点一下接听键（新手势）即可重开。
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState!=='visible') return;
+  if(_ac&&_ac.state==='suspended') _ac.resume();
+  if(ringCtx&&ringCtx.state==='suspended') ringCtx.resume();
+  if(callOn||recording||pttRec) ensureMic().catch(()=>{});   // mic 活时 ensureMic 秒回，死时才重申请
+});
 
 // ── barge-in（打断）：播 bot 语音时监听你有没有开口，一开口就让它闭嘴 ──
 // 阈值高于普通VAD(0.018)以躲开 bot 从扬声器回灌进麦克风的声音。
@@ -587,16 +608,28 @@ function recordOnce(){
     catch(e){ sys('录音初始化失败: '+e.message); return resolve(null); }
     const chunks=[]; let spoke=false, lastVoice=Date.now(), started=Date.now();
     const ac=new (window.AudioContext||window.webkitAudioContext)();
+    if(ac.state==='suspended') ac.resume();   // iOS 回前台新建 AC 可能直接挂起 → getByteTimeDomainData 全零
     const src=ac.createMediaStreamSource(stream), an=ac.createAnalyser(); an.fftSize=512; src.connect(an);
     const buf=new Uint8Array(an.fftSize);
     rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
     rec.onstop=()=>{ac.close();resolve(spoke?new Blob(chunks,{type:rec.mimeType||'audio/webm'}):null)};
     recording=true; rec.start(100);
+    let zeroSince=0;   // rms 持续绝对为零的起点（快死判的数据判）
     (function tick(){
       if(rec.state!=='recording')return;
       an.getByteTimeDomainData(buf);
       let s=0; for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;s+=v*v;}
       const rms=Math.sqrt(s/buf.length), now=Date.now();
+      // track 快死判（双判，不依赖"系统怎么杀后台 mic"）：①属性判 readyState 非 live 或 muted；
+      // ②数据判 rms 绝对为零持续 2s（静音 track 喂精确全零，真实底噪再小也不是 0，不误伤安静房间）。
+      // 命中即停录走既有 onstop：说过话→送截短音频（真语音送出优于丢弃），没说→null 不送；
+      // 并废掉缓存 stream，下一轮 ensureMic 必重申请，不再傻等 8s 无声超时。
+      const trackDead=!stream.getAudioTracks().some(t=>t.readyState==='live'&&!t.muted);
+      if(rms===0){ if(!zeroSince) zeroSince=now; } else zeroSince=0;
+      if(trackDead || (zeroSince && now-zeroSince>2000)){
+        stream.getTracks().forEach(t=>t.stop()); stream=null;
+        rec.stop(); recording=false; return;
+      }
       if(rms>0.018){spoke=true;lastVoice=now;}
       if(spoke && now-lastVoice>SILENCE_MS){rec.stop();recording=false;return;}
       if(now-started>15000){rec.stop();recording=false;return;}
