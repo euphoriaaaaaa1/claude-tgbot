@@ -445,7 +445,8 @@ document.addEventListener('visibilitychange',()=>{
 // 外放容易被bot自己的声音误打断→调高 BARGE_THRESHOLD；戴耳机没有回声→可调低更灵敏。
 const BARGE_THRESHOLD=0.06;
 const BARGE_HOLD_MS=200;   // 持续超阈值这么久才算真打断（防咳嗽/单声杂音）
-const SILENCE_MS=450;      // 说过话后静音这么久自动停录（中文句内停顿常超350ms，别切太狠）
+const SILENCE_MS=900;      // 说过话后静音这么久自动停录（中文句内停顿实测 500-800ms 很常见，450 会腰斩一句话；代价只是每轮多等 ~0.45s，15s 上限不变）
+const MIN_SPEECH_MS=300;   // 累计说话够这么久才允许静音切断（防一声咳嗽/碰撞就"说完了"把杂音送去识别）
 let _ac=null,_an=null,_buf=null;
 function ensureAnalyser(){
   if(!stream) return null;
@@ -600,7 +601,7 @@ async function sendTurn(blob){
   await sendBlob(blob);   // 非流式：add me/her + playB64（含 barge-in 打断）
 }
 
-// 录一段:说过话后静音~0.45s 自动停;最长15s;8s没声放弃
+// 录一段:说过话后静音~0.9s 自动停;最长15s;8s没声放弃
 function recordOnce(){
   return new Promise(async(resolve)=>{
     await ensureMic();
@@ -615,11 +616,16 @@ function recordOnce(){
     rec.onstop=()=>{ac.close();resolve(spoke?new Blob(chunks,{type:rec.mimeType||'audio/webm'}):null)};
     recording=true; rec.start(100);
     let zeroSince=0;   // rms 持续绝对为零的起点（快死判的数据判）
+    // 自适应噪声底：开录前 400ms 为校准窗（仅未说话时采样），取样本最低 1/3 均值作噪声底
+    // （防用户立刻开口污染校准），说话阈值 = clamp(噪声底×2.5, 0.012, 0.05)——下限防安静房间
+    // 阈值贴 0 被电流声触发，上限防极端嘈杂永远判不出说话（那时用户本就该用按住说话）。
+    // 校准完成前沿用 0.018；校准窗零样本（后台 rAF 冻结 tick 没走过）恒回退 0.018，不得产出 NaN。
+    let calib=[], vadOn=0.018, speechMs=0, prevTick=Date.now();
     (function tick(){
       if(rec.state!=='recording')return;
       an.getByteTimeDomainData(buf);
       let s=0; for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;s+=v*v;}
-      const rms=Math.sqrt(s/buf.length), now=Date.now();
+      const rms=Math.sqrt(s/buf.length), now=Date.now(), dt=now-prevTick; prevTick=now;
       // track 快死判（双判，不依赖"系统怎么杀后台 mic"）：①属性判 readyState 非 live 或 muted；
       // ②数据判 rms 绝对为零持续 2s（静音 track 喂精确全零，真实底噪再小也不是 0，不误伤安静房间）。
       // 命中即停录走既有 onstop：说过话→送截短音频（真语音送出优于丢弃），没说→null 不送；
@@ -630,8 +636,15 @@ function recordOnce(){
         stream.getTracks().forEach(t=>t.stop()); stream=null;
         rec.stop(); recording=false; return;
       }
-      if(rms>0.018){spoke=true;lastVoice=now;}
-      if(spoke && now-lastVoice>SILENCE_MS){rec.stop();recording=false;return;}
+      if(calib && !spoke && now-started<400) calib.push(rms);
+      else if(calib){   // 校准窗关闭：样本最低 1/3 均值出噪声底，推导阈值（零样本则保持 0.018 回退）
+        if(calib.length){ calib.sort((a,b)=>a-b); const k=Math.max(1,Math.floor(calib.length/3));
+          const floor=calib.slice(0,k).reduce((a,b)=>a+b,0)/k;
+          vadOn=Math.min(Math.max(floor*2.5,0.012),0.05); }
+        calib=null;
+      }
+      if(rms>vadOn){spoke=true;lastVoice=now;speechMs+=dt;}
+      if(spoke && speechMs>=MIN_SPEECH_MS && now-lastVoice>SILENCE_MS){rec.stop();recording=false;return;}
       if(now-started>15000){rec.stop();recording=false;return;}
       if(!spoke && now-started>8000){rec.stop();recording=false;return;}
       requestAnimationFrame(tick);
