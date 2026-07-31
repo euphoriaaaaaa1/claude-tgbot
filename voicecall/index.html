@@ -377,6 +377,12 @@
 </div>
 <script>
 const $=s=>document.querySelector(s);
+// 登录门统一 401：一层包装（不动各调用点）。只认 vc-gate 标记头——门拦的 401（会话失效）跳登录页；
+// CALL_TOKEN 类 401 无此头，原样透传（openHistory 等既有提示不受影响）。门没开时服务端从不下发该头，零行为变化。
+const _fetch=window.fetch;
+window.fetch=async(...a)=>{ const r=await _fetch(...a);
+  if(r.status===401&&r.headers.get('vc-gate')) location.href='/login';
+  return r; };
 const logEl=$('#log'), statusEl=$('#status');
 let stream, callOn=false, recording=false, audioUnlocked=false;
 const player=new Audio();  // 复用一个元素,便于解锁自动播放
@@ -404,21 +410,43 @@ function pickMime(){
   return '';
 }
 
+// mic 活性检查：iOS/浏览器压后台后 track 会被杀(readyState='ended')或静音(muted)，
+// 缓存的 stream 就是死的——拿死 stream 录音 rms 恒 0，永远停在"在听你说"。三个调用点
+// （这里 / recordOnce 快死判 / visibilitychange）各自内联这行，别抽函数（静态检查契约）。
+let micPromise=null;   // ensureMic 的 in-flight 守卫（见下）
 async function ensureMic(){
-  if(stream) return stream;
-  if(!window.isSecureContext||!navigator.mediaDevices){
-    throw new Error('http 不安全来源，浏览器禁用麦克风。请改用 https 域名访问（Mac 本机可用 http://127.0.0.1:8766）');
-  }
-  stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
-  return stream;
+  if(stream && stream.getAudioTracks().some(t=>t.readyState==='live'&&!t.muted)) return stream;
+  if(micPromise) return micPromise;   // in-flight 守卫：并发调用(visibilitychange 预申请 vs callLoop 下轮)共用同一次申请，不开出两条 stream 互顶
+  micPromise=(async()=>{
+    if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null;
+      if(_ac){ try{_ac.close();}catch(e){} _ac=null; _an=null; } }  // analyser 绑死旧 stream，必须一起重建，否则 barge-in 永久失灵
+    if(!window.isSecureContext||!navigator.mediaDevices){
+      throw new Error('http 不安全来源，浏览器禁用麦克风。请改用 https 域名访问（Mac 本机可用 http://127.0.0.1:8766）');
+    }
+    stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+    applyMute();   // 静音态换了 stream 要重新闭麦（applyMute 是 function 声明，提升可用）
+    return stream;
+  })();
+  try{ return await micPromise; } finally{ micPromise=null; }
 }
+
+// 回前台一次性自愈（不依赖手势）：恢复挂起的 AudioContext；通话/录音中 mic 死了就预重申请。
+// 预申请被浏览器拒（无手势）也不炸——下一次 recordOnce 入口的 ensureMic 抛错会走 callLoop 既有
+// catch → 可见提示 + 结束通话（不是卡死），用户点一下接听键（新手势）即可重开。
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState!=='visible') return;
+  if(_ac&&_ac.state==='suspended') _ac.resume();
+  if(ringCtx&&ringCtx.state==='suspended') ringCtx.resume();
+  if(callOn||recording||(pttRec&&pttRec.state==='recording')) ensureMic().catch(()=>{});   // mic 活时 ensureMic 秒回，死时才重申请；pttRec 首次用后恒真，须看 state 防纯闲置无谓申请
+});
 
 // ── barge-in（打断）：播 bot 语音时监听你有没有开口，一开口就让它闭嘴 ──
 // 阈值高于普通VAD(0.018)以躲开 bot 从扬声器回灌进麦克风的声音。
 // 外放容易被bot自己的声音误打断→调高 BARGE_THRESHOLD；戴耳机没有回声→可调低更灵敏。
 const BARGE_THRESHOLD=0.06;
 const BARGE_HOLD_MS=200;   // 持续超阈值这么久才算真打断（防咳嗽/单声杂音）
-const SILENCE_MS=450;      // 说过话后静音这么久自动停录（中文句内停顿常超350ms，别切太狠）
+const SILENCE_MS=900;      // 说过话后静音这么久自动停录（中文句内停顿实测 500-800ms 很常见，450 会腰斩一句话；代价只是每轮多等 ~0.45s，15s 上限不变）
+const MIN_SPEECH_MS=300;   // 累计说话够这么久才允许静音切断（防一声咳嗽/碰撞就"说完了"把杂音送去识别）
 let _ac=null,_an=null,_buf=null;
 function ensureAnalyser(){
   if(!stream) return null;
@@ -573,26 +601,64 @@ async function sendTurn(blob){
   await sendBlob(blob);   // 非流式：add me/her + playB64（含 barge-in 打断）
 }
 
-// 录一段:说过话后静音~0.45s 自动停;最长15s;8s没声放弃
+// 录一段:说过话后静音~0.9s 自动停;最长15s;8s没声放弃
 function recordOnce(){
   return new Promise(async(resolve)=>{
     await ensureMic();
-    let rec; try{ rec=new MediaRecorder(stream,pickMime()?{mimeType:pickMime()}:undefined); }
+    const st=stream;   // 局部捕获本轮回合的流：快死判只判/只杀这条。用全局 stream 会与 visibilitychange
+                       // 重申请竞态——全局换成健康新流 B 后，旧死流 A 的数据判会误杀 B（analyser 还绑着 A）。
+    let rec; try{ rec=new MediaRecorder(st,pickMime()?{mimeType:pickMime()}:undefined); }
     catch(e){ sys('录音初始化失败: '+e.message); return resolve(null); }
     const chunks=[]; let spoke=false, lastVoice=Date.now(), started=Date.now();
     const ac=new (window.AudioContext||window.webkitAudioContext)();
-    const src=ac.createMediaStreamSource(stream), an=ac.createAnalyser(); an.fftSize=512; src.connect(an);
+    if(ac.state==='suspended') ac.resume();   // iOS 回前台新建 AC 可能直接挂起 → getByteTimeDomainData 全零
+    const src=ac.createMediaStreamSource(st), an=ac.createAnalyser(); an.fftSize=512; src.connect(an);
     const buf=new Uint8Array(an.fftSize);
     rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
     rec.onstop=()=>{ac.close();resolve(spoke?new Blob(chunks,{type:rec.mimeType||'audio/webm'}):null)};
     recording=true; rec.start(100);
+    let zeroSince=0;   // rms 持续绝对为零的起点（快死判的数据判）
+    // 自适应噪声底：开录前 400ms 为校准窗（仅未说话时采样），取样本最低 1/3 均值作噪声底
+    // （防用户立刻开口污染校准），说话阈值 = clamp(噪声底×2.5, 0.012, 0.05)——下限防安静房间
+    // 阈值贴 0 被电流声触发，上限防极端嘈杂永远判不出说话（那时用户本就该用按住说话）。
+    // 校准完成前沿用 0.018；校准窗零样本（后台 rAF 冻结 tick 没走过）恒回退 0.018，不得产出 NaN。
+    let calib=[], vadOn=0.018, speechMs=0, prevTick=Date.now();
     (function tick(){
       if(rec.state!=='recording')return;
       an.getByteTimeDomainData(buf);
       let s=0; for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;s+=v*v;}
-      const rms=Math.sqrt(s/buf.length), now=Date.now();
-      if(rms>0.018){spoke=true;lastVoice=now;}
-      if(spoke && now-lastVoice>SILENCE_MS){rec.stop();recording=false;return;}
+      const rms=Math.sqrt(s/buf.length), now=Date.now(), dt=now-prevTick; prevTick=now;
+      // track 快死判（双判，不依赖"系统怎么杀后台 mic"）：①属性判 readyState 非 live 或 muted；
+      // ②数据判 rms 绝对为零持续 2s（静音 track 喂精确全零，真实底噪再小也不是 0，不误伤安静房间）。
+      // 命中即停录走既有 onstop：说过话→送截短音频（真语音送出优于丢弃），没说→null 不送；
+      // 并废掉缓存 stream，下一轮 ensureMic 必重申请，不再傻等 8s 无声超时。
+      const trackDead=!st.getAudioTracks().some(t=>t.readyState==='live'&&!t.muted);
+      // 数据判先排除"假全零"：AC 挂起（autoplay 策略下 resume 不保证成功，suspended 的 analyser
+      // 吐精确全零，和死 track 无法区分——不累计、顺手再试 resume，否则每 ~2.4s 误杀/重申请健康 mic 死循环）；
+      // 以及用户自静音（enabled=false 喂精确静音——当普通静音处理，否则快死判会把用户本想静音的半句话发出去）。
+      const selfMuted=!st.getAudioTracks().some(t=>t.enabled);
+      if(ac.state!=='running'){ zeroSince=0; ac.resume();
+        setStatus('音频被浏览器挂起，点一下屏幕恢复'); }
+      else if(selfMuted) zeroSince=0;
+      else if(rms===0){ if(!zeroSince) zeroSince=now; } else zeroSince=0;
+      if(trackDead || (zeroSince && now-zeroSince>2000)){
+        st.getTracks().forEach(t=>t.stop());
+        if(stream===st){ stream=null;   // 全局还是这条才作废（可能已被 visibilitychange 换成新流）；
+          if(_ac){ try{_ac.close();}catch(e){} _ac=null; _an=null; } }  // barge-in 的 analyser 绑死此 stream，不清则 micRms 恒 0 永久失灵
+        rec.stop(); recording=false; return;
+      }
+      if(calib && !spoke && now-started<400) calib.push(rms);
+      else if(calib){   // 校准窗关闭：样本最低 1/3 均值出噪声底，推导阈值（零样本则保持 0.018 回退）
+        if(calib.length){ calib.sort((a,b)=>a-b); const k=Math.max(1,Math.floor(calib.length/3));
+          const floor=calib.slice(0,k).reduce((a,b)=>a+b,0)/k;
+          vadOn=Math.min(Math.max(floor*2.5,0.012),0.05); }
+        calib=null;
+      }
+      if(rms>vadOn){spoke=true;lastVoice=now;speechMs+=dt;}
+      if(spoke && speechMs>=MIN_SPEECH_MS && now-lastVoice>SILENCE_MS){rec.stop();recording=false;return;}
+      // 说过但太短（咳嗽/碰撞类 <MIN_SPEECH_MS）：静默 3s 仍凑不够最小说话时长就按未说话丢弃——
+      // 否则静音切断/8s 放弃两分支都不适用，干等 15s 上限把全静音音频送去 STT（MIN_SPEECH_MS 引入前 0.45s 就停）。
+      if(spoke && speechMs<MIN_SPEECH_MS && now-lastVoice>3000){spoke=false;rec.stop();recording=false;return;}
       if(now-started>15000){rec.stop();recording=false;return;}
       if(!spoke && now-started>8000){rec.stop();recording=false;return;}
       requestAnimationFrame(tick);

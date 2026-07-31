@@ -8,7 +8,7 @@ STT/TTS 复用本机 voice-bridge(:7788)；人设/音色/chat_id 全部来自 co
 
 ponytail: 半双工(录一段→回一段),不是全双工/打断。全双工上 pipecat(它内置 STT+TTS+打断)。
 """
-import base64, json, subprocess, tempfile, time, os, sys, re, urllib.request, hmac, asyncio, threading, shutil
+import base64, json, subprocess, tempfile, time, os, sys, re, urllib.request, hmac, hashlib, asyncio, threading, shutil
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)  # voicecall/ 的上一级 = 仓库根（claude_cli/deepseek_client/chat_history/config_loader 所在）
 sys.path.insert(0, REPO_ROOT)      # 复用仓库根模块，无硬编码绝对路径
@@ -18,7 +18,7 @@ import chat_history  # get_thread_tail / _project_slug_for，读 Telegram 对话
 import config_loader  # 从 configs/<bot>.yml 读人设/音色/chat_id，零硬编码
 import httpx  # async 调 voice-bridge 合成每句语音
 from fastapi import FastAPI, UploadFile, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse, RedirectResponse
 import uvicorn
 
 _SENT_END = re.compile(r'[，,。！？；;…~\n]')  # 停顿点（含逗号）：切一段就送去合成，第一段尽快出声
@@ -106,13 +106,17 @@ def _thread_block(bot_dir: str, bot_name: str = None) -> str:
 VOICE_LOG_N = 8  # ponytail: 只取尾巴 N 条进 prompt，文件不轮转（纯文本增长慢），要轮转再说
 
 
-def _voice_log_path(bot: str) -> str:
+def _voice_log_path(bot: str):
+    # chat_id 空/纯空白（未 enable-bot）→ None：不落盘。否则 join("chats","",...) 等价
+    # chats/voice_log.jsonl，多个未配 chat_id 的 bot 会共用同一份语音历史互相污染。
+    if not str(BOTS[bot]["chat_id"] or "").strip():
+        return None
     return os.path.join(BOTS[bot]["bot_dir"], "chats", BOTS[bot]["chat_id"], "voice_log.jsonl")
 
 
 def _read_voice_log(bot: str, n: int = VOICE_LOG_N) -> list:
     path = _voice_log_path(bot)
-    if not os.path.exists(path):
+    if path is None or not os.path.exists(path):
         return []
     rows = []
     with open(path, encoding="utf-8") as f:
@@ -128,6 +132,9 @@ def _read_voice_log(bot: str, n: int = VOICE_LOG_N) -> list:
 
 def _append_voice_log(bot: str, role: str, text: str, image_path: str = None) -> None:
     path = _voice_log_path(bot)
+    if path is None:
+        print(f"[voice_log] 跳过：bot {bot} 未配 chat_id（先 enable-bot）", flush=True)
+        return
     os.makedirs(os.path.dirname(path), exist_ok=True)
     rec = {"ts": int(time.time()), "role": role, "text": text, "channel": "voice"}
     if image_path:
@@ -261,8 +268,11 @@ def _recap_call_to_inbox(bot: str) -> bool:
     """P3：挂断时把这通电话用户说的内容注入 worker session（电话→Telegram 反向记忆，
     不改 CLAUDE.md、不重启 worker）。只 recap 上次之后的新轮次，避免重复注入。"""
     uname = BOTS[bot]["user_name"]
+    cid = BOTS[bot]["chat_id"]
+    if not str(cid or "").strip():
+        return False  # chat_id 空：voice_log 本就跳过，无内容可 recap（/end_call 据此回 {"ok": false}）
     rows = _read_voice_log(bot, n=40)
-    state = os.path.join(BOTS[bot]["bot_dir"], "chats", BOTS[bot]["chat_id"], ".voice-recap-ts")
+    state = os.path.join(BOTS[bot]["bot_dir"], "chats", cid, ".voice-recap-ts")
     last = 0
     try:
         last = int(open(state).read().strip())
@@ -426,7 +436,8 @@ async def turn_stream(audio: UploadFile, bot: str = Form(DEFAULT_BOT)):
         subprocess.run([FFMPEG, "-y", "-i", raw, "-ar", "16000", "-ac", "1", wav],
                        capture_output=True, timeout=30)
         if not os.path.exists(wav) or os.path.getsize(wav) < 1000:
-            return JSONResponse({"error": "音频转码失败(格式不对?)"})
+            # 422 而非 200：前端 sendBlobStream 按 !resp.ok 回退非流式 /turn，/turn 的 d.error 分支把错误亮给用户
+            return JSONResponse({"error": "音频转码失败(格式不对?)"}, status_code=422)
         t0 = time.time(); user_text = stt(wav); stt_ms = int((time.time() - t0) * 1000)
     print(f"[turn_stream] bot={bot} STT={user_text!r} ({stt_ms}ms)", flush=True)
     if not user_text:
@@ -781,6 +792,7 @@ async def call_answer(request: Request):
 
 
 @app.get("/call/outcome")
+@app.post("/call/outcome")  # POST 同语义（bot 后端实现各异）；无 token 同样 401，别 405
 def call_outcome(request: Request, token: str = None):
     """bot 后端查这通有没有被接（需 token，复用 _check_token；失败 401 无副作用）。
     token 走 header `X-Call-Token` 或 query `token`。outcome ∈ ringing|answered|rejected|missed。
@@ -967,6 +979,123 @@ def icon_192():
 @app.get("/icon-512.png")
 def icon_512():
     return FileResponse(os.path.join(HERE, "icon-512.png"), media_type="image/png")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  登录门（可选）：设了 ACCESS_PASSWORD 才启用——公网暴露（cloudflared 等）时开。
+#  cookie = HMAC(密码, 固定串)，改密码 → 旧 cookie 全部失效（无服务端会话表）。
+#  未设 ACCESS_PASSWORD → 门关闭，行为与之前完全一致（本机/tailnet 用法不受影响）。
+#  放行清单只含 /login 和 bot 后端用 CALL_TOKEN 自鉴权的端点；其余一律要 cookie。
+# ═══════════════════════════════════════════════════════════════════════════
+_SESSION_COOKIE = "vc_session"
+_ACCESS_OPEN = ("/login", "/call/incoming", "/call/outcome")  # 免 cookie：登录页 + bot 后端(CALL_TOKEN 自鉴权)
+
+_LOGIN_HTML = """<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
+<title>登录</title><body style="display:flex;min-height:90vh;align-items:center;justify-content:center;font-family:sans-serif">
+<form method=post action="/login" style="text-align:center">
+<h3>语音通话 · 登录</h3>
+<input type=password name=password placeholder="访问密码" autofocus style="padding:8px;font-size:16px">
+<button style="padding:8px 16px;font-size:16px">进入</button>
+<p style="color:#c00">{err}</p></form>"""
+
+
+def _access_password() -> str:
+    return os.environ.get("ACCESS_PASSWORD") or ""
+
+
+def _session_token(pw: str) -> str:
+    return hmac.new(pw.encode(), b"voicecall-session-v1", hashlib.sha256).hexdigest()
+
+
+# /login 爆破延迟，两层：
+# 1) 同 IP 一把 asyncio.Lock 串行化——裸 asyncio.sleep 不阻塞事件循环，并发 100 个请求各睡各的等于
+#    没延迟；持锁后同 IP 吞吐被压到 1/延迟。这层是真正的爆破刹车（真实浏览器/脚本都绕不过）。
+# 2) 递增延迟按服务端签发的 vc_bf cookie（会话罐）分桶：真实浏览器存 cookie → 失败越等越久；
+#    丢 cookie 的脚本永远停在 n=1 的 0.5s，但仍被第 1 层压着。不用裸 IP 计数：全局/按 IP 计数器
+#    会让攻击者的失败连累同 IP 正常用户（等于送攻击者一个 DoS 杠杆），且多客户端共享出口 IP 时互相污染。
+# ponytail: 纯内存，重启清零；分布式爆破(多 IP 轮换)挡不住，要挡上反代限流/fail2ban。
+_LOGIN_FAIL_WINDOW = 600      # 10 分钟滑窗
+_LOGIN_BF = {}                # vc_bf 罐 id -> [失败时间戳]
+_LOGIN_LOCKS = {}             # ip -> asyncio.Lock
+_VC_BF_COOKIE = "vc_bf"
+
+
+def _client_ip(request: Request) -> str:
+    # XFF 只在对端是本机时可信：本模块 HOST=127.0.0.1，cloudflared/tailscale serve 都跑在本机，
+    # 反代转来的请求 peer 恒为本机。非本机对端说明没走反代，XFF 是请求头，客户端随便伪造——
+    # 信了的话攻击者每请求换个假 XFF，_LOGIN_LOCKS 按假 IP 分桶，同 IP 串行化这层爆破刹车直接失效。
+    peer = request.client.host if request.client else ""
+    if peer in ("127.0.0.1", "::1"):
+        xff = request.headers.get("x-forwarded-for")
+        # 反代把真实访客 IP 追加在末尾，左边的是客户端自带的可伪造前缀（"junk, 真实IP" 取末尾拿到真实IP）；
+        # 反代覆盖写成单条时 [-1] 也是它。
+        if xff:
+            return xff.split(",")[-1].strip() or "?"
+    return peer or "?"
+
+
+async def _login_fail_delay(request: Request) -> str:
+    """第 n 次失败（10 分钟滑窗内）睡 min(0.5n, 5) 秒；同 IP 持锁串行。返回要回写给客户端的罐 id。"""
+    lock = _LOGIN_LOCKS.setdefault(_client_ip(request), asyncio.Lock())
+    async with lock:
+        jar = request.cookies.get(_VC_BF_COOKIE) or ""
+        fails = _LOGIN_BF.get(jar) if len(jar) <= 64 else None
+        if fails is None:
+            jar = os.urandom(8).hex()
+            fails = []
+            if len(_LOGIN_BF) < 10000:  # 丢 cookie 刷 id 会涨内存：超上限不持久化（本次仍按 n=1 延迟）
+                _LOGIN_BF[jar] = fails
+        now = time.time()
+        fails[:] = [t for t in fails if now - t < _LOGIN_FAIL_WINDOW]
+        fails.append(now)
+        await asyncio.sleep(min(0.5 * len(fails), 5))
+        return jar
+
+
+@app.middleware("http")
+async def access_gate(request: Request, call_next):
+    pw = _access_password()
+    if not pw or request.url.path in _ACCESS_OPEN:
+        return await call_next(request)
+    cookie = request.cookies.get(_SESSION_COOKIE) or ""
+    if hmac.compare_digest(cookie, _session_token(pw)):
+        return await call_next(request)
+    # 浏览器地址栏导航（GET/HEAD + Accept 含 text/html）→ 302 去登录页，而不是干巴巴 401。
+    # 严格只认 text/html：脚本/fetch 默认 Accept: */* 仍得 401，不跳转。
+    if request.method in ("GET", "HEAD") and "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse("/login", status_code=302)
+    # VC-Gate 头给前端 fetch 包装做判别：门拦的 401 → 跳登录；CALL_TOKEN 的 401（无此头）不跳。
+    return JSONResponse({"error": "unauthorized"}, status_code=401, headers={"VC-Gate": "1"})
+
+
+@app.get("/login")
+def login_page():
+    if not _access_password():
+        return RedirectResponse("/", status_code=303)  # 门没开，登录页无意义
+    return HTMLResponse(_LOGIN_HTML.format(err=""))
+
+
+@app.post("/login")
+async def login_submit(request: Request):
+    pw = _access_password()
+    form = await request.form()
+    if pw and hmac.compare_digest(str(form.get("password") or ""), pw):
+        jar = request.cookies.get(_VC_BF_COOKIE)
+        if jar:
+            _LOGIN_BF.pop(jar, None)  # 登录成功清零该罐的失败计数
+        resp = RedirectResponse("/", status_code=303)
+        resp.set_cookie(_SESSION_COOKIE, _session_token(pw), httponly=True, samesite="lax",
+                        secure=request.url.scheme == "https")  # cloudflared 是 https → Secure；本机 http 不加
+        if jar:
+            resp.delete_cookie(_VC_BF_COOKIE)
+        return resp
+    if pw:
+        jar = await _login_fail_delay(request)  # 错密码递增延迟；门没开时保持旧行为不延迟
+        resp = HTMLResponse(_LOGIN_HTML.format(err="密码不对"), status_code=401)
+        resp.set_cookie(_VC_BF_COOKIE, jar, httponly=True, samesite="lax")
+        # 失败 401 不带 VC-Gate 头：与门拦的 401 区分（前端 fetch 包装只认门拦的跳登录）
+        return resp
+    return HTMLResponse(_LOGIN_HTML.format(err="密码不对"), status_code=401)
 
 
 if __name__ == "__main__":

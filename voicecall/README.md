@@ -95,6 +95,7 @@ python3 -c "import secrets;print(secrets.token_urlsafe(32))"
 CALL_TOKEN=把上面生成的串贴这里
 VOICE_BRIDGE_URL=http://127.0.0.1:7788   # voice-bridge 地址，默认本机 7788
 HOST=127.0.0.1                            # 只绑本机，别改成 0.0.0.0（安全，见第七节）
+# ACCESS_PASSWORD=                        # 公网暴露（cloudflared 等）时必须设，登录门密码，见第 8 步
 # FFMPEG_BIN=/opt/homebrew/bin/ffmpeg     # ffmpeg 不在 PATH 时才需要指死
 ```
 
@@ -199,6 +200,34 @@ python3 -c "from py_vapid import Vapid01 as V;v=V();v.generate_keys();v.save_key
 > **iOS 的天花板**：苹果只允许「推一条系统通知，你点进去接听」，**做不到像原生电话那样锁屏自动响铃**（那是原生 App 的特权，网页做不到）。Android 能力强一些。
 > **通知开关在你手里**：开会、不方便时随手关掉「来电通知」，就不会再被推送打扰，别人也看不到。
 
+### 第 8 步（可选）：公网访问——cloudflared + ACCESS_PASSWORD
+
+第 6 步的 Tailscale 只对你自己的设备开放。如果你想**不开 Tailscale、直接用公网链接**访问（比如换设备、临时给别人用），可以用 cloudflared 开个隧道。但**公网意味着任何人都可能扫到这个地址**，所以这一步必须同时开登录门 `ACCESS_PASSWORD`——它会要求先输密码才能进页面，没密码的请求一律 401。
+
+**8.1 在 `.env` 里加访问密码**（第 2 步那个文件）：
+
+```bash
+ACCESS_PASSWORD=你自编的一个够长的密码
+```
+
+重启 `./run.sh` 生效。不设这个变量，登录门就是关的，本机/tailnet 用法和之前完全一样。
+
+**8.2 开隧道**（装一次 cloudflared 后一条命令）：
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8766
+```
+
+终端会打印一个 `https://<随机串>.trycloudflare.com` 的公网地址，浏览器打开它 → 先看到登录页 → 输 `ACCESS_PASSWORD` → 进通话页。cloudflared 出口就是 HTTPS，麦克风直接可用。
+
+**关于登录门的几个事实**：
+
+- 登录成功后浏览器存一个 cookie，之后不用再输；cookie 是用密码算的签名，**服务端不存任何会话表**。
+- **改密码 = 旧 cookie 全部失效**。怀疑泄露就改 `.env` 里的 `ACCESS_PASSWORD` 重启，所有已登录设备立刻被踢回登录页。
+- 登录门和 `CALL_TOKEN` 是两层不同的门：登录门管「人能不能打开网页」，`CALL_TOKEN` 管「来电/通话记录这些敏感接口」，公网部署时**两个都要设**。
+- 临时隧道地址每次重启 cloudflared 都会变。要固定域名就用 cloudflared 的命名隧道（`cloudflared tunnel create`，略超出本 README 范围）。
+- 通话内容本身仍走 STT/LLM/TTS 链路，公网暴露的只是这个网页入口；但密码务必够长、别复用别的密码。
+
 ---
 
 ## 五、通话中联动 TG 是怎么工作的（voice-action）
@@ -239,6 +268,7 @@ python3 -c "from py_vapid import Vapid01 as V;v=V();v.generate_keys();v.save_key
 
 ## 七、安全
 
+- **公网暴露先开登录门**：默认只绑本机 + Tailscale 是安全基线。要用 cloudflared 等方式把服务暴露到公网，**必须先设 `ACCESS_PASSWORD`**（见第 8 步）——登录门 fail-closed，不设密码时门不启用但你也绝不该把无门的页面挂到公网。
 - **只绑本机**：服务默认 `HOST=127.0.0.1`，只监听本机，靠 Tailscale 反代给你自己的设备用。**绝不要改成 `HOST=0.0.0.0`**——那会把服务暴露到所在网络，谁都能连。
 - **敏感接口全鉴权**：来电接口（订阅 / 触发 / 开关）+ **通话记录/备注读写接口**都要 `CALL_TOKEN`，fail-closed（没配一律 401）。通话记录含 NSFW 全文，读端点也凭它，避免 tailnet 里被无凭证读走。
 - **私密文件全部 gitignore**：`.env`、`*.pem`（VAPID 私钥）、`vapid_public.b64`、`push_state.json`、`call_aliases.json`、`call_history.json` 都已在仓库 `.gitignore` 里，**绝不入库**。fork 或改动后请自查，别把这些传上去。
