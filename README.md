@@ -131,6 +131,17 @@ notepad $env:USERPROFILE\.claude\channels\myrole\CLAUDE.md
 
 ## 部署（Mac / Linux）
 
+**一键安装**（推荐）——一条命令装依赖、铺好全部配置，最后列出仅剩的 3 个手填密钥位置：
+
+```bash
+git clone https://github.com/euphoriaaaaaa1/claude-tgbot.git ~/claudebotlife && cd ~/claudebotlife && bash install.sh
+```
+
+按提示把 3 个密钥填完（DeepSeek key / bot token / 你的 user_id），跑 `bash restart-bots.sh` 就上线了。脚本可重复运行（复查用），不会覆盖你填过的配置。
+
+<details>
+<summary>想手动一步步来？点开看分步说明（与脚本等价）</summary>
+
 > 下面每一行 `#` 后面是"这条命令干什么"的说明。`cd 某目录` = "进入某个文件夹"。
 > 仓库可以放任何位置，本文统一放在用户主目录下的 `claudebotlife` 文件夹（即 `~/claudebotlife`）。
 
@@ -170,6 +181,8 @@ python3 jiwen/tick.py    # 想长期自动跑，就挂到 launchd / cron 定时�
 ```
 
 看实时对话：`bash scripts/watch-bot.sh chenlulu`
+
+</details>
 
 ---
 
