@@ -410,18 +410,19 @@ function pickMime(){
   return '';
 }
 
-// mic 活性检查：iOS/浏览器压后台后 track 会被杀(readyState='ended')或静音(muted)，
-// 缓存的 stream 就是死的——拿死 stream 录音 rms 恒 0，永远停在"在听你说"。三个调用点
-// （这里 / recordOnce 快死判 / visibilitychange）各自内联这行，别抽函数（静态检查契约）。
+// mic 活性检查：只有 readyState 非 live（设备拔出/系统收回）才算 track 已死、需要重取；
+// muted 只是暂时不能供数（蓝牙切换/系统打断中），据此重取会在静音未解除时无限重申请。
+// 两个判死点（这里 / recordOnce）都只看 readyState，别把 muted 加回来（历史踩坑）。
 let micPromise=null;   // ensureMic 的 in-flight 守卫（见下）
 async function ensureMic(){
-  if(stream && stream.getAudioTracks().some(t=>t.readyState==='live'&&!t.muted)) return stream;
+  if(stream && stream.getAudioTracks().some(t=>t.readyState==='live')) return stream;
   if(micPromise) return micPromise;   // in-flight 守卫：并发调用(visibilitychange 预申请 vs callLoop 下轮)共用同一次申请，不开出两条 stream 互顶
   micPromise=(async()=>{
     if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null;
       if(_ac){ try{_ac.close();}catch(e){} _ac=null; _an=null; } }  // analyser 绑死旧 stream，必须一起重建，否则 barge-in 永久失灵
     if(!window.isSecureContext||!navigator.mediaDevices){
-      throw new Error('http 不安全来源，浏览器禁用麦克风。请改用 https 域名访问（Mac 本机可用 http://127.0.0.1:8766）');
+      const e=new Error('http 不安全来源，浏览器禁用麦克风。请改用 https 域名访问（Mac 本机可用 http://127.0.0.1:8766）');
+      e.setupHint=true; throw e;   // 部署提示，showMicError 原文直出不归类
     }
     // autoGainControl 必须关：AGC 会把"近乎无声的输入源"（虚拟声卡、无麦克风机器、极安静环境底噪）
     // 增益拉满成 rms 0.2+ 的满幅噪声——VAD 视角"永远有人在说话且永不停顿"，每轮硬录 15s 垃圾送识别。
@@ -439,7 +440,7 @@ document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState!=='visible') return;
   if(_ac&&_ac.state==='suspended') _ac.resume();
   if(ringCtx&&ringCtx.state==='suspended') ringCtx.resume();
-  if(callOn||recording||(pttRec&&pttRec.state==='recording')) ensureMic().catch(()=>{});   // mic 活时 ensureMic 秒回，死时才重申请；pttRec 首次用后恒真，须看 state 防纯闲置无谓申请
+  if(callOn||recording||(pttRec&&pttRec.state==='recording')) ensureMic().catch(()=>{});   // mic 活时 ensureMic 秒回，死时才重申请；pttRec 收尾即清空，state 判断兜底
 });
 
 // ── barge-in（打断）：播 bot 语音时监听你有没有开口，一开口就让它闭嘴 ──
@@ -466,6 +467,33 @@ function micRms(){
   _an.getByteTimeDomainData(_buf);
   let s=0; for(let i=0;i<_buf.length;i++){const v=(_buf[i]-128)/128;s+=v*v;}
   return Math.sqrt(s/_buf.length);
+}
+// 释放麦克风：无参 = 释放当前全局流（含 barge-in analyser）；带 target = 定向释放某条旧流、
+// 不碰全局状态——按住说话收尾用它，旧轮的回调永远杀不掉新一轮刚申请的流。
+async function releaseMic(target=stream){
+  const old=target;
+  if(old&&old!==stream){old.getTracks().forEach(t=>t.stop());return;}
+  stream=null; micPromise=null;
+  if(old) old.getTracks().forEach(t=>t.stop());
+  const ac=_ac; _ac=null; _an=null; _buf=null;
+  if(ac){ try{await ac.close();}catch(e){} }
+}
+// 麦克风/录音启动错误 → 用户可读文案。只按 DOMException.name 归类，绝不拿 message 文本、
+// 设备名、音量采样去猜设备状态——只有 NotFoundError 才允许说"未找到输入设备"。
+function classifyMicError(error){
+  const m={
+    NotFoundError:'未找到可用输入设备。请连接或选择麦克风后重试。',
+    NotAllowedError:'无法访问麦克风。请允许麦克风权限后重试。',
+    SecurityError:'无法访问麦克风。请允许麦克风权限后重试。',
+    NotReadableError:'麦克风正忙或暂时无法打开。请关闭占用麦克风的程序后重试。',
+    AbortError:'麦克风正忙或暂时无法打开。请关闭占用麦克风的程序后重试。',
+    OverconstrainedError:'当前麦克风配置或设备约束不可用。请调整设置后重试。'
+  };
+  return m[error&&error.name]||'启动录音失败，请重试。';
+}
+function showMicError(error){
+  const msg=(error&&error.setupHint)?error.message:classifyMicError(error);
+  setStatus(msg); sys(msg);
 }
 
 function playB64(b64,bubble){
@@ -610,7 +638,7 @@ function recordOnce(){
     const st=stream;   // 局部捕获本轮回合的流：快死判只判/只杀这条。用全局 stream 会与 visibilitychange
                        // 重申请竞态——全局换成健康新流 B 后，旧死流 A 的数据判会误杀 B（analyser 还绑着 A）。
     let rec; try{ rec=new MediaRecorder(st,pickMime()?{mimeType:pickMime()}:undefined); }
-    catch(e){ sys('录音初始化失败: '+e.message); return resolve(null); }
+    catch(e){ showMicError(e); return resolve(null); }
     const chunks=[]; let spoke=false, lastVoice=Date.now(), started=Date.now();
     const ac=new (window.AudioContext||window.webkitAudioContext)();
     if(ac.state==='suspended') ac.resume();   // iOS 回前台新建 AC 可能直接挂起 → getByteTimeDomainData 全零
@@ -619,39 +647,34 @@ function recordOnce(){
     rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
     rec.onstop=()=>{ac.close();resolve(spoke?new Blob(chunks,{type:rec.mimeType||'audio/webm'}):null)};
     recording=true; rec.start(100);
-    let zeroSince=0;   // rms 持续绝对为零的起点（快死判的数据判）
+    let lastMutedHint=0;   // live+muted 中性提示的节流时间戳
     // 自适应噪声底：开录前 400ms 为校准窗（仅未说话时采样），取样本最低 1/3 均值作噪声底
     // （防用户立刻开口污染校准），说话阈值 = clamp(噪声底×2.5, 0.012, 0.05)——下限防安静房间
     // 阈值贴 0 被电流声触发，上限防极端嘈杂永远判不出说话（那时用户本就该用按住说话）。
     // 校准完成前沿用 0.018；校准窗零样本（后台 rAF 冻结 tick 没走过）恒回退 0.018，不得产出 NaN。
-    // minRms/maxRms 记录整轮信号包络：minRms 恒高于阈值 = 持续噪声源（人说话必有停顿帧），
-    // 不该傻录 15s 送识别；maxRms 用于 no_speech 时把"音量峰值/阈值"报到屏幕上辅助排查。
-    let calib=[], vadOn=0.018, speechMs=0, prevTick=Date.now(), minRms=1, maxRms=0;
+    // minRms 记录整轮信号下界：恒高于阈值 = 持续噪声源（人说话必有停顿帧），不该傻录 15s 送识别。
+    let calib=[], vadOn=0.018, speechMs=0, prevTick=Date.now(), minRms=1;
     (function tick(){
       if(rec.state!=='recording')return;
       an.getByteTimeDomainData(buf);
       let s=0; for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;s+=v*v;}
       const rms=Math.sqrt(s/buf.length), now=Date.now(), dt=now-prevTick; prevTick=now;
-      if(rms<minRms)minRms=rms; if(rms>maxRms)maxRms=rms;
-      // track 快死判（双判，不依赖"系统怎么杀后台 mic"）：①属性判 readyState 非 live 或 muted；
-      // ②数据判 rms 绝对为零持续 2s（静音 track 喂精确全零，真实底噪再小也不是 0，不误伤安静房间）。
-      // 命中即停录走既有 onstop：说过话→送截短音频（真语音送出优于丢弃），没说→null 不送；
-      // 并废掉缓存 stream，下一轮 ensureMic 必重申请，不再傻等 8s 无声超时。
-      const trackDead=!st.getAudioTracks().some(t=>t.readyState==='live'&&!t.muted);
-      // 数据判先排除"假全零"：AC 挂起（autoplay 策略下 resume 不保证成功，suspended 的 analyser
-      // 吐精确全零，和死 track 无法区分——不累计、顺手再试 resume，否则每 ~2.4s 误杀/重申请健康 mic 死循环）；
-      // 以及用户自静音（enabled=false 喂精确静音——当普通静音处理，否则快死判会把用户本想静音的半句话发出去）。
+      if(rms<minRms)minRms=rms;
+      // 只有 track 真死（readyState 非 live：设备拔出/系统收回）才算中断，杀流让下一轮重取；
+      // muted 只表示暂时不能供数（蓝牙切换/系统打断中），短期 rms 为零更不能证明没有设备——
+      // 这两种都继续监听，由 8s 无声常规收口，绝不据此宣称"没有麦克风"或触发重取死循环。
+      const trackDead=!st.getAudioTracks().some(t=>t.readyState==='live');
+      const uaMuted=st.getAudioTracks().some(t=>t.readyState==='live'&&t.muted);
+      // 用户自静音（enabled=false 喂精确静音）不提示"暂时不可用"——那是用户自己按的闭麦。
       const selfMuted=!st.getAudioTracks().some(t=>t.enabled);
-      if(ac.state!=='running'){ zeroSince=0; ac.resume();
-        setStatus('音频被浏览器挂起，点一下屏幕恢复'); }
-      else if(selfMuted) zeroSince=0;
-      else if(rms===0){ if(!zeroSince) zeroSince=now; } else zeroSince=0;
-      if(trackDead || (zeroSince && now-zeroSince>2000)){
+      if(trackDead){
         st.getTracks().forEach(t=>t.stop());
         if(stream===st){ stream=null;   // 全局还是这条才作废（可能已被 visibilitychange 换成新流）；
           if(_ac){ try{_ac.close();}catch(e){} _ac=null; _an=null; } }  // barge-in 的 analyser 绑死此 stream，不清则 micRms 恒 0 永久失灵
         rec.stop(); recording=false; return;
       }
+      if(ac.state!=='running'){ ac.resume(); setStatus('音频被浏览器挂起，点一下屏幕恢复'); }
+      else if(uaMuted&&!selfMuted){ if(!lastMutedHint||now-lastMutedHint>3000){ lastMutedHint=now; setStatus('麦克风输入暂时不可用，正在等待恢复…'); } }
       // 只采"低于默认阈值"的安静样本：!spoke 有一帧的次序漏洞——第一帧大音量样本先进数组、
       // 下一帧才置 spoke，噪声底被大声开场顶上天 → 阈值 clamp 到 0.05，真人语音(降噪后常 0.02-0.03)永远过不了。
       if(calib && !spoke && now-started<400){ if(rms<=vadOn) calib.push(rms); }
@@ -670,7 +693,7 @@ function recordOnce(){
       // （虚拟声卡/未关 AGC 的环境把底噪抬成 0.2+ 的实测场景），按未说话丢弃，不硬录 15s 送识别。
       if(spoke && now-started>8000 && minRms>vadOn*0.9){spoke=false;setStatus('输入是持续噪声、听不出人声停顿，已丢弃本轮');rec.stop();recording=false;return;}
       if(now-started>15000){rec.stop();recording=false;return;}
-      if(!spoke && now-started>8000){setStatus('未检测到说话（音量峰值 '+maxRms.toFixed(3)+'/阈值 '+vadOn.toFixed(3)+'），继续听…');rec.stop();recording=false;return;}
+      if(!spoke && now-started>8000){setStatus('未检测到说话，继续听…');rec.stop();recording=false;return;}
       requestAnimationFrame(tick);
     })();
   });
@@ -680,9 +703,9 @@ async function callLoop(){
   while(callOn){
     setStatus('在听你说…');
     let blob=null;
-    try{blob=await recordOnce();}catch(e){sys('麦克风错误:'+e.message);break;}
+    try{blob=await recordOnce();}catch(e){showMicError(e);break;}
     if(!callOn)break;
-    // 空轮停 0.9s 再回到"在听你说…"：让 recordOnce 留下的诊断（噪声丢弃/音量数值）来得及被看到
+    // 空轮停 0.9s 再回到"在听你说…"：让 recordOnce 留下的提示（噪声丢弃/暂时不可用）来得及被看到
     if(!blob){await new Promise(r=>setTimeout(r,900));continue;}
     await sendTurn(blob);
   }
@@ -713,7 +736,7 @@ $('#call').onclick=async()=>{
     const fd=new FormData(); fd.append('bot',$('#bot').value);
     fetch('/end_call',{method:'POST',body:fd}).catch(()=>{});
     return;}
-  try{await ensureMic();}catch(e){sys('要麦克风权限:'+e.message);return;}
+  try{await ensureMic();}catch(e){showMicError(e);return;}
   paintOutput();          // 麦克风授权后能读到输出设备 label，刷新"当前输出"
   useStream=true;         // 每通新电话都先试流式，失败再降级
   callOn=true;$('#call').textContent='挂断';$('#call').classList.add('on');
@@ -721,26 +744,39 @@ $('#call').onclick=async()=>{
   callLoop();
 };
 
-// 按住说话
+// 按住说话。收尾契约：正常松手 / touchcancel / 构造失败 / start 失败 / 异步录音错误，
+// 五条路都必须释放本轮麦克风；旧 recorder 的回调只许动自己捕获的那条流，不许碰新一轮状态。
 let pttRec=null,pttChunks=[];
 async function pttStart(){
   unlockAudio();
-  if(callOn||recording)return;
-  try{await ensureMic();}catch(e){sys('要麦克风权限:'+e.message);return;}
+  if(callOn||recording||pttRec)return;   // pttRec 兼作门：上一轮未收尾前不开新轮，防 recorder 引用被覆盖
+  try{await ensureMic();}catch(e){showMicError(e);return;}
   try{ pttRec=new MediaRecorder(stream,pickMime()?{mimeType:pickMime()}:undefined); }
-  catch(e){ sys('录音初始化失败: '+e.message); return; }
+  catch(e){ showMicError(e); pttRec=null; await releaseMic(); return; }
   pttChunks=[];
-  pttRec.ondataavailable=e=>{if(e.data.size)pttChunks.push(e.data)};
-  pttRec.onstop=()=>{ $('#ptt').classList.remove('rec'); sendBlob(new Blob(pttChunks,{type:pttRec.mimeType||'audio/webm'})); };
-  pttRec.start(); $('#ptt').classList.add('rec'); setStatus('录音中…松开发送');
+  const rec=pttRec, source=stream, chunks=pttChunks;   // 本轮三件套全捕获，旧回调与全局解耦
+  let cleaned=false;
+  const cleanup=send=>{   // 幂等收尾：错误→onstop 连环触发也只走一次，绝不重复发送
+    if(cleaned)return;cleaned=true;
+    rec.ondataavailable=null;rec.onerror=null;rec.onstop=null;
+    if(pttRec===rec){$('#ptt').classList.remove('rec');pttRec=null;pttChunks=[];}
+    if(send)sendBlob(new Blob(chunks,{type:rec.mimeType||'audio/webm'}));
+    releaseMic(source);   // 定向释放本轮的流：若全局已换新流，只停旧的不碰新的
+  };
+  rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
+  rec.onerror=event=>{showMicError(event.error||event);cleanup(false);};   // 异步出错不发半截音频
+  rec.onstop=()=>cleanup(true);
+  try{rec.start();}catch(e){showMicError(e);cleanup(false);return;}
+  $('#ptt').classList.add('rec'); setStatus('录音中…松开发送');
 }
-function pttStop(){if(pttRec&&pttRec.state==='recording')pttRec.stop();}
+function pttStop(){const rec=pttRec;if(rec&&rec.state==='recording')rec.stop();}
 const ptt=$('#ptt');
 ptt.addEventListener('mousedown',pttStart);
 ptt.addEventListener('mouseup',pttStop);
 ptt.addEventListener('mouseleave',pttStop);
 ptt.addEventListener('touchstart',e=>{e.preventDefault();pttStart()},{passive:false});
 ptt.addEventListener('touchend',e=>{e.preventDefault();pttStop()},{passive:false});
+ptt.addEventListener('touchcancel',e=>{e.preventDefault();pttStop()},{passive:false});
 
 /* ───────────────────────────────────────────────────────────
    以下全是「显示层 + 按钮接线」，不改动上面任何通话链路。
@@ -773,7 +809,7 @@ async function paintOutput(){
     const out=devs.find(d=>d.kind==='audiooutput' && d.label);
     if(out) name=out.label;
   }catch(e){}
-  el.textContent=name;
+  el.textContent='输出：'+name;
 }
 paintOutput();
 
