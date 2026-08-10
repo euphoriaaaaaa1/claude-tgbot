@@ -632,6 +632,10 @@ async function sendTurn(blob){
 }
 
 // 录一段:说过话后静音~0.9s 自动停;最长15s;8s没声放弃
+// muted 卡死有界自愈：iOS 音频会话被打断后 track 可能永久 muted（不 unmute 也不死），
+// 只有 fresh getUserMedia 能救。持续 muted 跨轮累计超 8s 且页面可见 → 每通电话允许一次
+// 杀流重取（走既有"下轮 ensureMic 重申请"路径）；重取后仍 muted 就回常规等待，绝不循环重取。
+let mutedSince=0, mutedReacquired=false;
 function recordOnce(){
   return new Promise(async(resolve)=>{
     await ensureMic();
@@ -674,7 +678,18 @@ function recordOnce(){
         rec.stop(); recording=false; return;
       }
       if(ac.state!=='running'){ ac.resume(); setStatus('音频被浏览器挂起，点一下屏幕恢复'); }
-      else if(uaMuted&&!selfMuted){ if(!lastMutedHint||now-lastMutedHint>3000){ lastMutedHint=now; setStatus('麦克风输入暂时不可用，正在等待恢复…'); } }
+      else if(uaMuted&&!selfMuted){
+        if(!mutedSince)mutedSince=now;
+        if(!lastMutedHint||now-lastMutedHint>3000){ lastMutedHint=now; setStatus('麦克风输入暂时不可用，正在等待恢复…'); }
+        if(now-mutedSince>8000&&!mutedReacquired&&document.visibilityState==='visible'){
+          mutedReacquired=true;
+          setStatus('麦克风长时间无输入，正在重新获取…');
+          st.getTracks().forEach(t=>t.stop());
+          if(stream===st){ stream=null; if(_ac){ try{_ac.close();}catch(e){} _ac=null; _an=null; } }
+          rec.stop(); recording=false; return;
+        }
+      }
+      else mutedSince=0;
       // 只采"低于默认阈值"的安静样本：!spoke 有一帧的次序漏洞——第一帧大音量样本先进数组、
       // 下一帧才置 spoke，噪声底被大声开场顶上天 → 阈值 clamp 到 0.05，真人语音(降噪后常 0.02-0.03)永远过不了。
       if(calib && !spoke && now-started<400){ if(rms<=vadOn) calib.push(rms); }
@@ -739,6 +754,7 @@ $('#call').onclick=async()=>{
   try{await ensureMic();}catch(e){showMicError(e);return;}
   paintOutput();          // 麦克风授权后能读到输出设备 label，刷新"当前输出"
   useStream=true;         // 每通新电话都先试流式，失败再降级
+  mutedSince=0; mutedReacquired=false;   // muted 自愈额度按通话重置
   callOn=true;$('#call').textContent='挂断';$('#call').classList.add('on');
   startCallRecord($('#bot').value);   // 开始记这通（每轮 me/her 累进 currentCall）
   callLoop();
