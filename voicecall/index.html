@@ -389,6 +389,9 @@ let stream, callOn=false, recording=false, audioUnlocked=false;
 // 画气泡/播音频前比对轮号，迟到的旧轮句子对不上号就丢弃，画不进新一轮。
 // 注意：本版没有"通话换代"计数，挂断只看 callOn，这个守卫是 callOn + 轮号的单层防线。
 let turnSeq=0;
+// 本轮是否真播出过声音：只在 play() 确认开播（promise resolve）时置真，
+// 每轮在 sendTurn 入口清零；收到句子不算——文字到了但语音合成失败正是要提示的情况。
+let heardAudio=false;
 const player=new Audio();  // 复用一个元素,便于解锁自动播放
 
 function setStatus(t){statusEl.textContent=t}
@@ -503,6 +506,7 @@ function showMicError(error){
 function playB64(b64,bubble){
   player.src='data:audio/ogg;base64,'+b64;
   const p=player.play();
+  if(p&&p.then) p.then(()=>{heardAudio=true;},()=>{});   // 确认开播才算这轮有声
   if(p&&p.catch) p.catch(()=>{ // autoplay 被拦 → 给个手动播放按钮
     const btn=document.createElement('button'); btn.className='playbtn'; btn.textContent='▶️ 点这里播放';
     btn.onclick=()=>{player.play();btn.remove();}; bubble.parentNode.insertBefore(btn,bubble.nextSibling);
@@ -571,10 +575,12 @@ function judgeOutcome(spoke,ended,gotNote){
 
 // 收口：结局唯一出提示的地方（显式传结局，无默认值可漏）。
 // 先复查挂断——主动挂断不是失败，此后不得再冒任何提示。
-function settleTurn(outcome,failShown){
+function settleTurn(outcome,failShown,spoke){
   if(!callOn) return 'cancelled';
   if(outcome==='cut') sys('回复没说完就断了');
   else if(outcome==='failed'&&!failShown) sys('这轮没收到回复，再说一次');
+  // 只有整轮一条声音都没播出来才提示；部分句子有声不提示
+  if(spoke&&!heardAudio) sys('这轮没有声音，文字在上面');
   return outcome;
 }
 
@@ -606,7 +612,7 @@ async function sendBlobStream(blob,turn){
   try{ resp=await fetch('/turn_stream',{method:'POST',body:fd,signal:controller.signal}); }
   // 主动 abort 只可能来自本轮看门狗（查标记位）；先判挂断保证挂断后静默。不看 e.name（跨平台异常名不可靠）
   catch(e){ if(!callOn)return {outcome:'cancelled'};
-    if(w.hit())return {outcome:judgeOutcome(spoke,ended,gotNote), failShown:sawFail};
+    if(w.hit())return {outcome:judgeOutcome(spoke,ended,gotNote), failShown:sawFail, spoke};
     return bail(); }   // 连接就失败 → 回退
   if(!callOn) return {outcome:'cancelled'};
   if(!resp || !resp.ok || !resp.body) return bail();
@@ -637,7 +643,7 @@ async function sendBlobStream(blob,turn){
     }
   }
   if(!interrupted) setStatus('就绪');
-  return {outcome:judgeOutcome(spoke,ended,gotNote), failShown:sawFail};
+  return {outcome:judgeOutcome(spoke,ended,gotNote), failShown:sawFail, spoke};
   } finally { w.stop(); if(turnWatch===w)turnWatch=null; }   // 所有出口都清定时器；此后播放排空不再计时
 }
 
@@ -663,7 +669,8 @@ async function playQueue(){
 function playOne(b64){
   return new Promise(res=>{
     player.src='data:audio/ogg;base64,'+b64;
-    player.play().catch(()=>{});
+    // resolve=浏览器确认开播才记 heardAudio；b64 缺失/解码失败会 reject，不算有声
+    const pp=player.play(); if(pp&&pp.then) pp.then(()=>{heardAudio=true;},()=>{});
     let done=false; const fin=r=>{ if(done)return; done=true; res(r); };
     player.onended=()=>fin('ended'); player.onerror=()=>fin('error');
     setTimeout(()=>fin('timeout'),15000);
@@ -715,7 +722,7 @@ async function sendBlob(blob){
   if(d.audio_b64&&bub){ setStatus('播放中…'); await playB64(d.audio_b64,bub); }
   setStatus('就绪');
   // 200 但 reply/note/fail 全无：正常后端不该出现，防御性判失败而不是静默放行
-  return {outcome:d.reply_text?'ok':'failed'};
+  return {outcome:d.reply_text?'ok':'failed', spoke:!!d.reply_text};
 }
 
 // 一轮的统一入口：优先流式；流式一旦不可用就本次通话后续都走稳定的非流式 /turn。
@@ -724,15 +731,16 @@ let useStream=true;
 async function sendTurn(blob){
   if(!callOn)return 'cancelled';
   const turn=++turnSeq;   // 本轮的号：迟到的旧轮内容凭它被丢弃
+  heardAudio=false;       // 按轮清零，通道回退也算同一轮
   if(useStream){
     const r=await sendBlobStream(blob,turn);
-    if(!r.fallback) return settleTurn(r.outcome,r.failShown);
+    if(!r.fallback) return settleTurn(r.outcome,r.failShown,r.spoke);
     if(!callOn) return 'cancelled';
     useStream=false;
     sys('流式不可用，已切到稳定模式');
   }
   const r=await sendBlob(blob);   // 非流式：add me/her + playB64（含 barge-in 打断）
-  return settleTurn(r.outcome,r.failShown);
+  return settleTurn(r.outcome,r.failShown,r.spoke);
 }
 
 // 录一段:说过话后静音~0.9s 自动停;最长15s;8s没声放弃
