@@ -543,7 +543,10 @@ async function sendBlobStream(blob){
   if(!resp || !resp.ok || !resp.body) return false;
   let reader; try{ reader=resp.body.getReader(); }catch(e){ return false; }
   const dec=new TextDecoder();
-  let buf='', produced=false;
+  // produced 与 spoke 是两个语义，谁也不许再合并（一个变量担两个语义正是此前静默跳回 bug 的根因）：
+  // produced=已往 UI 写过东西（user_text 一到就画了 me 气泡）→ 只回答"能不能回退重放"；
+  // spoke=AI 真的出过句子 → 只回答"这轮有没有产出"，只在 d.sentence 分支置真。
+  let buf='', produced=false, spoke=false, ended=false, gotNote=false, sawFail=false;
   while(true){
     let chunk; try{ chunk=await reader.read(); }
     catch(e){ if(!produced) return false; break; }  // 早期读失败→回退；已产出→止损
@@ -556,8 +559,10 @@ async function sendBlobStream(blob){
       if(!line.trim()) continue;
       let d; try{ d=JSON.parse(line); }catch(e){ continue; }
       if(d.user_text){ add('me',d.user_text); produced=true; }
-      else if(d.note){ sys(d.note); }
-      else if(d.sentence){ enqueueSentence(d.sentence,d.audio_b64); produced=true; }
+      else if(d.note){ sys(d.note); gotNote=true; }
+      else if(d.sentence){ enqueueSentence(d.sentence,d.audio_b64); produced=true; spoke=true; }
+      else if(d.done){ ended=true; }   // reply_text 不显示：正文已逐句画过，这行只是收尾信号
+      else if(d.fail){ sys(d.fail); sawFail=true; }   // 后端明确说这轮没有回复，文案由后端固定给出
     }
   }
   if(!interrupted) setStatus('就绪');
