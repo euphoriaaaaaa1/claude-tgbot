@@ -562,12 +562,18 @@ async function sendBlobStream(blob){
   setStatus('识别+思考中…');
   const fd=new FormData(); fd.append('audio',blob,'a'); fd.append('bot',$('#bot').value);
   audioQueue=[]; qPlaying=false; interrupted=false;
+  // 回退决策与结局解耦，规则写死（别改）：只有从未往 UI 写过任何东西（!produced）
+  // 才允许回退重放 /turn；failed/cut/超时/断流一律不回退——UI 已有痕迹时重放会让
+  // 同一段音频后端双跑、气泡和语音重复。回退前必须先 abort：后端生成器被 cancel
+  // 后零交付不落账，/turn 重放才不会在记忆里落两条同一句话。
+  const controller=new AbortController();
+  const bail=()=>{ controller.abort(); return {fallback:true}; };
   let resp;
-  try{ resp=await fetch('/turn_stream',{method:'POST',body:fd}); }
-  catch(e){ if(!callOn)return {outcome:'cancelled'}; return {fallback:true}; }   // 连接就失败 → 回退
+  try{ resp=await fetch('/turn_stream',{method:'POST',body:fd,signal:controller.signal}); }
+  catch(e){ if(!callOn)return {outcome:'cancelled'}; return bail(); }   // 连接就失败 → 回退
   if(!callOn) return {outcome:'cancelled'};
-  if(!resp || !resp.ok || !resp.body) return {fallback:true};
-  let reader; try{ reader=resp.body.getReader(); }catch(e){ return {fallback:true}; }
+  if(!resp || !resp.ok || !resp.body) return bail();
+  let reader; try{ reader=resp.body.getReader(); }catch(e){ return bail(); }
   const dec=new TextDecoder();
   // produced 与 spoke 是两个语义，谁也不许再合并（一个变量担两个语义正是此前静默跳回 bug 的根因）：
   // produced=已往 UI 写过东西（user_text 一到就画了 me 气泡）→ 只回答"能不能回退重放"；
@@ -576,7 +582,7 @@ async function sendBlobStream(blob){
   while(true){
     let chunk; try{ chunk=await reader.read(); }
     // 断流不再无条件放行：produced 前回退，之后 break 交给判定链定结局
-    catch(e){ if(!callOn)return {outcome:'cancelled'}; if(!produced)return {fallback:true}; break; }
+    catch(e){ if(!callOn)return {outcome:'cancelled'}; if(!produced)return bail(); break; }
     if(chunk.done) break;
     if(interrupted){ try{reader.cancel();}catch(e){} break; }
     buf+=dec.decode(chunk.value,{stream:true});
