@@ -701,10 +701,12 @@ async function sendBlob(blob){
   // PTT 直调时 sendTurn/settleTurn 不在场，超时提示必须在这里出，failShown 挡住通话内的二次弹。
   catch(e){ if(inCall&&!callOn) return {outcome:'cancelled'};
     if(w.hit()){ sys('这轮没收到回复，再说一次'); setStatus('就绪'); return {outcome:'failed',failShown:true}; }
-    sys('网络/服务器错误: '+e.message); setStatus('出错');
+    // 异常原文可能带内部地址/路径，一律不上屏，只出统一固定文案
+    sys('这轮没收到回复，再说一次'); setStatus('出错');
     return {outcome:'failed',failShown:true}; }
   finally{ w.stop(); }
-  if(d.error){ sys('服务器: '+d.error); setStatus('出错'); return {outcome:'failed',failShown:true}; }
+  // /turn 的 d.error 是后端异常字符串（可能含服务地址等内部信息），不回显，只出固定文案
+  if(d.error){ sys('这轮没收到回复，再说一次'); setStatus('出错'); return {outcome:'failed',failShown:true}; }
   if(d.user_text) add('me',d.user_text);
   if(d.fail){ sys(d.fail); setStatus('就绪'); return {outcome:'failed',failShown:true}; }  // 后端明确说这轮没有回复
   if(d.note){ sys(d.note); setStatus('就绪'); return {outcome:'ok'}; }
