@@ -385,6 +385,10 @@ window.fetch=async(...a)=>{ const r=await _fetch(...a);
   return r; };
 const logEl=$('#log'), statusEl=$('#status');
 let stream, callOn=false, recording=false, audioUnlocked=false;
+// 跨轮防串：turnSeq 按轮自增（sendTurn 入口取号），全局单调、永不复位——复位会与旧轮撞号。
+// 画气泡/播音频前比对轮号，迟到的旧轮句子对不上号就丢弃，画不进新一轮。
+// 注意：本版没有"通话换代"计数，挂断只看 callOn，这个守卫是 callOn + 轮号的单层防线。
+let turnSeq=0;
 const player=new Audio();  // 复用一个元素,便于解锁自动播放
 
 function setStatus(t){statusEl.textContent=t}
@@ -579,7 +583,7 @@ function settleTurn(outcome,failShown){
 // 就不可用，需回退非流式 /turn。
 // iOS PWA 独立模式下 fetch 读 response.body 常抛 "load failed"：只要在产出任何内容前失败就回退，
 // 已产出后中途断流则按判定链收口（不回退，避免 /turn 重放导致文字/语音重复）。
-async function sendBlobStream(blob){
+async function sendBlobStream(blob,turn){
   // 太短=这轮根本没送出：cancelled 的下游行为（静默、不计失败）恰好是"什么都不做"
   if(!blob||blob.size<1200){setStatus('没录到声音(太短)');return {outcome:'cancelled'};}
   setStatus('识别+思考中…');
@@ -627,7 +631,7 @@ async function sendBlobStream(blob){
       let d; try{ d=JSON.parse(line); }catch(e){ continue; }
       if(d.user_text){ add('me',d.user_text); produced=true; }
       else if(d.note){ sys(d.note); gotNote=true; }
-      else if(d.sentence){ enqueueSentence(d.sentence,d.audio_b64); produced=true; spoke=true; }
+      else if(d.sentence){ enqueueSentence(d.sentence,d.audio_b64,turn); produced=true; spoke=true; }
       else if(d.done){ ended=true; }   // reply_text 不显示：正文已逐句画过，这行只是收尾信号
       else if(d.fail){ sys(d.fail); sawFail=true; }   // 后端明确说这轮没有回复，文案由后端固定给出
     }
@@ -637,18 +641,21 @@ async function sendBlobStream(blob){
   } finally { w.stop(); if(turnWatch===w)turnWatch=null; }   // 所有出口都清定时器；此后播放排空不再计时
 }
 
-function enqueueSentence(text,b64){
+function enqueueSentence(text,b64,turn){
+  if(!callOn||turn!==turnSeq)return;   // 迟到的旧轮句子：轮号对不上就丢弃，不画气泡不进队列
   add('her',text);                 // 文字逐句蹦出
-  audioQueue.push(b64);
+  audioQueue.push({b64,turn});
   if(!qPlaying) playQueue();
 }
 
 async function playQueue(){
   qPlaying=true;
   while(audioQueue.length && !interrupted){
+    const item=audioQueue.shift();
+    if(!callOn||item.turn!==turnSeq)continue;   // 播前再验一次轮号：入队后才过期的条目在这里拦掉
     if(turnWatch)turnWatch.progress();   // 进展源 2/2：开始播一条（本轮收尾后 turnWatch 已置空，天然 no-op）
     setStatus('播放中…');
-    await playOne(audioQueue.shift());
+    await playOne(item.b64);
   }
   qPlaying=false;
 }
@@ -714,8 +721,9 @@ async function sendBlob(blob){
 let useStream=true;
 async function sendTurn(blob){
   if(!callOn)return 'cancelled';
+  const turn=++turnSeq;   // 本轮的号：迟到的旧轮内容凭它被丢弃
   if(useStream){
-    const r=await sendBlobStream(blob);
+    const r=await sendBlobStream(blob,turn);
     if(!r.fallback) return settleTurn(r.outcome,r.failShown);
     if(!callOn) return 'cancelled';
     useStream=false;
