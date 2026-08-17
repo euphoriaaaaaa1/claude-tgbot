@@ -529,19 +529,45 @@ function playB64(b64,bubble){
 // ── 流式一轮：POST /turn_stream，读 NDJSON，逐句进队列边收边播 ──
 let audioQueue=[], qPlaying=false, interrupted=false;
 
-// 返回 true=本轮已完成（含正常收播、被打断、录音太短）；false=流式不可用，需回退非流式 /turn。
+// 一轮的结局判定链：顺序写死，从上往下第一个命中即锁定。
+// 核心口径：spoke 一旦为真就锁定在有产出分支（序4/序5），超时和断流都不能把它
+// 降级成失败——否则用户主动打断 AI 之后反而会看到一条荒谬的失败提示。
+// 将来若加看门狗超时也只走这条链：catch 先判挂断再判超时标记，不看异常类型。
+function judgeOutcome(spoke,ended,gotNote){
+  if(!callOn) return 'cancelled';    // 1 挂断最高优先
+  if(interrupted) return 'ok';       // 2 barge-in 静默收口，含打断后撞硬上限
+  if(!spoke&&gotNote) return 'ok';   // 3 没听清：note 已提示过，不计失败
+  if(spoke&&ended) return 'ok';      // 4 正常说完
+  if(spoke) return 'cut';            // 5 出过内容但没等到 done：截断
+  return 'failed';                   // 6 兜底：零产出/断流/fail/非2xx，结构上不存在无结局的出口
+}
+
+// 收口：结局唯一出提示的地方（显式传结局，无默认值可漏）。
+// 先复查挂断——主动挂断不是失败，此后不得再冒任何提示。
+function settleTurn(outcome,failShown){
+  if(!callOn) return 'cancelled';
+  if(outcome==='cut') sys('回复没说完就断了');
+  else if(outcome==='failed'&&!failShown) sys('这轮没收到回复，再说一次');
+  return outcome;
+}
+
+// 返回 {outcome,failShown,fallback}：outcome=judgeOutcome 四值之一；failShown=失败文案
+// 是否已在流里显示过（避免收口重复弹）；fallback=true 表示流式通道在产出任何内容前
+// 就不可用，需回退非流式 /turn。
 // iOS PWA 独立模式下 fetch 读 response.body 常抛 "load failed"：只要在产出任何内容前失败就回退，
-// 已产出后中途断流则止损收尾（不回退，避免 /turn 重放导致文字/语音重复）。
+// 已产出后中途断流则按判定链收口（不回退，避免 /turn 重放导致文字/语音重复）。
 async function sendBlobStream(blob){
-  if(!blob||blob.size<1200){setStatus('没录到声音(太短)');return true;}
+  // 太短=这轮根本没送出：cancelled 的下游行为（静默、不计失败）恰好是"什么都不做"
+  if(!blob||blob.size<1200){setStatus('没录到声音(太短)');return {outcome:'cancelled'};}
   setStatus('识别+思考中…');
   const fd=new FormData(); fd.append('audio',blob,'a'); fd.append('bot',$('#bot').value);
   audioQueue=[]; qPlaying=false; interrupted=false;
   let resp;
   try{ resp=await fetch('/turn_stream',{method:'POST',body:fd}); }
-  catch(e){ return false; }                       // 连接就失败 → 回退
-  if(!resp || !resp.ok || !resp.body) return false;
-  let reader; try{ reader=resp.body.getReader(); }catch(e){ return false; }
+  catch(e){ if(!callOn)return {outcome:'cancelled'}; return {fallback:true}; }   // 连接就失败 → 回退
+  if(!callOn) return {outcome:'cancelled'};
+  if(!resp || !resp.ok || !resp.body) return {fallback:true};
+  let reader; try{ reader=resp.body.getReader(); }catch(e){ return {fallback:true}; }
   const dec=new TextDecoder();
   // produced 与 spoke 是两个语义，谁也不许再合并（一个变量担两个语义正是此前静默跳回 bug 的根因）：
   // produced=已往 UI 写过东西（user_text 一到就画了 me 气泡）→ 只回答"能不能回退重放"；
@@ -549,7 +575,8 @@ async function sendBlobStream(blob){
   let buf='', produced=false, spoke=false, ended=false, gotNote=false, sawFail=false;
   while(true){
     let chunk; try{ chunk=await reader.read(); }
-    catch(e){ if(!produced) return false; break; }  // 早期读失败→回退；已产出→止损
+    // 断流不再无条件放行：produced 前回退，之后 break 交给判定链定结局
+    catch(e){ if(!callOn)return {outcome:'cancelled'}; if(!produced)return {fallback:true}; break; }
     if(chunk.done) break;
     if(interrupted){ try{reader.cancel();}catch(e){} break; }
     buf+=dec.decode(chunk.value,{stream:true});
@@ -566,7 +593,7 @@ async function sendBlobStream(blob){
     }
   }
   if(!interrupted) setStatus('就绪');
-  return true;
+  return {outcome:judgeOutcome(spoke,ended,gotNote), failShown:sawFail};
 }
 
 function enqueueSentence(text,b64){
@@ -608,32 +635,40 @@ function playOne(b64){
   });
 }
 
+// 返回 {outcome,failShown}。PTT 直调时丢弃返回值，行为不变。
 async function sendBlob(blob){
-  if(!blob||blob.size<1200){setStatus('没录到声音(太短)');return;}
+  if(!blob||blob.size<1200){setStatus('没录到声音(太短)');return {outcome:'cancelled'};}
   setStatus('识别+思考中…(Claude 冷启动慢,请等十几秒)');
   const fd=new FormData(); fd.append('audio',blob,'a'); fd.append('bot',$('#bot').value);
   let d;
   try{ const r=await fetch('/turn',{method:'POST',body:fd}); d=await r.json(); }
-  catch(e){ sys('网络/服务器错误: '+e.message); setStatus('出错'); return; }
-  if(d.error){ sys('服务器: '+d.error); setStatus('出错'); return; }
+  catch(e){ sys('网络/服务器错误: '+e.message); setStatus('出错'); return {outcome:'failed',failShown:true}; }
+  if(d.error){ sys('服务器: '+d.error); setStatus('出错'); return {outcome:'failed',failShown:true}; }
   if(d.user_text) add('me',d.user_text);
-  if(d.note){ sys(d.note); setStatus('就绪'); return; }
+  if(d.fail){ sys(d.fail); setStatus('就绪'); return {outcome:'failed',failShown:true}; }  // 后端明确说这轮没有回复
+  if(d.note){ sys(d.note); setStatus('就绪'); return {outcome:'ok'}; }
   let bub=null;
   if(d.reply_text) bub=add('her',d.reply_text,d.timings);
   if(d.audio_b64&&bub){ setStatus('播放中…'); await playB64(d.audio_b64,bub); }
   setStatus('就绪');
+  // 200 但 reply/note/fail 全无：正常后端不该出现，防御性判失败而不是静默放行
+  return {outcome:d.reply_text?'ok':'failed'};
 }
 
 // 一轮的统一入口：优先流式；流式一旦不可用就本次通话后续都走稳定的非流式 /turn。
+// 返回本轮结局（'ok'|'cut'|'failed'|'cancelled'），供 callLoop 做失败计数。
 let useStream=true;
 async function sendTurn(blob){
+  if(!callOn)return 'cancelled';
   if(useStream){
-    const ok=await sendBlobStream(blob);
-    if(ok) return;
+    const r=await sendBlobStream(blob);
+    if(!r.fallback) return settleTurn(r.outcome,r.failShown);
+    if(!callOn) return 'cancelled';
     useStream=false;
     sys('流式不可用，已切到稳定模式');
   }
-  await sendBlob(blob);   // 非流式：add me/her + playB64（含 barge-in 打断）
+  const r=await sendBlob(blob);   // 非流式：add me/her + playB64（含 barge-in 打断）
+  return settleTurn(r.outcome,r.failShown);
 }
 
 // 录一段:说过话后静音~0.9s 自动停;最长15s;8s没声放弃
