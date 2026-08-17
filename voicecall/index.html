@@ -529,10 +529,30 @@ function playB64(b64,bubble){
 // ── 流式一轮：POST /turn_stream，读 NDJSON，逐句进队列边收边播 ──
 let audioQueue=[], qPlaying=false, interrupted=false;
 
+// ── 有界等待：每轮一个看门狗（流式/非流式共用），超时用本地标记位区分，
+// 不看异常类型（iOS PWA 下 abort 的异常名不可靠，设计上就不依赖它）。
+// 触发即置 hit 并 abort，结局交给 judgeOutcome 判定链，这里不出任何提示。
+const SLOW_HINT_MS=10000, STREAM_STALL_MS=55000, TURN_HARD_MS=90000;
+let turnWatch=null;   // 当前轮看门狗；playQueue 用它把"开始播一条"喂成进展
+function turnWatchdog(controller,withStall){
+  let hit=false, stallT=null, slowT=null;
+  const fire=()=>{ hit=true; controller.abort(); };
+  const hardT=setTimeout(fire,TURN_HARD_MS);          // 出话上限：不论有无进展都到点即停
+  if(withStall) stallT=setTimeout(fire,STREAM_STALL_MS); // 无进展上限：仅流式
+  const w={
+    onSlow:null, hit:()=>hit,
+    // 进展只认两件事：收到一行、开始播一条。状态文案变化/跳秒/fetch resolve 都不重置。
+    progress(){ if(stallT){ clearTimeout(stallT); stallT=setTimeout(fire,STREAM_STALL_MS); } },
+    stop(){ clearTimeout(hardT); clearTimeout(slowT); if(stallT)clearTimeout(stallT); stallT=null; }
+  };
+  slowT=setTimeout(()=>{ if(!hit&&w.onSlow)w.onSlow(); },SLOW_HINT_MS);
+  return w;
+}
+
 // 一轮的结局判定链：顺序写死，从上往下第一个命中即锁定。
 // 核心口径：spoke 一旦为真就锁定在有产出分支（序4/序5），超时和断流都不能把它
 // 降级成失败——否则用户主动打断 AI 之后反而会看到一条荒谬的失败提示。
-// 将来若加看门狗超时也只走这条链：catch 先判挂断再判超时标记，不看异常类型。
+// 看门狗超时也只走这条链：catch 先判挂断再判超时标记，不看异常类型。
 function judgeOutcome(spoke,ended,gotNote){
   if(!callOn) return 'cancelled';    // 1 挂断最高优先
   if(interrupted) return 'ok';       // 2 barge-in 静默收口，含打断后撞硬上限
@@ -568,9 +588,19 @@ async function sendBlobStream(blob){
   // 后零交付不落账，/turn 重放才不会在记忆里落两条同一句话。
   const controller=new AbortController();
   const bail=()=>{ controller.abort(); return {fallback:true}; };
+  // produced/spoke 等提前声明：慢提示回调 10s 后才跑，若声明留在读流前，fetch 挂住时会撞 TDZ
+  let buf='', produced=false, spoke=false, ended=false, gotNote=false, sawFail=false;
+  // 看门狗管到读流结束为止；播放排空不计入（出话上限只数出话）。超时不回退——
+  // 是我们自己 abort 的，重放 /turn 只会再等一遍，结局按判定链走（零产出 failed、有产出 cut）。
+  const w=turnWatchdog(controller,true); turnWatch=w;
+  w.onSlow=()=>{ if(callOn&&!spoke&&!interrupted) setStatus('还在想…'); };
+  try{
   let resp;
   try{ resp=await fetch('/turn_stream',{method:'POST',body:fd,signal:controller.signal}); }
-  catch(e){ if(!callOn)return {outcome:'cancelled'}; return bail(); }   // 连接就失败 → 回退
+  // 主动 abort 只可能来自本轮看门狗（查标记位）；先判挂断保证挂断后静默。不看 e.name（跨平台异常名不可靠）
+  catch(e){ if(!callOn)return {outcome:'cancelled'};
+    if(w.hit())return {outcome:judgeOutcome(spoke,ended,gotNote), failShown:sawFail};
+    return bail(); }   // 连接就失败 → 回退
   if(!callOn) return {outcome:'cancelled'};
   if(!resp || !resp.ok || !resp.body) return bail();
   let reader; try{ reader=resp.body.getReader(); }catch(e){ return bail(); }
@@ -578,17 +608,18 @@ async function sendBlobStream(blob){
   // produced 与 spoke 是两个语义，谁也不许再合并（一个变量担两个语义正是此前静默跳回 bug 的根因）：
   // produced=已往 UI 写过东西（user_text 一到就画了 me 气泡）→ 只回答"能不能回退重放"；
   // spoke=AI 真的出过句子 → 只回答"这轮有没有产出"，只在 d.sentence 分支置真。
-  let buf='', produced=false, spoke=false, ended=false, gotNote=false, sawFail=false;
   while(true){
     let chunk; try{ chunk=await reader.read(); }
-    // 断流不再无条件放行：produced 前回退，之后 break 交给判定链定结局
-    catch(e){ if(!callOn)return {outcome:'cancelled'}; if(!produced)return bail(); break; }
+    // 断流不再无条件放行：produced 前回退，之后 break 交给判定链定结局。
+    // 看门狗超时（w.hit）一律不回退，直接 break 走判定链。
+    catch(e){ if(!callOn)return {outcome:'cancelled'}; if(!w.hit()&&!produced)return bail(); break; }
     if(chunk.done) break;
     if(interrupted){ try{reader.cancel();}catch(e){} break; }
     buf+=dec.decode(chunk.value,{stream:true});
     let idx;
     while((idx=buf.indexOf('\n'))>=0){
       const line=buf.slice(0,idx); buf=buf.slice(idx+1);
+      w.progress();   // 进展源 1/2：收到一行
       if(!line.trim()) continue;
       let d; try{ d=JSON.parse(line); }catch(e){ continue; }
       if(d.user_text){ add('me',d.user_text); produced=true; }
@@ -600,6 +631,7 @@ async function sendBlobStream(blob){
   }
   if(!interrupted) setStatus('就绪');
   return {outcome:judgeOutcome(spoke,ended,gotNote), failShown:sawFail};
+  } finally { w.stop(); if(turnWatch===w)turnWatch=null; }   // 所有出口都清定时器；此后播放排空不再计时
 }
 
 function enqueueSentence(text,b64){
@@ -611,6 +643,7 @@ function enqueueSentence(text,b64){
 async function playQueue(){
   qPlaying=true;
   while(audioQueue.length && !interrupted){
+    if(turnWatch)turnWatch.progress();   // 进展源 2/2：开始播一条（本轮收尾后 turnWatch 已置空，天然 no-op）
     setStatus('播放中…');
     await playOne(audioQueue.shift());
   }
