@@ -679,9 +679,21 @@ async function sendBlob(blob){
   if(!blob||blob.size<1200){setStatus('没录到声音(太短)');return {outcome:'cancelled'};}
   setStatus('识别+思考中…(Claude 冷启动慢,请等十几秒)');
   const fd=new FormData(); fd.append('audio',blob,'a'); fd.append('bot',$('#bot').value);
+  // 非流式（含 PTT 直调）同样有界：整轮上限一个表，无进展上限不适用（一次性 JSON 无中途进展）。
+  // inCall=进本轮时是否在通话中：PTT 直调时恒为 false，用它区分"挂断要静默"和"PTT 要出提示"。
+  const inCall=callOn;
+  const controller=new AbortController();
+  const w=turnWatchdog(controller,false);
+  w.onSlow=()=>{ if(!inCall||callOn) setStatus('还在想…'); };
   let d;
-  try{ const r=await fetch('/turn',{method:'POST',body:fd}); d=await r.json(); }
-  catch(e){ sys('网络/服务器错误: '+e.message); setStatus('出错'); return {outcome:'failed',failShown:true}; }
+  try{ const r=await fetch('/turn',{method:'POST',body:fd,signal:controller.signal}); d=await r.json(); }
+  // 先判挂断再判超时标记，最后才是真网络错误；不看 e.name（跨平台异常名不可靠）。
+  // PTT 直调时 sendTurn/settleTurn 不在场，超时提示必须在这里出，failShown 挡住通话内的二次弹。
+  catch(e){ if(inCall&&!callOn) return {outcome:'cancelled'};
+    if(w.hit()){ sys('这轮没收到回复，再说一次'); setStatus('就绪'); return {outcome:'failed',failShown:true}; }
+    sys('网络/服务器错误: '+e.message); setStatus('出错');
+    return {outcome:'failed',failShown:true}; }
+  finally{ w.stop(); }
   if(d.error){ sys('服务器: '+d.error); setStatus('出错'); return {outcome:'failed',failShown:true}; }
   if(d.user_text) add('me',d.user_text);
   if(d.fail){ sys(d.fail); setStatus('就绪'); return {outcome:'failed',failShown:true}; }  // 后端明确说这轮没有回复
