@@ -143,6 +143,10 @@ def _append_voice_log(bot: str, role: str, text: str, image_path: str = None) ->
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
+# 统一失败提示：固定文案，两个端点共用，绝不拼接异常原文
+FAIL_REPLY = "这轮没收到回复，再说一次"
+
+
 def _log_delivered_turn(bot: str, user_text: str, delivered: str) -> None:
     """落账唯一入口（/turn 与 /turn_stream 共用）：只记确实交付给前端的内容。
     delivered 为空 → user/assistant 两条都不写：被丢弃的一轮双方都当没发生过。
@@ -408,6 +412,9 @@ async def turn(audio: UploadFile, bot: str = Form(DEFAULT_BOT)):
             print(f"[turn] 已触发 voice-action→Telegram (bot={bot})", flush=True)
         t0 = time.time(); reply = ask_claude(bot, user_text, image_pending=img_fired, action_pending=action_fired); t["llm_ms"] = int((time.time() - t0) * 1000)
         print(f"[turn] Claude= {reply!r} ({t['llm_ms']}ms)", flush=True)
+        if not reply:
+            # 空回复：不落账、不合成，明确返回 fail（不给省略号占位气泡、不静默跳回）
+            return JSONResponse({"user_text": user_text, "fail": FAIL_REPLY, "timings": t})
         t0 = time.time(); audio_bytes = tts(reply, BOTS[bot]["voice_id"]); t["tts_ms"] = int((time.time() - t0) * 1000)
         print(f"[turn] TTS= {len(audio_bytes)} bytes ({t['tts_ms']}ms)", flush=True)
         # 落账放 TTS 成功之后：TTS 抛异常时整轮返回 error，用户什么都没收到，不算交付
@@ -483,6 +490,7 @@ async def turn_stream(audio: UploadFile, bot: str = Form(DEFAULT_BOT)):
                                "audio_b64": base64.b64encode(ab).decode()},
                               ensure_ascii=False) + "\n"
 
+        llm_broke = False
         try:
             try:
                 async for delta in call_text_stream(prompt, max_tokens=200):
@@ -503,10 +511,17 @@ async def turn_stream(audio: UploadFile, bot: str = Form(DEFAULT_BOT)):
                     yield await emit(tail)
                     sent.append(tail)
             except Exception as e:
+                llm_broke = True
                 print(f"[turn_stream] LLM流式出错: {e}", flush=True)
             delivered = "".join(sent)
             print(f"[turn_stream] reply={delivered!r} 第一句就绪={first_ms}ms", flush=True)
-            yield json.dumps({"done": True, "reply_text": delivered}, ensure_ascii=False) + "\n"
+            if not delivered:
+                # 零交付（零产出/异常/全空句）：明确告诉前端这轮没有回复
+                yield json.dumps({"fail": FAIL_REPLY}, ensure_ascii=False) + "\n"
+            elif not llm_broke:
+                yield json.dumps({"done": True, "reply_text": delivered}, ensure_ascii=False) + "\n"
+            # 已交付一部分又异常：不发 done 也不发 fail——由前端按"有产出未正常
+            # 收尾"判成截断，发 fail 反而会多弹一条统一失败提示
         finally:
             # finally：客户端放弃时生成器被 CancelledError 打断（它是 BaseException，
             # 上面的 except Exception 抓不到），落账仍要执行——此时 sent 只含已交付句
