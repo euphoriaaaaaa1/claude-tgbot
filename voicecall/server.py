@@ -411,8 +411,9 @@ async def turn(audio: UploadFile, bot: str = Form(DEFAULT_BOT)):
 
 
 async def _tts_bytes(text: str, voice_id: str) -> bytes:
-    """async 调 voice-bridge 合成整句，返回 ogg bytes（Chrome 原生可播）。"""
-    async with httpx.AsyncClient(timeout=60.0) as c:
+    """async 调 voice-bridge 合成整句，返回 ogg bytes（Chrome 原生可播）。
+    15s 约为实测冷启动耗时的 5 倍；60s 会把两行 NDJSON 间的最大静默撑到前端等不起。"""
+    async with httpx.AsyncClient(timeout=15.0) as c:
         r = await c.post(VB + "/synthesize_voice",
                          json={"text": text, "voice_id": voice_id, "emotion": "NEUTRAL"})
         r.raise_for_status()
