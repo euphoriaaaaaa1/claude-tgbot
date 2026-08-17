@@ -533,6 +533,9 @@ let audioQueue=[], qPlaying=false, interrupted=false;
 // 不看异常类型（iOS PWA 下 abort 的异常名不可靠，设计上就不依赖它）。
 // 触发即置 hit 并 abort，结局交给 judgeOutcome 判定链，这里不出任何提示。
 const SLOW_HINT_MS=10000, STREAM_STALL_MS=55000, TURN_HARD_MS=90000;
+// 连续失败上界：failed 满这个轮数就自动结束通话，不让坏网络下无人值守地空转。
+// 取 3 → 最坏约 3 轮录音+超时的墙钟；想更快止损可调成 2，代价是网络抖动更容易触发自动挂断。
+const MAX_DEAD_TURNS=3;
 let turnWatch=null;   // 当前轮看门狗；playQueue 用它把"开始播一条"喂成进展
 function turnWatchdog(controller,withStall){
   let hit=false, stallT=null, slowT=null;
@@ -806,6 +809,9 @@ function recordOnce(){
 }
 
 async function callLoop(){
+  // deadTurns 是 callLoop 局部量：每次接听都跑一个新的 callLoop，天然从 0 起，
+  // 上一通的残留失败不可能带进新一通。
+  let deadTurns=0;
   while(callOn){
     setStatus('在听你说…');
     let blob=null;
@@ -813,8 +819,18 @@ async function callLoop(){
     if(!callOn)break;
     // 空轮停 0.9s 再回到"在听你说…"：让 recordOnce 留下的提示（噪声丢弃/暂时不可用）来得及被看到
     if(!blob){await new Promise(r=>setTimeout(r,900));continue;}
-    await sendTurn(blob);
+    const outcome=await sendTurn(blob);
+    // 计数口径：按轮不按请求。只认 sendTurn 的最终结局，一轮内部流式回退/重试都最多 +1；
+    // cancelled（主动挂断）既不 +1 也不清零，交给 while 条件自然退出。
+    if(callOn){
+      if(outcome==='failed'){
+        if(++deadTurns>=MAX_DEAD_TURNS){ sys('连续没收到回复，先挂了；点「开始通话」可以重新开始'); break; }
+      } else if(outcome==='ok'||outcome==='cut') deadTurns=0;
+    }
   }
+  // 自动挂断（失败上界/麦克风错误 break 出来时 callOn 仍为 true）：复用 #call 的真实挂断收口
+  // （按钮复原 + 通话记录上报 + /end_call），与手动挂断走完全同一条路。
+  if(callOn) $('#call').click();
   setStatus('通话结束。');
 }
 
