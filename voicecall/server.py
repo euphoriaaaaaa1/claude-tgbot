@@ -143,6 +143,16 @@ def _append_voice_log(bot: str, role: str, text: str, image_path: str = None) ->
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
+def _log_delivered_turn(bot: str, user_text: str, delivered: str) -> None:
+    """落账唯一入口（/turn 与 /turn_stream 共用）：只记确实交付给前端的内容。
+    delivered 为空 → user/assistant 两条都不写：被丢弃的一轮双方都当没发生过。
+    user 句同样不落——只落 user 会让 AI 下轮突然回答一个用户从没收到过回应的问题（串轮）。"""
+    if not (delivered or "").strip():
+        return
+    _append_voice_log(bot, "user", user_text)
+    _append_voice_log(bot, "assistant", delivered)
+
+
 def _voice_block(bot: str) -> str:
     rows = _read_voice_log(bot)
     if not rows:
@@ -338,11 +348,10 @@ def build_call_prompt(bot: str, user_text: str, image_pending: bool = False,
 
 def ask_claude(bot: str, user_text: str, image_pending: bool = False,
                action_pending: bool = False) -> str:
+    """纯生成，不落账：落账由 /turn 在确认交付后走 _log_delivered_turn。
+    空回复原样返回空串——原先的省略号占位兜底会画出整条省略号气泡。"""
     prompt = build_call_prompt(bot, user_text, image_pending, action_pending)
-    reply = (call_claude(prompt, timeout=30) or "").strip() or "……"
-    _append_voice_log(bot, "user", user_text)
-    _append_voice_log(bot, "assistant", reply)
-    return reply
+    return (call_claude(prompt, timeout=30) or "").strip()
 
 
 def tts(text: str, voice_id: str) -> bytes:
@@ -401,6 +410,8 @@ async def turn(audio: UploadFile, bot: str = Form(DEFAULT_BOT)):
         print(f"[turn] Claude= {reply!r} ({t['llm_ms']}ms)", flush=True)
         t0 = time.time(); audio_bytes = tts(reply, BOTS[bot]["voice_id"]); t["tts_ms"] = int((time.time() - t0) * 1000)
         print(f"[turn] TTS= {len(audio_bytes)} bytes ({t['tts_ms']}ms)", flush=True)
+        # 落账放 TTS 成功之后：TTS 抛异常时整轮返回 error，用户什么都没收到，不算交付
+        _log_delivered_turn(bot, user_text, reply)
         return JSONResponse({
             "user_text": user_text, "reply_text": reply,
             "audio_b64": base64.b64encode(audio_bytes).decode(), "timings": t,
@@ -458,7 +469,7 @@ async def turn_stream(audio: UploadFile, bot: str = Form(DEFAULT_BOT)):
 
     async def gen():
         yield json.dumps({"user_text": user_text, "stt_ms": stt_ms}, ensure_ascii=False) + "\n"
-        buf = ""; full = ""; t_llm = time.time(); first_ms = None
+        buf = ""; sent = []; t_llm = time.time(); first_ms = None
 
         async def emit(sentence: str):
             nonlocal first_ms
@@ -473,24 +484,33 @@ async def turn_stream(audio: UploadFile, bot: str = Form(DEFAULT_BOT)):
                               ensure_ascii=False) + "\n"
 
         try:
-            async for delta in call_text_stream(prompt, max_tokens=200):
-                buf += delta; full += delta
-                while True:
-                    m = _SENT_END.search(buf)
-                    if not m:
-                        break
-                    cut = m.end(); sentence = buf[:cut].strip(); buf = buf[cut:]
-                    if sentence:
-                        yield await emit(sentence)
-            if buf.strip():
-                yield await emit(buf.strip())
-        except Exception as e:
-            print(f"[turn_stream] LLM流式出错: {e}", flush=True)
-        reply = full.strip() or "……"
-        _append_voice_log(bot, "user", user_text)
-        _append_voice_log(bot, "assistant", reply)
-        print(f"[turn_stream] reply={reply!r} 第一句就绪={first_ms}ms", flush=True)
-        yield json.dumps({"done": True, "reply_text": reply}, ensure_ascii=False) + "\n"
+            try:
+                async for delta in call_text_stream(prompt, max_tokens=200):
+                    buf += delta
+                    while True:
+                        m = _SENT_END.search(buf)
+                        if not m:
+                            break
+                        cut = m.end(); sentence = buf[:cut].strip(); buf = buf[cut:]
+                        if sentence:
+                            yield await emit(sentence)
+                            # sent 必须在 yield 之后才追加：yield 恢复执行 = 这一行已交给发送方；
+                            # 写在 yield 之前就退回"生成了就算交付"，客户端中途放弃时会把用户
+                            # 从没收到的句子写进记忆，串轮缺陷原样复发
+                            sent.append(sentence)
+                if buf.strip():
+                    tail = buf.strip()
+                    yield await emit(tail)
+                    sent.append(tail)
+            except Exception as e:
+                print(f"[turn_stream] LLM流式出错: {e}", flush=True)
+            delivered = "".join(sent)
+            print(f"[turn_stream] reply={delivered!r} 第一句就绪={first_ms}ms", flush=True)
+            yield json.dumps({"done": True, "reply_text": delivered}, ensure_ascii=False) + "\n"
+        finally:
+            # finally：客户端放弃时生成器被 CancelledError 打断（它是 BaseException，
+            # 上面的 except Exception 抓不到），落账仍要执行——此时 sent 只含已交付句
+            _log_delivered_turn(bot, user_text, "".join(sent))
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
 
