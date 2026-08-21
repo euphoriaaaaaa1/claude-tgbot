@@ -5,6 +5,7 @@
 - 明确告诉 bot 这些是"内部参考"不要直接复述
 - 末尾鼓励自然表达
 """
+from school_calendar import IN_SESSION, TERM_LABEL_ZH
 
 
 def mood_label(mood: float) -> str:
@@ -42,6 +43,14 @@ def format_self_initiate(now, situation, world, wildcard, mood, mood_factors,
     di = world.date_info if world else {}
     if di.get("lunar"):
         parts.append(f"日期：{di.get('weekday_zh')} · {di.get('lunar')}")
+
+    # 学期状态：只在放假/提前返校时说，在校是常态不用讲。读取双重兜底——recurring
+    # 可能是 None 或降级路径来的旧对象，直接点 .term 会把"说错话"升级成提示词链路崩溃
+    term = getattr(getattr(situation, "recurring", None), "term", IN_SESSION)
+    term_label = TERM_LABEL_ZH.get(term, "") if term != IN_SESSION else ""
+    if term_label:
+        parts.append(f"学期状态：{term_label}")
+
     if di.get("festival"):
         parts.append(f"今天是【{di['festival']}】")
     if di.get("lunar_festival"):
