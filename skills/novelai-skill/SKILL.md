@@ -301,7 +301,7 @@ compatibility:
 语言示例：
 - 正确：`medium shot, mature woman taking a mirror selfie in bedroom, standing by bed, warm morning light, 1woman, floral midi dress, shy expression`
 - 正确：`close-up selfie, sleepy young woman lying in bed, messy hair, soft bedside lamp, cozy bedroom`
-- 错误：`温雅，42岁成熟人妻，站在卧室床边自拍`
+- 错误：`成熟女性，站在卧室床边自拍`（中文写法，模型认不出）
 - 错误：`mature woman 在卧室自拍，表情羞涩`
 
 ## 工作流
