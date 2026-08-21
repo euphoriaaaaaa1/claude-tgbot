@@ -36,30 +36,92 @@ class SituationContext:
 
 
 # ─── L3a 常驻活动 ──────────────────────────────────────────
-def get_current_recurring(cfg: dict, now: datetime) -> Activity:
-    """根据时间表查当前 bot 应该在做的活动。
+_NO_KEY = object()
+_BREAK_TERMS = ("summer_break", "winter_break")   # 寒暑假共用一套 break 作息
 
-    weekday_key：法定节假日（含调休）→ weekend；否则按 weekday()<5 判断。
-    sleep_hours 优先：未在 schedule 命中时，先看是否在 sleep 时段，
-    避免凌晨/睡前/起床前等空隙被错误 fallback 成"自由时间"。
-    """
+# 作息表配置错误的进程内去重：键为 (bot 标识, 字段名)。带 bot 标识是为了让多 bot
+# 同进程时各自都报得出来。只打 bot 标识 + 字段名——configs 里有 token 和 chat_id，
+# 绝不回显配置值。
+_WARNED_SCHEDULE: set[tuple[str, str]] = set()
+
+
+def _warn_schedule(cfg: dict, field: str, detail: str) -> None:
+    """同一 bot 的同一处作息表配置错误只报一次，防每 tick 刷屏。"""
+    bot_id = str(cfg.get("id") or "?")
+    key = (bot_id, field)
+    if key in _WARNED_SCHEDULE:
+        return
+    _WARNED_SCHEDULE.add(key)
+    sys.stderr.write("[situation] %s: %s %s\n" % (bot_id, field, detail))
+
+
+def _current_term(cfg: dict, now: datetime) -> str:
+    """当前学期状态。求值出任何岔子都退回 in_session 走老路径——
+    新功能不能把主链路弄崩（崩了整个 tick 会退化成 FALLBACK，bot 全哑）。"""
+    try:
+        import school_calendar
+        return school_calendar.term_state(cfg, now.date())
+    except Exception:
+        return "in_session"
+
+
+def _schedule_block(ra: dict, key: str, cfg: dict) -> list | None:
+    """取一个作息块。键缺失静默返回 None；值不是 list 则报一次警后同样当缺失。"""
+    value = ra.get(key, _NO_KEY)
+    if value is _NO_KEY:
+        return None
+    if isinstance(value, list):
+        return value
+    _warn_schedule(cfg, "recurring_activities.%s" % key, "不是列表，该作息块已忽略")
+    return None
+
+
+def _pick_schedule(cfg: dict, now: datetime, term: str) -> list:
+    """按学期状态挑作息表；挑不到就返回空列表，由调用方降级。"""
+    ra = cfg.get("recurring_activities", {})
+    if not isinstance(ra, dict):
+        _warn_schedule(cfg, "recurring_activities", "不是字典，整块作息表已忽略")
+        return []
+    if term in _BREAK_TERMS:
+        # 缺 break 不替补 weekend：各 bot 的 weekend 描述都字面含"周末"，暑假的
+        # 周五套上去只是把一种错话换成另一种，宁可降级到中性的"自由时间/睡觉中"
+        return _schedule_block(ra, "break", cfg) or []
+    if term == "early_return":
+        early = _schedule_block(ra, "early_return", cfg)
+        if early:
+            return early   # 缺专用作息才替补下面的 weekday/weekend
     # 法定节假日（春节/五一/国庆/清明 等含调休）走 weekend
     # holiday.is_workday 内部三级 fallback：chinese_calendar → timor.tech 缓存 → weekday()
     import holiday
     weekday_key = "weekday" if holiday.is_workday(now.date()) else "weekend"
-    schedule = cfg.get("recurring_activities", {}).get(weekday_key, [])
-    for activity in schedule:
+    return _schedule_block(ra, weekday_key, cfg) or []
+
+
+def get_current_recurring(cfg: dict, now: datetime) -> Activity:
+    """根据时间表查当前 bot 应该在做的活动。
+
+    先定学期状态，据此挑作息表（见 _pick_schedule）；选中一张表后不再回头翻别的键。
+    sleep_hours 优先：未在 schedule 命中时，先看是否在 sleep 时段，
+    避免凌晨/睡前/起床前等空隙被错误 fallback 成"自由时间"。
+    """
+    term = _current_term(cfg, now)
+    for activity in _pick_schedule(cfg, now, term):
+        # 条目不是 dict（yml 写歪了）就当不命中，继续看下一条，不连累整个 tick
+        if not isinstance(activity, dict):
+            continue
         if _time_in_range(now.time(), activity.get("when", "")):
             return Activity(
                 name=activity.get("name", "未知"),
                 description=activity.get("description", ""),
                 state=activity.get("state", "free"),
+                term=term,
             )
     # fallback 前先检查 sleep_hours
     import config_loader
     if config_loader.in_sleep_hours(cfg, now):
-        return Activity(name="睡觉中", description="在睡觉，被吵醒会迷糊", state="sleeping")
-    return Activity(name="自由时间", description="没什么特别的事", state="free")
+        return Activity(name="睡觉中", description="在睡觉，被吵醒会迷糊",
+                        state="sleeping", term=term)
+    return Activity(name="自由时间", description="没什么特别的事", state="free", term=term)
 
 
 # ─── L3b 突发事件（真随机）─────────────────────────────────
