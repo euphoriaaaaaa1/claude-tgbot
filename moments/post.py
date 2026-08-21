@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import db
 import quota
+from school_calendar import IN_SESSION, TERM_LABEL_ZH
 from claude_cli import call_claude
 
 
@@ -235,6 +236,12 @@ def maybe_post_moment(bot_id, bot_cfg, now: datetime, situation, world, wildcard
     else:                 period = "深夜"
     weekday_zh = "一二三四五六日"[now.weekday()]
     time_desc = f"{now.strftime('%Y-%m-%d')} 周{weekday_zh} {period} {now.hour}:{now.minute:02d}"
+    # 学期状态拼进时间描述，不给 MOMENT_PROMPT 加占位符：加占位符要同时改模板和
+    # .format() 两处，漏一处就是运行时 KeyError。读取双重兜底同 formatter.py。
+    term = getattr(getattr(situation, "recurring", None), "term", IN_SESSION)
+    term_label = TERM_LABEL_ZH.get(term, "") if term != IN_SESSION else ""
+    if term_label:
+        time_desc += f" · {term_label}"
 
     # 反重复：取自己最近 7 天发过的朋友圈
     seven_days_ago = int(now.timestamp()) - 7 * 86400

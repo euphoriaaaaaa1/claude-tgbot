@@ -28,6 +28,21 @@ city: 上海
 # ─── 作息（这些时段直接 SKIP 不评估）───
 sleep_hours: ["00:00-07:30"]
 
+# ─── 校历（可选功能，只有学生/教师这类有寒暑假的角色才需要）───
+# 不写这一段 = 该角色不跟校历，作息永远按 weekday/weekend 走（本示例的上班族就是这样）。
+# 写了这一段，程序会算出当天的"学期状态"：在校 / 寒假 / 暑假 / 提前返校期，
+# 据此改挑下面 recurring_activities 里的作息块，并把状态写进提示词，
+# 免得 bot 在暑假里还说自己"去学校上课"。
+# 日期一律是不带年份的 "MM-DD" 字符串（必须加引号、月日补零），逐年复用。
+# school_calendar:
+#   summer_start: "07-01"   # 暑假第一天（含当天）。要启用暑假判定，起止两个都得写
+#   summer_end:   "08-31"   # 暑假最后一天（含当天）
+#   early_return: "08-20"   # 可选。提前返校日（学生自愿到校自习 / 教师返校备课），
+#                           # 从这天到 summer_end 算"提前返校期"；须落在暑假区间内
+#   winter_days:  15        # 可选，默认 15。寒假 = 春节前后各 winter_days 天（闭区间，
+#                           # 共 2N+1 天）。寒假没有起止日期字段，靠春节自动推算；
+#                           # 只要写了 school_calendar 这一段，寒假判定就生效
+
 # ─── L3a 常驻活动（必然发生的固定生活节奏）───
 # state 字段必须是: free | busy_class | busy_work | busy_other
 recurring_activities:
@@ -61,6 +76,27 @@ recurring_activities:
       when: "09:00-23:30"
       state: free
       description: "周末，没固定安排"
+  # 下面两块只在配了上面的 school_calendar 时才会被用到，本示例的上班族用不上，
+  # 故整块注释掉；学生/教师角色把 school_calendar 和这两块一起取消注释即可。
+  # 条目格式与 weekday/weekend 完全相同。
+  # break:          # 寒假和暑假共用这一套，所以描述要季节中性（别写"暑假"或"过年"）
+  #   - name: 假期在家
+  #     when: "09:00-12:00"
+  #     state: free
+  #     description: "放假在家，自己安排时间"
+  #   - name: 假期在家
+  #     when: "12:00-23:30"
+  #     state: free
+  #     description: "在家待着，看剧写作业都随便"
+  # early_return:   # 提前返校期专用；不写这一块就退回 weekday/weekend
+  #   - name: 到校自习
+  #     when: "08:00-17:00"
+  #     state: busy_other
+  #     description: "在教室自习，人不多"
+  #   - name: 自由时间
+  #     when: "17:00-23:30"
+  #     state: free
+  #     description: "回家了，晚上没安排"
 
 # ─── L3c 个人爱好（仅 free 时段触发，真随机）───
 personal_hobbies:
