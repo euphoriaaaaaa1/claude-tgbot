@@ -42,7 +42,10 @@ def format_self_initiate(now, situation, world, wildcard, mood, mood_factors,
     # L1 真实世界
     di = world.date_info if world else {}
     if di.get("lunar"):
-        parts.append(f"日期：{di.get('weekday_zh')} · {di.get('lunar')}")
+        # 必须带本地时刻：inbox payload 里唯一的时间字段是 UTC（形如
+        # 2026-08-15T16:00:01.000Z），模型若拿它当本地时间就会差一个时区、
+        # 甚至跨天。这里给出权威的本地时刻，别删。
+        parts.append(f"日期：{di.get('weekday_zh')} · {di.get('lunar')} · {now.strftime('%H:%M')}")
 
     # 学期状态：只在放假/提前返校时说，在校是常态不用讲。读取双重兜底——recurring
     # 可能是 None 或降级路径来的旧对象，直接点 .term 会把"说错话"升级成提示词链路崩溃
