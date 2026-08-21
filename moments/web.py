@@ -152,7 +152,9 @@ def feed():
         return uid
 
     for m in moments:
-        m["likers"] = likes_map.get(m["id"], [])
+        # 点赞者也要过 _name_for：否则用户在网页上设的备注只在评论里生效、
+        # 点赞处仍显示原始 bot_id（评论走了转换、点赞漏了，两处不一致）。
+        m["likers"] = [_name_for(u) for u in likes_map.get(m["id"], [])]
         bot_meta = bot_meta_by_id.get(m["bot_id"], {})
         m["bot_meta"] = bot_meta
         raw_comments = comments_map.get(m["id"], [])
