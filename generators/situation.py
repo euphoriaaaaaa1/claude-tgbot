@@ -22,7 +22,10 @@ WEEKDAY_MAP = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 class Activity:
     name: str
     description: str
-    state: str  # "free" | "busy_class" | "busy_work" | "busy_other"
+    state: str  # "free" | "busy_class" | "busy_work" | "busy_other" | "sleeping"
+    # 学期状态，取 school_calendar 的四个常量之一。末位带默认值：既有的
+    # Activity(name=..., description=..., state=...) 三参数构造照常可用。
+    term: str = "in_session"
 
 
 @dataclass
