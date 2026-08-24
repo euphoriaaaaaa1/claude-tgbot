@@ -54,6 +54,13 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
   display:flex; align-items:center; justify-content:center;
   color:var(--ink-fade); font-size:13px; overflow:hidden; }
 .card-thumb img { width:100%; height:100%; object-fit:cover; }
+.card-thumb { position:relative; }
+.thumb-mask { position:absolute; inset:0; background:rgba(0,0,0,.55);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:10px; color:#fff; font-size:13px; z-index:2; }
+.thumb-mask .spin { width:26px; height:26px; border:3px solid rgba(255,255,255,.3);
+  border-top-color:#fff; border-radius:50%; animation:spin 0.9s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
 .card-body { padding:12px 14px; }
 .card-name { font-weight:600; font-size:15px; display:flex; align-items:center; gap:6px; }
 .badge-active { font-size:11px; background:var(--wxgreen); color:#fff;
@@ -85,9 +92,10 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
 .modal { background:var(--card); border-radius:14px; padding:22px;
   width:100%; max-width:480px; max-height:90vh; overflow-y:auto; }
 .modal h2 { font-size:16px; margin-bottom:16px; }
+.modal-users { font-size:12px; color:var(--wxgreen); margin:-10px 0 14px; }
 .field { margin-bottom:14px; }
 .field label { display:block; font-size:13px; color:var(--ink-soft); margin-bottom:5px; }
-.field input, .field textarea {
+.field input, .field textarea, .field select {
   width:100%; border:1px solid var(--hairline-strong); border-radius:8px;
   padding:9px 11px; font-size:14px; font-family:var(--font-body); background:var(--bg); color:var(--ink); }
 .field textarea { min-height:80px; resize:vertical; font-family:var(--font-mono); font-size:12.5px; }
@@ -121,6 +129,7 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
 <div class="modal-mask" id="modalMask">
   <div class="modal">
     <h2 id="modalTitle">新建预设</h2>
+    <div class="modal-users" id="modalUsers"></div>
     <input type="hidden" id="fId">
     <div class="field">
       <label>名称</label>
@@ -134,18 +143,28 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
       <label>负面前缀（留空则不覆盖默认负面）</label>
       <textarea id="fNegative"></textarea>
     </div>
+    <div class="field">
+      <label>模型</label>
+      <select id="fModel"></select>
+    </div>
     <div class="field-row">
       <div class="field">
-        <label>steps（留空不覆盖）</label>
-        <input type="number" id="fSteps">
+        <label>steps（留空不覆盖，1–50）</label>
+        <input type="number" id="fSteps" min="1" max="50" step="1" placeholder="留空">
       </div>
       <div class="field">
-        <label>cfg_scale（留空不覆盖）</label>
-        <input type="number" step="0.1" id="fCfg">
+        <label>cfg_scale（留空不覆盖，1–10）</label>
+        <input type="number" id="fCfg" min="1" max="10" step="0.1" placeholder="留空">
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>sampler</label>
+        <select id="fSampler"></select>
       </div>
       <div class="field">
-        <label>sampler（留空不覆盖）</label>
-        <input type="text" id="fSampler">
+        <label>ucPreset（负面预设强度）</label>
+        <select id="fUc"></select>
       </div>
     </div>
     <div class="modal-actions">
@@ -208,6 +227,13 @@ function render() {
     const card = el('div', 'card' + (isActive ? ' active' : ''));
 
     const thumb = el('div', 'card-thumb');
+    // 生成中的卡片盖遮罩；render() 随时可能被别处触发重画，状态放全局集合才不会闪没
+    if (generating.has(s.id)) {
+      const mask = el('div', 'thumb-mask');
+      mask.appendChild(el('div', 'spin'));
+      mask.appendChild(el('div', '', '生成中…'));
+      thumb.appendChild(mask);
+    }
     if (s.sample_image) {
       const img = document.createElement('img');
       img.src = '/image' + s.sample_image + (s.sample_ts ? '?t=' + s.sample_ts : '');
@@ -237,7 +263,8 @@ function render() {
     const editBtn = el('button', 'btn btn-ghost', '编辑');
     editBtn.onclick = () => editStyle(s.id);
     actions.appendChild(editBtn);
-    const sampleBtn = el('button', 'btn btn-ghost', '生成示例图');
+    const sampleBtn = el('button', 'btn btn-ghost', generating.has(s.id) ? '生成中…' : '生成示例图');
+    sampleBtn.disabled = generating.has(s.id);
     sampleBtn.onclick = () => genSample(s.id);
     actions.appendChild(sampleBtn);
     const delBtn = el('button', 'btn btn-danger', '删除');
@@ -250,15 +277,53 @@ function render() {
   }
 }
 
+// 三个下拉的选项全部来自 GET /api/styles（后端白名单常量），前端不另存一份清单，
+// 否则加个新模型就会出现"下拉里有、后端不认"。samplers 是纯字符串数组，另两个是 {value,label}。
+function fillSelect(id, options, blankLabel) {
+  const sel = document.getElementById(id);
+  sel.replaceChildren();
+  const items = blankLabel === undefined ? options
+                                         : [{value: '', label: blankLabel}].concat(options);
+  for (const o of items) {
+    const opt = document.createElement('option');
+    const isPair = o !== null && typeof o === 'object';
+    opt.value = isPair ? o.value : o;
+    opt.textContent = isPair ? o.label : o;
+    sel.appendChild(opt);
+  }
+}
+
+// 每次开弹窗前重建选项：接口数据尚未到达时先建出空下拉，重开一次即补齐（值为空 = 跟随全局）
+function fillParamOptions() {
+  fillSelect('fModel', stylesData.models || []);  // models 自带"跟随全局默认"这一项
+  fillSelect('fSampler', stylesData.samplers || [], '跟随全局默认');
+  fillSelect('fUc', stylesData.uc_presets || [], '跟随全局默认');
+}
+
+// 多个 bot 可以绑同一个预设：改这里的 model/steps 会同时影响它们，开弹窗时先说清楚
+function renderModalUsers(styleId) {
+  const box = document.getElementById('modalUsers');
+  const abb = stylesData.active_by_bot || {};
+  const users = BOT_ORDER.filter(b => abb[b] === styleId).map(b => BOT_NAMES[b]);
+  box.textContent = users.length
+    ? '当前被 ' + users.length + ' 个 bot 使用：' + users.join(' · ') + '，改动会同时影响它们'
+    : '';
+  box.style.display = users.length ? '' : 'none';
+}
+
 function openModal() {
+  fillParamOptions();
+  renderModalUsers('');
   document.getElementById('modalTitle').textContent = '新建预设';
   document.getElementById('fId').value = '';
   document.getElementById('fName').value = '';
   document.getElementById('fPositive').value = '';
   document.getElementById('fNegative').value = '';
+  document.getElementById('fModel').value = '';
   document.getElementById('fSteps').value = '';
   document.getElementById('fCfg').value = '';
   document.getElementById('fSampler').value = '';
+  document.getElementById('fUc').value = '';
   document.getElementById('modalMask').classList.add('show');
 }
 
@@ -269,27 +334,39 @@ function closeModal() {
 function editStyle(id) {
   const s = stylesData.styles.find(x => x.id === id);
   if (!s) return;
+  fillParamOptions();  // 必须先建好 option，否则给 select 赋值会落空
+  renderModalUsers(s.id);
   document.getElementById('modalTitle').textContent = '编辑预设';
   document.getElementById('fId').value = s.id;
   document.getElementById('fName').value = s.name;
   document.getElementById('fPositive').value = s.positive_prefix || '';
   document.getElementById('fNegative').value = s.negative_prefix || '';
-  document.getElementById('fSteps').value = (s.params && s.params.steps) || '';
-  document.getElementById('fCfg').value = (s.params && s.params.cfg_scale) || '';
-  document.getElementById('fSampler').value = (s.params && s.params.sampler) || '';
+  const p = s.params || {};
+  document.getElementById('fModel').value = p.model || '';
+  document.getElementById('fSteps').value = p.steps || '';
+  document.getElementById('fCfg').value = p.cfg_scale || '';
+  document.getElementById('fSampler').value = p.sampler || '';
+  // ucPreset 的 0 是合法取值，不能用 || '' 兜（那会把"0 · 不用负面预设"回填成"跟随全局"）
+  document.getElementById('fUc').value = (p.ucPreset === undefined || p.ucPreset === null)
+                                         ? '' : String(p.ucPreset);
   document.getElementById('modalMask').classList.add('show');
 }
 
 async function saveStyle() {
   const name = document.getElementById('fName').value.trim();
   if (!name) { showToast('请填写名称'); return; }
+  // 空 = 未设置，整个键不提交（后端也把 null/"" 当未设置剔除，两侧语义一致）
   const params = {};
+  const model = document.getElementById('fModel').value;
   const steps = document.getElementById('fSteps').value;
   const cfg = document.getElementById('fCfg').value;
   const sampler = document.getElementById('fSampler').value.trim();
+  const uc = document.getElementById('fUc').value;
+  if (model) params.model = model;
   if (steps) params.steps = parseInt(steps, 10);
   if (cfg) params.cfg_scale = parseFloat(cfg);
   if (sampler) params.sampler = sampler;
+  if (uc !== '') params.ucPreset = parseInt(uc, 10);  // 这里的 0 是有效选择，不能用真值判断
 
   const body = {
     id: document.getElementById('fId').value || undefined,
@@ -302,7 +379,12 @@ async function saveStyle() {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body),
   });
-  if (!res.ok) { showToast('保存失败'); return; }
+  if (!res.ok) {
+    // 后端 400 带着具体原因（如"steps 必须是 1–50 的整数"），吞成"保存失败"用户没法自救
+    const d = await res.json().catch(() => ({}));
+    showToast(d.error || '保存失败');
+    return;
+  }
   closeModal();
   showToast('已保存');
   loadStyles();
@@ -326,12 +408,26 @@ async function deleteStyle(id) {
   loadStyles();
 }
 
+const generating = new Set();   // 正在生成示例图的预设 id
+
 async function genSample(id) {
-  showToast('生成中，请稍候…');
-  const res = await fetch(`/api/styles/${id}/sample`, { method: 'POST' });
-  if (!res.ok) { showToast('生成失败'); return; }
-  showToast('示例图已生成');
-  loadStyles();
+  if (generating.has(id)) { showToast('这个预设正在生成中'); return; }
+  generating.add(id);
+  render();                      // 立刻盖上遮罩
+  try {
+    const res = await fetch(`/api/styles/${id}/sample`, { method: 'POST' });
+    if (!res.ok) {
+      // 409 = 后端已有同预设的生成在跑（比如另一个窗口点的）
+      showToast(res.status === 409 ? '已有一个生成在进行中' : '生成失败');
+      return;
+    }
+    showToast('示例图已生成');
+  } catch (e) {
+    showToast('生成失败：网络错误');
+  } finally {
+    generating.delete(id);
+    loadStyles();                // 成功刷新出新图；失败也把遮罩摘掉
+  }
 }
 
 async function loadKey() {
