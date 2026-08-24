@@ -3,6 +3,8 @@ display_name: 陈露露
 bot_channel_path: ~/.claude/channels/chenlulu
 chat_id: ""            # 留空；enable-bot.sh 会从 access.json.allowFrom[0] 自动填
 user_address: 你
+birthday: "1991-03-15"   # 存生日、运行时算周岁，人设里就不用写死年龄；满 18 岁才进生图提示词
+# schooling:             # 在读角色才写（stage: 高中/大学 + enrollment_year），老师不写
 # ─── 电话模块（voicecall/，可选功能）───
 voice_id: ""           # 你在 voice-bridge/TTS 服务里的音色 ID；留空 → voice-bridge 默认音色
 user_name: 对方        # 电话里 bot 内部第三人称指代用户的词（如 小明/哥哥）；仅用于 voice-action 提示，默认"对方"

@@ -30,7 +30,10 @@ def format_self_initiate(now, situation, world, wildcard, mood, mood_factors,
                           continuation_mode: str = "fresh",
                           thread_tail: list | None = None,
                           hours_since_user: float = 0.0,
-                          memory_hook: str = "") -> str:
+                          memory_hook: str = "",
+                          identity: str = "") -> str:
+    if not isinstance(identity, str):
+        raise TypeError("identity 必须是 str，收到 %s" % type(identity).__name__)
     parts = ["[self-initiate]"]
     parts.append(f"hour={now.hour} since_last_user_msg_min={since_user_min if since_user_min is not None else '未知'}")
     parts.append(f"weekday={now.strftime('%A')} date={now.strftime('%Y-%m-%d')}")
@@ -38,6 +41,10 @@ def format_self_initiate(now, situation, world, wildcard, mood, mood_factors,
 
     parts.append("")
     parts.append("--- 以下是你当下的情境（内部参考，不要直接复述给用户）---")
+
+    # 当前身份：来自 load_bot 注入的 _identity，只读字符串，不二次计算。
+    if identity.strip():
+        parts.append(f"你的当前身份：{identity}")
 
     # L1 真实世界
     di = world.date_info if world else {}
