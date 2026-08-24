@@ -9,6 +9,16 @@ display_name: 小明
 bot_channel_path: ~/.claude/channels/my-bot
 chat_id: ""                             # 留空 enable-bot.sh 会从 access.json.allowFrom[0] 自动填
 
+# ─── 生日与学制（可选）───
+# 写了 birthday，程序每天自己算周岁，人设里就不用写死"27 岁"（写死的年龄会随时间变假）。
+# 算出来的年龄会前置到 persona_summary 的【当前身份】行；满 18 岁才会进生图提示词
+# （face_traits），未成年一律不注入年龄，这是硬门禁。
+birthday: "1999-03-15"                  # YYYY-MM-DD，必须加引号，不然 YAML 会解析成日期对象
+# schooling:                            # 只有还在读书的角色才写；上班族不写这一段
+#   stage: 大学                          # 目前只认「高中」和「大学」
+#   enrollment_year: 2024               # 入学年份（4 位整数）。程序按 7 月 1 日翻学年、
+#                                       # 6 月 30 日毕业，算出"大二在读"/"已从大学毕业"
+
 # ─── 用户称呼 ───
 # bot 在朋友圈/主动消息里指代用户时用这个词，禁止出现"你"
 user_address: "哥哥"                    # 哥哥 / 主人 / 老板 / 老婆 ... 按你和 bot 的关系定

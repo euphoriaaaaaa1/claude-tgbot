@@ -297,6 +297,7 @@ def main():
         thread_tail=thread_tail,
         hours_since_user=hours_since_user,
         memory_hook=memory_hook,
+        identity=bot_cfg.get("_identity", ""),
     )
 
     if not dry_run:
