@@ -41,10 +41,10 @@ compatibility:
 - **禁止内部标记外泄**：不要输出 `<tool_call>`、`<tool_response>`、XML 标签、伪工具代码块或任何包裹内部工具过程的文本
 - **禁止读旧 intermediate**：不要先读当前 workspace 里的 `intermediate.json` 再参考着写，直接按这轮需求整体重写
 - **不要启动后台轮询**：调用生图脚本时优先一次等到完成，不要把脚本结果拆成“先 running 再 process 轮询再收尾”这种多段对外流程
-- **禁止假装已完成**：没有真实 toolCall、没有真实脚本返回时，不要输出“拍好了”“发你了”“MEDIA:某路径”这类完成态内容
+- **禁止假装已完成**：没有真实 toolCall、没有真实脚本返回时，不要输出“拍好了”“发你了”这类完成态内容，也不要在没有真实发送的情况下假装已发图
 - **禁止编造**：不要自己编 `/staged/...jpg`、`choice.png`、时间戳文件名或任何图片绝对路径，路径只能来自脚本返回结果
 - **Telegram 路径要求**：如果最终需要给 Telegram 发送本地图片，图片必须真实生成在 OpenClaw 当前允许的本地媒体目录内。当前 skill 的唯一默认最终目录是 `~/resource/media/<agent>/<session>/...`。
-- **禁止旧坏路径**：不要把 `~/resource/media/<agent>/<session>/...` 之外的旧目录（例如 `~/.openclaw/agents/<agent>/images/...`、任何 `workspace-*/outputs/...`、任何 `workspace-*/generated/...`） 当作 Telegram 最终 `MEDIA:` 路径。
+- **禁止旧坏路径**：不要把 `~/resource/media/<agent>/<session>/...` 之外的旧目录（例如 `~/.openclaw/agents/<agent>/images/...`、任何 `workspace-*/outputs/...`、任何 `workspace-*/generated/...`） 当作 reply files 的图片路径。
 
 ## 中间稿要求
 真正要交给脚本的核心只有两样：
@@ -315,7 +315,7 @@ compatibility:
 1. 生图成功前，不要对用户发任何消息和说明
 2. 生图成功后，只发最终回复和图片
 3. 如果失败，只发一句简短失败说明，不要贴路径、JSON、工具输出
-4. 如果本地规则要求“每轮默认发图”，那这一轮必须真实完成媒体发送；不要把 `MEDIA:<staged_path>` 当成普通聊天文本发给用户
+4. 如果本地规则要求“每轮默认发图”，那这一轮必须真实完成媒体发送；不要把内部路径当成普通聊天文本发给用户，必须经 reply 的 files 参数真实发送
 
 ## 尺寸选择（--ratio）
 
@@ -400,12 +400,41 @@ python3 ~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py \
   --session-name <当前session名>
 ```
 
+**一轮要出多张图（mode=new）——必须用一条命令并行生成，禁止一张一轮**：
+每张图的提示词互不依赖（不同视角/不同瞬间，一开始就能全部想好），所以把“写 N 份
+intermediate + 并行跑 N 次脚本”合进同一条 Bash 命令，间隔 0.6 秒起一路。
+同账号并发单张请求不撞锁（免费条件是“每次请求一张”，并发的每一路都满足），
+总耗时 ≈ 最慢一张，比串行快一倍以上。
+
+```bash
+W=~/resource/workspace/<agent>
+G=~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py
+C=~/.claude/skills/novelai-skill/assets/default_config.json
+cat > "$W/im_1.json" <<'EOF'
+{"mode":"new","prompt":"<图A 完整提示词>"}
+EOF
+cat > "$W/im_2.json" <<'EOF'
+{"mode":"new","prompt":"<图B 完整提示词>"}
+EOF
+python3 "$G" --intermediate "$W/im_1.json" --config "$C" --ratio portrait \
+  --agent-name <agent> --session-name <session> > "$W/r1.json" 2>&1 &
+sleep 0.6
+python3 "$G" --intermediate "$W/im_2.json" --config "$C" --ratio portrait \
+  --agent-name <agent> --session-name <session> > "$W/r2.json" 2>&1 &
+wait
+cat "$W/r1.json" "$W/r2.json"
+```
+
+- 命令 timeout 给足 300 秒（并行总时长 ≈ 最慢一张 + 服务端 5xx 重试）
+- 某一路 HTTP 500 挂掉是服务端老毛病、与并发无关：成功的照常发，挂的那张要么补跑一次、要么本轮少发一张，**不要因为一张挂了就整轮不发图**
+- **续图/修图（mode=revise 或 --reuse-seed）不并行**，仍然单独串行跑——revise 依赖上一次的落盘状态，并行会互相踩
+
 调用要求：
 - 不要为了展示过程去读出旧 intermediate.json
 - 不要把脚本返回 JSON 转发给用户
-- 成功后只使用脚本返回结果完成最终媒体发送，不要自己拼路径，不要把 `staged_path`、`MEDIA:` 或任何内部发送指令当正文输出给用户
-- 如果需要把文字和图片一起交给 Telegram 发送，先写最终聊天文本；正文结束后，再追加单独一行 `MEDIA: /absolute/path/to/file.png`
-- `MEDIA:` 必须独占一行，并放在正文最后；不要在同一行前面加 `[[reply_to_current]]`、解释语或任何别的前缀
+- 成功后只使用脚本返回结果完成最终媒体发送，不要自己拼路径，不要把 `staged_path` 或任何内部发送指令当正文输出给用户
+- 发送用 reply 工具的 files 参数（路径取脚本返回的真实路径）；想让图插在文字中间，在 text 里想发图的位置单独一行写 `[[图1]]`/`[[图2]]`（对应 files 第几张），不写标记则图片在全部文字之后发；标记绝不写进 voice_text
+- 旧的 `MEDIA:` 行协议已废除，不要再输出任何 `MEDIA:` 行
 
 **示例（agent <agent>，全身自拍）：**
 ```bash
@@ -420,7 +449,7 @@ python3 ~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py \
 当前建议：
 - 图片的实际中转位置和最终可发送路径由 `generate_novelai_image.py` 负责处理
 - agent 只使用脚本返回结果完成发送，不要自己假设下载目录，不要自己拼接旧路径
-- Telegram 最终 `MEDIA:` 只接受位于 `~/resource/media/<agent>/<session>/...` 的真实文件；如果脚本返回路径不在这个目录模式内，视为失败，不要输出 `MEDIA:`
+- reply files 只接受位于 `~/resource/media/<agent>/<session>/...` 的真实文件；如果脚本返回路径不在这个目录模式内，视为失败，不要发送
 
 推荐约定：
 - OpenClaw 用 `openclaw`
@@ -434,8 +463,8 @@ python3 ~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py \
 ## 返回给用户的内容
 生成成功后：
 - 只返回最终发出的图片和2句简短回复
-- 不要把图片路径、`staged_path`、`MEDIA:`、JSON、工具输出、脚本命令当成主回复
-- 不要把 `MEDIA:` 放在正文前面，也不要把它夹在正文中间；它只能作为正文之后的最后一行单独出现
+- 不要把图片路径、`staged_path`、JSON、工具输出、脚本命令当成主回复
+- 发图只走 reply 的 files 参数；`[[图N]]` 标记只在 text 里用，除此之外不要输出任何发送协议行
 - 不要用文字描述图片内容来代替真正发图
 
 生成失败后：
