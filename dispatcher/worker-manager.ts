@@ -21,6 +21,7 @@ import {
 } from 'fs'
 import { join, delimiter } from 'path'
 import { homedir, tmpdir, platform } from 'os'
+import { buildTimePrefix } from './time_annotate'
 
 // ─── 配置（与 dispatcher.ts 同源的 env）────────────────────────────────
 const BOT = process.env.BOT_NAME || ''
@@ -86,7 +87,7 @@ function looksLikeWorker(pid: number): boolean {
 }
 
 // ─── claude 可执行解析 ─────────────────────────────────────────────────
-function resolveClaude(): { bin: string; viaCmd: boolean } {
+export function resolveClaude(): { bin: string; viaCmd: boolean } {
   const override = process.env.CLAUDE_BIN
   if (override) return { bin: override, viaCmd: /\.(cmd|bat)$/i.test(override) }
   const isWin = platform() === 'win32'
@@ -132,6 +133,26 @@ function logStream(obj: unknown): void {
 function logSpawn(msg: string): void {
   try { appendFileSync(SPAWN_LOG, `[${new Date().toISOString()}] [${BOT}] ${msg}\n`) } catch {}
   process.stderr.write(`worker-manager[${BOT}]: ${msg}\n`)
+}
+
+// ─── 时间感知：每条入站消息带本地时刻，久别重逢再加一行间隔 ──────────────
+// 进程内变量不够用——要解决的正是"worker 被回收后隔了十几小时"，重启即失忆就永远算不出
+// 间隔。落一个按 chat 分键的小状态文件，tmp+rename 原子写，启动时读一次进内存。
+const LAST_TS_FILE = join(CHANNEL_DIR, '.last-inbound-ts.json')
+const lastInboundTs: Record<string, number> = (() => {
+  try {
+    const d = JSON.parse(readFileSync(LAST_TS_FILE, 'utf8'))
+    return d && typeof d === 'object' && !Array.isArray(d) ? d as Record<string, number> : {}
+  } catch { return {} }
+})()
+function rememberInboundTs(chatId: string, tsMs: number): void {
+  if (!chatId || !Number.isFinite(tsMs)) return
+  lastInboundTs[chatId] = tsMs
+  try {
+    mkdirSync(CHANNEL_DIR, { recursive: true })
+    writeFileSync(`${LAST_TS_FILE}.tmp`, JSON.stringify(lastInboundTs))
+    renameSync(`${LAST_TS_FILE}.tmp`, LAST_TS_FILE)
+  } catch {}
 }
 
 // ─── spawn 前置处理（spawn-worker.sh 逻辑 TS 化）──────────────────────
@@ -673,6 +694,12 @@ export class WorkerManager {
     const body = isBotSender && meta.sender_username
       ? `[from peer bot @${meta.sender_username}]\n${text}`
       : text
+    // 时间标注：消息只带 UTC 机器时间戳，模型会顺着上下文惯性以为还是早上聊天那会儿。
+    // 时间取 meta.ts（消息自身时刻，不是投递时刻）；缺失/非法 → 用当前时刻。
+    const parsedTs = Date.parse(String(meta.ts ?? ''))
+    const tsMs = Number.isFinite(parsedTs) && parsedTs > 0 ? parsedTs : Date.now()
+    const timePrefix = buildTimePrefix(tsMs, lastInboundTs[chatIdStr] ?? null)
+    rememberInboundTs(chatIdStr, tsMs)
     // 真人私聊消息前注入关系数值提示（群聊/peer/导演 inject 不注入——与旧行为一致）
     let relPrefix = ''
     if (!isBotSender && scene === 'private') {
@@ -687,7 +714,7 @@ export class WorkerManager {
       .filter(([, v]) => v != null && v !== '')
       .map(([k, v]) => `${k}="${String(v).replace(/"/g, '&quot;')}"`)
       .join(' ')
-    const content = `${relPrefix}${sceneTag}<channel ${metaAttrs}>\n${body}\n</channel>`
+    const content = `${relPrefix}${timePrefix}${sceneTag}<channel ${metaAttrs}>\n${body}\n</channel>`
     return { content, meta: notifMeta }
   }
 }

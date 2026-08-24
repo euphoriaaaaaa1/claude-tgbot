@@ -64,7 +64,7 @@ async function postJson(path: string, body: any): Promise<any> {
 // ─── tools ───────────────────────────────────────────────────────────
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
-    { name: 'reply', description: '回复消息。默认回到你正在处理的那条消息所在的聊天（群→群、私聊→私聊）；只有要主动跨聊天发时才传 chat_id。text 必填；可选 chat_id、reply_to、files、as_voice、voice_text、voice_emotion、voice_instruct。',
+    { name: 'reply', description: '回复消息。默认回到你正在处理的那条消息所在的聊天（群→群、私聊→私聊）；只有要主动跨聊天发时才传 chat_id。text 必填；可选 chat_id、reply_to、files、as_voice、voice_text、voice_emotion、voice_instruct。带 files 时可在 text 中想发图的位置单独一行写 [[图1]]/[[图2]]（对应 files 第几张），图片就插在那两段文字之间发出，像真人聊天；不写标记则图片在所有文字之后发。标记不要写进 voice_text。',
       inputSchema: { type: 'object', properties: {
         text: { type: 'string' }, chat_id: { type: 'string' }, reply_to: { type: 'string' },
         files: { type: 'array', items: { type: 'string' } },
