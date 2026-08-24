@@ -112,19 +112,75 @@ def build_browser_headers(token: str) -> dict[str, str]:
     }
 
 
+# style params 白名单（读取端第二道防线）。写入端在 moments/styles_routes.py 已经拦过一次，
+# 但 styles.json 还会被手工编辑、被旧版本写过（存量的 cfg_scale: 0 就是这么来的），非法值直接
+# 进 payload 只换来 NovelAI 的英文 400，与 style 页面毫无关联线索。所以这里未知键/类型错/越界
+# 一律丢弃、退回全局默认，只留一行 stderr 当排查线索——生图本身照常，不中断。
+_STYLE_TOP_KEYS = ("model", "steps", "cfg_scale", "sampler")  # 落在 config 顶层
+_STYLE_SUB_KEYS = ("ucPreset",)                               # 落在 config["novelai_parameters"]
+_STYLE_MODELS = ("nai-diffusion-5-full", "nai-diffusion-5-curated", "nai-diffusion-4-5-full")
+_STYLE_SAMPLERS = ("k_euler_ancestral", "k_euler", "k_dpmpp_2s_ancestral",
+                   "k_dpmpp_2m_sde", "k_dpmpp_sde", "ddim_v3")
+
+
+def _reject_style_param(key: str, value: Any) -> str | None:
+    """合法返回 None，非法返回一句中文原因。bool 不算数字：JSON 的 true 在 Python 里 == 1。"""
+    is_int = isinstance(value, int) and not isinstance(value, bool)
+    is_num = isinstance(value, (int, float)) and not isinstance(value, bool)
+    if key == "model":
+        return None if value in _STYLE_MODELS else "不在可用模型清单内"
+    if key == "sampler":
+        return None if value in _STYLE_SAMPLERS else "不在可用采样器清单内"
+    if key == "steps":
+        return None if is_int and 1 <= value <= 50 else "不是 1–50 的整数"
+    if key == "cfg_scale":
+        # 0 是非法值不是"未设置"：CFG=0 扩散几乎不看提示词，出图必废且不报错
+        return None if is_num and 1 <= value <= 10 else "不是 1–10 的数字"
+    if key == "ucPreset":
+        return None if is_int and value in (0, 1, 2, 3) else "不是 0、1、2、3 之一"
+    return "不是本脚本支持的参数"
+
+
+def apply_style_params(config: dict[str, Any], params: Any) -> dict[str, Any]:
+    """把预设 params 叠加到 config：留空 = 跟随全局默认，非法 = 丢弃并退回全局默认。"""
+    if not isinstance(params, dict):
+        return config
+    for key, value in params.items():
+        if value is None or value == "":
+            continue  # 留空 = 跟随全局默认，不是错误
+        reason = _reject_style_param(key, value)
+        if reason:
+            sys.stderr.write("[novelai] style 参数被忽略：%s=%r %s，已退回全局默认\n"
+                             % (key, value, reason))
+            continue
+        if key in _STYLE_TOP_KEYS:
+            config[key] = value
+        else:
+            sub = dict(config.get("novelai_parameters") or {})
+            sub[key] = value
+            config["novelai_parameters"] = sub
+    return config
+
+
 def apply_active_style(config: dict[str, Any], agent_name: str | None = None) -> dict[str, Any]:
     """把激活的画风预设叠加到 config 上（可靠性优先，不依赖 LLM）。
 
     - 选哪个预设：env NOVELAI_ACTIVE_STYLE_ID（styles 页"生成示例图"预览用）> 该 bot 的
       active_by_bot[agent_name]（每个 bot 各自画风）> 全局 active（兜底/兼容）
+      没指定 bot 时不套任何预设，见下面的注释
     - positive_prefix：**整体替换** config 原有 positive_prefix（预设本身就是完整画风串，
       像 SillyTavern 那样选哪个用哪个；若叠加到默认画师串上，默认串会盖过预设画风）
       空 positive_prefix（如"default"预设）不替换，保留 default_config 原有画师串
     - negative_prefix：非空才整体覆盖，避免空值把原有负面提示词清空
-    - params 里的 steps/cfg_scale/sampler：非空才覆盖
+    - params：按白名单流转（model/steps/cfg_scale/sampler 落 config 顶层，ucPreset 落
+      novelai_parameters），非法值丢弃并退回全局默认，见 apply_style_params
     - active 找不到对应 style 时，原样返回 config，不报错
     """
-    styles_path = skill_root() / "assets" / "styles.json"
+    # styles.json 的位置可用 NOVELAI_SKILL_ROOT 覆盖（与 moments/styles_routes.py 同一个接缝）：
+    # 验收测试要在临时副本上改绑定，共用生产文件跑一次就会把真实 bot 画风绑定改乱。
+    # .env.local 仍固定读真实 skill 根目录——令牌不该跟着测试副本走。
+    styles_root = Path(os.environ.get("NOVELAI_SKILL_ROOT") or skill_root())
+    styles_path = styles_root / "assets" / "styles.json"
     if not styles_path.exists():
         return config
     try:
@@ -135,11 +191,13 @@ def apply_active_style(config: dict[str, Any], agent_name: str | None = None) ->
     explicit = os.getenv("NOVELAI_ACTIVE_STYLE_ID", "").strip()
     if explicit:
         active_id = explicit
-    elif agent_name:
+    elif agent_name and agent_name != "default":
         active_id = (styles_data.get("active_by_bot", {}).get(agent_name)
                      or styles_data.get("active", ""))
     else:
-        active_id = styles_data.get("active", "")
+        # 没指定 bot（--agent-name 缺省时 resolve_agent_name 给的就是 "default"）：不套任何预设。
+        # 这种调用是手工/调试跑，--config 给什么就该出什么；套上全局预设会让画风与参数都无法解释。
+        active_id = ""
     style = next(
         (s for s in styles_data.get("styles", []) if s.get("id") == active_id), None
     )
@@ -154,20 +212,120 @@ def apply_active_style(config: dict[str, Any], agent_name: str | None = None) ->
     if negative_prefix:
         config["negative_prefix"] = negative_prefix
 
-    params = style.get("params") or {}
-    if params.get("steps"):
-        config["steps"] = params["steps"]
-    if params.get("cfg_scale"):
-        config["cfg_scale"] = params["cfg_scale"]
-    if params.get("sampler"):
-        config["sampler"] = params["sampler"]
-
-    return config
+    return apply_style_params(config, style.get("params") or {})
 
 
-# 镜头角度强制:worker 常漏写具体镜头(只写景别如 closer shot），导致构图雷同。
-# 这里兜底——最终 prompt 里若一个具体角度词都没有，随机补一个（增加多样、避免单调）。
-# 尊重 worker 已写的角度（含 POV/first-person，POV 图专用），有就不动。
+# 三个守卫（景别 / 角度 / 动感）都只在"当轮正文漏写"时补；其中景别守卫按用户拍板
+# 默认强制全身，只有"明确局部词"才放行。非全身词（medium shot / upper body 等）不再
+# 视为"用户已指定景别"，必须从最终提示词中剥离并强制注入全身。
+#
+# 判定域是 prompt_body_used（当轮正文），不是 final_positive_prompt：后者含 style 的
+# positive_prefix，画师串里本来就常有 portrait / from above 这类词，拿它判定会让守卫
+# 永远认为"已经有了"而一次都不注入，且毫无报错。代价是 prefix 写了 close-up 而正文没写
+# 景别时，最终会同时出现两个景别词——接受：注入词在最前、权重更高，且看图就能发现，
+# 比静默失效强。（动感守卫仍看最终串：任何动感词都算数，没有"必须是某个词"的要求。）
+_FULL_BODY_WORDS = (
+    "full body", "full-body", "fullbody", "head to toe", "full shot",
+    "wide shot", "long shot",
+)
+_EXPLICIT_LOCAL_WORDS = (
+    "close-up", "closeup", "close up", "extreme close-up", "extreme closeup",
+    "extreme close up", "face focus", "headshot", "portrait",
+    "特写", "脸部特写", "拍脸", "大头照",
+)
+_NON_FULL_BODY_WORDS = (
+    "medium shot", "upper body", "upper-body", "upper_body", "cowboy shot",
+    "waist up", "bust shot", "knee shot", "between_legs", "lower body",
+    "lower_body", "low body", "中景", "近景", "半身", "上半身",
+)
+# 兼容旧名：仍表示"景别/镜头词"并集，供历史引用方使用。
+_SHOT_WORDS = tuple(dict.fromkeys(
+    _FULL_BODY_WORDS + _EXPLICIT_LOCAL_WORDS + _NON_FULL_BODY_WORDS + ("from far away",)
+))
+
+
+def _phrase_pattern(term: str) -> str:
+    """把可能带空格/连字符/下划线的英文短语变成宽松匹配，覆盖 Upper-body / upper_body 等写法。"""
+    parts = re.split(r"[\s_-]+", term.strip().lower())
+    if len(parts) == 1:
+        return re.escape(parts[0])
+    return r"[\s_-]+".join(re.escape(part) for part in parts)
+
+
+def _compile_word_pattern(words: tuple[str, ...]) -> re.Pattern[str]:
+    # 长词优先，避免"上半身"被"半身"先吃掉；英文短语的连字符/下划线由 _phrase_pattern 统一覆盖。
+    unique = tuple(dict.fromkeys(words))
+    pattern = "|".join(_phrase_pattern(w) for w in sorted(unique, key=len, reverse=True))
+    return re.compile(pattern, re.IGNORECASE)
+
+
+_FULL_BODY_PATTERN = _compile_word_pattern(_FULL_BODY_WORDS)
+_EXPLICIT_LOCAL_PATTERN = _compile_word_pattern(_EXPLICIT_LOCAL_WORDS)
+_NON_FULL_BODY_PATTERN = _compile_word_pattern(_NON_FULL_BODY_WORDS)
+
+# 默认景别锁死为全身（呆板出在平视/站定/居中，不出在全身，那三维交给角度与动感守卫）。
+# detailed face：竖版全身叠极端广角容易糊脸，这是"全身"的真实代价，一并写死。
+_DEFAULT_SHOT = "full body, head to toe visible, detailed face"
+
+
+def _clean_prompt_text(value: str) -> str:
+    """清理剥离非全身词后可能留下的双逗号/多余空格，不把普通空白改成逗号。"""
+    value = value.replace("，", ",")
+    value = re.sub(r"(?:\s*,\s*)+", ", ", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip(" ,")
+
+
+def _find_body_segment(final: str, body: str) -> str | None:
+    """在 final_positive_prompt 里定位"当轮正文"片段。
+
+    build_prompts 会把正文中的中文逗号规范化为英文逗号，因此不能只用 prompt_body_used
+    原文做子串查找；这里同时准备一个已按同样规则轻量规范化的候选。
+    """
+    if not body:
+        return None
+    candidates = [body]
+    normalized_body = re.sub(r"\s*，\s*", ", ", body)
+    normalized_body = re.sub(r"\s+", " ", normalized_body)
+    normalized_body = normalized_body.strip(" ,")
+    if normalized_body and normalized_body != body:
+        candidates.append(normalized_body)
+    for candidate in candidates:
+        if candidate and candidate in final:
+            return candidate
+    return None
+
+
+def ensure_shot_size(prompts: dict[str, str]) -> dict[str, str]:
+    body = prompts.get("prompt_body_used", "") or ""
+    final = prompts.get("final_positive_prompt", "") or ""
+
+    # 1. 正文命中明确局部词：尊重原样，不注入全身、不剥离。
+    if _EXPLICIT_LOCAL_PATTERN.search(body):
+        return prompts
+
+    # 2. 正文命中全身词：已经达标，不重复堆叠。
+    if _FULL_BODY_PATTERN.search(body):
+        return prompts
+
+    # 3. 其他情况（无景别词，或只出现非全身词）：从最终提示词中剥离"正文里出现"的
+    #    非全身词，再在最前面注入默认全身。prompt_body_used 保留原文供排查。
+    body_segment = _find_body_segment(final, body)
+    if body_segment is not None:
+        cleaned_body = _NON_FULL_BODY_PATTERN.sub("", body_segment)
+        cleaned_body = _clean_prompt_text(cleaned_body)
+        final = final.replace(body_segment, cleaned_body)
+    else:
+        # 极端兜底：定位不到正文片段时也只在最后手段整体清理，避免漏掉非全身词。
+        final = _NON_FULL_BODY_PATTERN.sub("", final)
+    final = _clean_prompt_text(final)
+
+    # 若剥离后 final 已空（正文仅是非全身词），只保留默认全身即可，不出现前导逗号。
+    injected = f"{_DEFAULT_SHOT}, {final}" if final else _DEFAULT_SHOT
+    prompts["final_positive_prompt"] = injected
+    return prompts
+
+
 _CAMERA_WORDS = (
     "pov", "first-person", "first person", "high angle", "low angle",
     "from above", "from below", "from side", "over-the-shoulder", "over the shoulder",
@@ -177,15 +335,16 @@ _CAMERA_WORDS = (
 _CAMERA_POOL = [
     "from above, high angle shot", "from below, low angle shot",
     "from side, profile view", "over-the-shoulder shot",
-    "dutch angle, tilted frame", "eye-level shot, straight-on view",
+    # 不留 eye-level：全身 + 平视 = 用户抱怨的呆板立绘，中性基线在这里是稳定产出最差结果
+    "dutch angle, tilted frame", "worm's-eye view, extreme low angle looking up",
     "bird's-eye view, top-down",
 ]
 
 
 def ensure_camera_angle(prompts: dict[str, str]) -> dict[str, str]:
     fp = prompts.get("final_positive_prompt", "")
-    if any(w in fp.lower() for w in _CAMERA_WORDS):
-        return prompts  # worker 已指定镜头（含 POV），尊重不动
+    if any(w in prompts.get("prompt_body_used", "").lower() for w in _CAMERA_WORDS):
+        return prompts  # 当轮正文已指定镜头（含 POV），尊重不动
     angle = random.SystemRandom().choice(_CAMERA_POOL)
     prompts["final_positive_prompt"] = f"{angle}, {fp}"
     return prompts
@@ -377,6 +536,7 @@ def request_image(
         return response.getcode(), response.read()
 
 
+
 def format_http_error(code: int, detail: str) -> str:
     if code == 400:
         return f"NovelAI 没认出请求内容：HTTP 400 {detail}"
@@ -391,6 +551,47 @@ def describe_http_error(exc: error.HTTPError) -> str:
     detail = exc.read().decode("utf-8", errors="ignore").strip() or str(exc.reason)
     return format_http_error(exc.code, detail)
 
+
+_RETRY_DELAYS = (3, 5, 8)
+
+
+def _is_retryable(code: int, detail: str) -> bool:
+    """值得重试的只有两类：5xx 是 NovelAI 侧偶发故障（V5 Full 实测约一半概率 500），
+    429 + 并发锁是排队信号。其余 4xx 是请求本身不合法，重试只是等量重复同一个错误。"""
+    return code >= 500 or (code == 429 and "Concurrent generation is locked" in detail)
+
+
+def request_with_retry(
+    endpoint: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    delays: tuple[int, ...] = _RETRY_DELAYS,
+) -> tuple[bytes | None, str | None, bool]:
+    """发一次请求，可重试的错误按 delays 退避重发。
+
+    返回 (响应体, 错误说明, 是否属于可重试类错误)；响应体非 None 即成功。
+    """
+    last_error: str | None = None
+    retryable = False
+    for attempt in range(len(delays) + 1):
+        try:
+            status_code, body = request_image(endpoint, headers, payload)
+            if status_code < 400 and body:
+                return body, None, False
+            # 走到这里是 2xx 空响应（服务端异常），或 urlopen 没抛异常的 4xx/5xx
+            last_error = f"NovelAI 请求失败：HTTP {status_code}"
+            retryable = status_code >= 500 or status_code < 400
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore").strip() or str(exc.reason)
+            last_error = format_http_error(exc.code, detail)
+            retryable = _is_retryable(exc.code, detail)
+        except error.URLError as exc:
+            # 网络没通：换个请求体也一样不通，不值得再退避空转
+            return None, f"NovelAI 请求失败，网络没通：{exc.reason}", False
+        if not retryable or attempt >= len(delays):
+            break
+        time.sleep(delays[attempt])
+    return None, last_error, retryable
 
 def load_previous_state(output_dir: Path) -> dict[str, Any] | None:
     last_request_path = output_dir / "last_request.json"
@@ -447,6 +648,7 @@ def generate_image(
     previous_state = load_previous_state(actual_state_dir)
     config = apply_active_style(config, agent_name)
     prompts = build_prompts(config, intermediate, previous_state=previous_state)
+    prompts = ensure_shot_size(prompts)     # 强制每张有景别，默认全身（漏写才补，尊重特写）
     prompts = ensure_camera_angle(prompts)  # 强制每张有具体镜头角度（漏写才补，尊重 POV）
     prompts = ensure_dynamic_feel(prompts)  # 强制每张有动态感（漏写才补，治僵硬静态图）
     token = read_token()
@@ -454,42 +656,17 @@ def generate_image(
         "NOVELAI_IMAGE_ENDPOINT", "https://image.novelai.net/ai/generate-image"
     )
     headers = build_browser_headers(token)
-    payloads = [
-        build_payload(config, prompts),
-        build_fallback_payload(config, prompts),
-    ]
-
-    last_error: str | None = None
-    status_code = 0
-    response_body = b""
-    retry_delays = (3, 5, 8)
-    for payload in payloads:
-        for attempt in range(len(retry_delays) + 1):
-            try:
-                status_code, response_body = request_image(endpoint, headers, payload)
-                if status_code < 400:
-                    break
-                last_error = f"NovelAI 请求失败：HTTP {status_code}"
-            except error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="ignore").strip() or str(
-                    exc.reason
-                )
-                if (
-                    exc.code == 429
-                    and "Concurrent generation is locked" in detail
-                    and attempt < len(retry_delays)
-                ):
-                    time.sleep(retry_delays[attempt])
-                    continue
-                last_error = format_http_error(exc.code, detail)
-            except error.URLError as exc:
-                last_error = f"NovelAI 请求失败，网络没通：{exc.reason}"
-            break
-        else:
-            continue
-        if status_code < 400 and response_body:
-            break
-    else:
+    payload = build_payload(config, prompts)
+    response_body, last_error, retryable = request_with_retry(endpoint, headers, payload)
+    if response_body is None and retryable:
+        # 主请求体是 5xx / 并发锁挂的，换精简请求体再试一次（只一次，别把偶发 500 放大成限流）。
+        # 4xx 不走这里：请求本身不合法，再发一次只会等量重复同一个错误。
+        payload = build_fallback_payload(config, prompts)
+        response_body, fallback_error, _ = request_with_retry(
+            endpoint, headers, payload, delays=()
+        )
+        last_error = fallback_error or last_error
+    if response_body is None:
         raise RuntimeError(last_error or "NovelAI 请求失败。")
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -620,10 +797,16 @@ def main() -> None:
         config["width"] = int(args.width)
     if args.height is not None:
         config["height"] = int(args.height)
-    # NovelAI 要求宽高都是 64 的倍数；catch 早 fail 早
-    if int(config["width"]) % 64 != 0 or int(config["height"]) % 64 != 0:
+    # NovelAI 要求宽高都是正整数且是 64 的倍数；catch 早 fail 早。
+    # 下限判断是真需要的：-64 和 0 都能过 %64，透传下去只会换来 NovelAI 的英文 400。
+    try:
+        width, height = int(config["width"]), int(config["height"])
+    except (KeyError, TypeError, ValueError):
+        width = height = -1  # 配置里根本没有/不是数字，一并按非法尺寸报
+    if width <= 0 or height <= 0 or width % 64 or height % 64:
         raise SystemExit(
-            f"width/height must be multiples of 64; got {config['width']}x{config['height']}"
+            "width/height must be multiples of 64 (positive); got "
+            f"{config.get('width')}x{config.get('height')}"
         )
     # ─── 应用 --reuse-seed：从 last_request 拉上一次的 seed ──────────────
     # last_request.json 结构：{ "request_payload": { "parameters": { "seed": N, ... } } }
@@ -657,17 +840,23 @@ def main() -> None:
         output_dir = Path(args.output_dir).expanduser() / agent_name / session_name
     else:
         output_dir = default_output_dir(agent_name, session_name)
-    result = generate_image(
-        config,
-        intermediate,
-        output_dir,
-        source_request_path=str(intermediate_path),
-        output_image_path=Path(args.output_image_path).expanduser()
-        if args.output_image_path
-        else None,
-        state_dir=Path(args.state_dir).expanduser() if args.state_dir else None,
-        agent_name=agent_name,
-    )
+    try:
+        result = generate_image(
+            config,
+            intermediate,
+            output_dir,
+            source_request_path=str(intermediate_path),
+            output_image_path=Path(args.output_image_path).expanduser()
+            if args.output_image_path
+            else None,
+            state_dir=Path(args.state_dir).expanduser() if args.state_dir else None,
+            agent_name=agent_name,
+        )
+    except (ValueError, RuntimeError) as exc:
+        # 可预期的失败（提示词为空、缺令牌、NovelAI 返回错误）给一行中文说明就够了。
+        # 红栈对上游 worker 只是噪声，还会把请求头/令牌一类内容带进日志。
+        sys.stderr.write(f"[novelai] 生图失败：{exc}\n")
+        sys.exit(1)
 
     serialized = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output_json:
