@@ -6,7 +6,6 @@
 但没有 socket，也就没有打错端口的可能。
 """
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -79,6 +78,5 @@ def api(client):
 
 @pytest.fixture(autouse=True)
 def _no_real_skill_root(monkeypatch):
-    """兜底：即使某条用例忘了用 styles_root，也不让它落到真实 skill 目录。"""
+    """兜底：不让任何用例从外部继承 NOVELAI_SKILL_ROOT 而读到真实 skill 目录。"""
     monkeypatch.delenv("NOVELAI_SKILL_ROOT", raising=False)
-    os.environ.setdefault("NOVELAI_PYTHON", sys.executable)
