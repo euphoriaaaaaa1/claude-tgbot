@@ -14,11 +14,16 @@ import { Bot, GrammyError, type Context } from 'grammy'
 import type { ReactionTypeEmoji } from 'grammy/types'
 import {
   readFileSync, writeFileSync, mkdirSync, statSync, renameSync, appendFileSync, existsSync,
-  readdirSync, rmSync,
+  readdirSync, rmSync, mkdtempSync, openSync, readSync, closeSync,
 } from 'fs'
-import { join, extname, basename } from 'path'
+import { spawn } from 'child_process'
+import { join, extname, basename, dirname } from 'path'
 import { homedir, tmpdir } from 'os'
-import { getManager, unifiedSessionUuid } from './worker-manager.ts'
+import { getManager, unifiedSessionUuid, projectSlug, resolveClaude } from './worker-manager.ts'
+import { buildSendPlan } from './send_plan'
+import {
+  extractRecentTurns, summarizeTurns, renderMemoryNote, upsertMemoryIndex, AUTH_FAILED,
+} from './clear_summary'
 
 // ─── env ──────────────────────────────────────────────────────────────
 const CHANNEL_DIR = process.env.CHANNEL_DIR || ''
@@ -405,6 +410,140 @@ function writeGroupTranscript(ctx: Context, text: string, imagePath?: string, at
   } catch {}
 }
 
+// ─── clear 前先把"最近聊了什么"写进自动记忆 ────────────────────────────
+// clear 掉会话，正在聊的话题就没了（MEMORY.md 只存长期稀疏事实）。这里在两条清空
+// 路径（/clear 走 stdin、/clearall 走 kill+删会话）真正执行之前，先把最近对话压成
+// 摘要写进 ~/.claude/projects/<slug>/memory/。判断逻辑全在 clear_summary.ts。
+// 铁律：摘要任何一环失败都只降级、绝不阻断 clear 本身。
+const SESSION_JSONL = (() => {
+  try {
+    return join(homedir(), '.claude', 'projects', projectSlug(CHANNEL_DIR), `${sessionUuid()}.jsonl`)
+  } catch { return '' }   // 没配命名空间 → 整个摘要功能降级为 no-op
+})()
+const MEMORY_DIR = SESSION_JSONL ? join(dirname(SESSION_JSONL), 'memory') : ''
+const RECENT_NOTE = 'recent_conversation.md'
+const SUMMARY_TAIL_BYTES = 2 * 1024 * 1024   // 会话 jsonl 可达几百 MB，只读尾巴
+const SUMMARY_TIMEOUT_MS = 25_000
+let clearInProgress = false
+
+function readTailFile(path: string, maxBytes: number): string {
+  let fd = -1
+  try {
+    const size = statSync(path).size
+    const len = Math.min(size, maxBytes)
+    if (len <= 0) return ''
+    fd = openSync(path, 'r')
+    const buf = Buffer.allocUnsafe(len)
+    readSync(fd, buf, 0, len, size - len)
+    return buf.toString('utf8')
+  } catch { return '' }
+  finally { if (fd >= 0) try { closeSync(fd) } catch {} }
+}
+
+// 摘要子进程的 env 白名单：不注入任何凭证，让 claude 自己读 settings.json / 钥匙串。
+// USER 必须给（缺了 macOS 上读不到钥匙串凭证，直接 "Not logged in" 快败）；Windows 侧
+// 的 USERPROFILE/APPDATA/SYSTEMROOT 同理，缺一个就起不来。大小写不敏感匹配，避免
+// Windows 上造出 PATH/Path 双键。
+const SUMMARY_ENV_KEYS = new Set([
+  'PATH', 'PATHEXT', 'COMSPEC', 'HOME', 'TMPDIR', 'TEMP', 'TMP',
+  'USER', 'LOGNAME', 'USERNAME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+  'APPDATA', 'LOCALAPPDATA', 'SYSTEMROOT', 'WINDIR',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+])
+
+/**
+ * claude -p 摘要子进程。异步（同步调用会把整个 bot 的事件循环卡住 25 秒）。
+ * cwd 用临时目录：不能是 bot 目录（会在 bot 的 projects 里多出 jsonl，还会吃 .mcp.json）。
+ * --strict-mcp-config 且不带 --mcp-config → 不加载任何 MCP server。
+ * 超时/非 0 退出/空输出 → null；认证失败 → AUTH_FAILED 哨兵，由 summarizeTurns 重试一次。
+ */
+function runClaudeSummary(prompt: string): Promise<string | null> {
+  return new Promise(resolve => {
+    let settled = false
+    const finish = (v: string | null) => { if (!settled) { settled = true; resolve(v) } }
+    let cwd = ''
+    try {
+      cwd = mkdtempSync(join(tmpdir(), 'clear-summary-'))
+      const env: Record<string, string> = {}
+      for (const [k, v] of Object.entries(process.env)) {
+        if (typeof v === 'string' && SUMMARY_ENV_KEYS.has(k.toUpperCase())) env[k] = v
+      }
+      if (!env.PATH && !env.Path) env.PATH = '/usr/bin:/bin:/usr/local/bin'
+      if (!env.HOME && !env.USERPROFILE) env.HOME = homedir()
+      const cleanup = () => { try { if (cwd) rmSync(cwd, { recursive: true, force: true }) } catch {} }
+      const claude = resolveClaude()
+      const args = ['-p', '--strict-mcp-config']
+      // Windows .cmd 得经 cmd /s /c 起（同 worker-manager 的 spawn 分支）
+      const p = claude.viaCmd
+        ? spawn('cmd', ['/s', '/c', [claude.bin, ...args].map(a => /[\s&|<>^()"]/.test(a) ? `"${a}"` : a).join(' ')],
+          { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsVerbatimArguments: true })
+        : spawn(claude.bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
+      let out = ''
+      let err = ''
+      const timer = setTimeout(() => { try { p.kill('SIGKILL') } catch {}; cleanup(); finish(null) }, SUMMARY_TIMEOUT_MS)
+      p.stdout.on('data', d => { if (out.length < 64_000) out += String(d) })
+      p.stderr.on('data', d => { if (err.length < 4_000) err += String(d) })   // 只用于认错识别，不落日志
+      p.on('error', () => { clearTimeout(timer); cleanup(); finish(null) })
+      p.on('close', code => {
+        clearTimeout(timer); cleanup()
+        if (code === 0 && out.trim()) return finish(out)
+        finish(/not logged in/i.test(err) ? AUTH_FAILED : null)
+      })
+      p.stdin.on('error', () => {})
+      p.stdin.end(prompt)
+    } catch {
+      try { if (cwd) rmSync(cwd, { recursive: true, force: true }) } catch {}
+      finish(null)
+    }
+  })
+}
+
+/** 记忆落地：note 文件 tmp→rename 原子写；MEMORY.md 写前先备份 .bak */
+function writeMemoryNote(dateIso: string, body: string): void {
+  if (!MEMORY_DIR) return
+  mkdirSync(MEMORY_DIR, { recursive: true })
+  const notePath = join(MEMORY_DIR, RECENT_NOTE)
+  writeFileSync(`${notePath}.tmp`, renderMemoryNote(dateIso, body))
+  renameSync(`${notePath}.tmp`, notePath)
+
+  const indexPath = join(MEMORY_DIR, 'MEMORY.md')
+  let md = ''
+  try { md = readFileSync(indexPath, 'utf8') } catch {}
+  if (md) { try { writeFileSync(`${indexPath}.bak`, md) } catch {} }
+  const oneLine = (body.split('\n').find(l => l.trim()) ?? '会话已清空').replace(/^[-*\s]+/, '').slice(0, 60)
+  const next = upsertMemoryIndex(md, { file: RECENT_NOTE, title: `最近对话摘要 · ${dateIso}`, oneLine })
+  writeFileSync(`${indexPath}.tmp`, next)
+  renameSync(`${indexPath}.tmp`, indexPath)
+}
+
+/** 摘要 → 写记忆。返回是否真写进去了（回执文案用）。全程 try 包住，绝不抛给调用方 */
+async function saveClearSummary(scope: 'all' | 'dm'): Promise<boolean> {
+  try {
+    if (!SESSION_JSONL) return false
+    const turns = extractRecentTurns(readTailFile(SESSION_JSONL, SUMMARY_TAIL_BYTES), { scope })
+    const body = await summarizeTurns(turns, runClaudeSummary)
+    writeMemoryNote(new Date().toISOString().slice(0, 10), body)
+    process.stderr.write(`dispatcher[${BOT_NAME}]: clear_summary scope=${scope} turns=${turns.length} body=${body.length > 0}\n`)
+    return body.length > 0
+  } catch {
+    process.stderr.write(`dispatcher[${BOT_NAME}]: clear_summary failed (clear 照常继续)\n`)
+    return false
+  }
+}
+
+/** /clearall 的"真清"：备份成 .deleted-<ts> 再移走，下次 spawn 自动起全新会话 */
+function wipeSessionJsonl(): boolean {
+  try {
+    if (!SESSION_JSONL || !existsSync(SESSION_JSONL)) return false
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '')
+    renameSync(SESSION_JSONL, `${SESSION_JSONL}.deleted-${ts}`)
+    return true
+  } catch {
+    process.stderr.write(`dispatcher[${BOT_NAME}]: wipe session failed\n`)
+    return false
+  }
+}
+
 // ─── slash bridge intercept ───────────────────────────────────────────
 // Match anything starting with `/word` — forwards every slash command to the
 // worker (headless streaming 会话里 slash 当 user 消息喂，claude 原生处理
@@ -420,13 +559,36 @@ async function slashBridgeIfApplicable(ctx: Context, text: string): Promise<bool
   if (isGroup && !hasExplicitEntityMention(ctx)) return false
   const chatId = String(ctx.chat!.id)
   const msgId = ctx.message?.message_id
+  const replyOpt = msgId != null ? { reply_parameters: { message_id: msgId } } : {}
+
+  // /clear 会把会话清空 → 先把最近聊的压成摘要写进自动记忆，再下发。
+  // 摘要走脱离 handler 的异步链（claude -p 最长 25 秒，await 在这会卡住整个 bot 的
+  // 更新循环）；顺序仍是"摘要 → 清空 → 回执"，用户看到回执即代表已清。
+  if (/^\/clear(@\w+)?$/.test(trimmed)) {
+    if (clearInProgress) {
+      await bot.api.sendMessage(chatId, '[上一次清理还没走完，稍等]', replyOpt).catch(() => {})
+      return true
+    }
+    clearInProgress = true
+    void (async () => {
+      try {
+        const kept = await saveClearSummary('all')
+        getManager().sendSlash(trimmed)
+        await bot.api.sendMessage(chatId, `已下发: ${trimmed}${kept ? '（最近聊到哪我记小本本上了）' : ''}`, replyOpt)
+      } catch (e) {
+        await bot.api.sendMessage(chatId, `[slash bridge 失败: ${String(e).slice(0, 200)}]`, replyOpt).catch(() => {})
+      } finally {
+        clearInProgress = false
+      }
+    })()
+    return true
+  }
+
   try {
     getManager().sendSlash(trimmed)  // 排队走 stdin，manager 自己等 ready，无竞态
-    await bot.api.sendMessage(chatId, `已下发: ${trimmed}`,
-      msgId != null ? { reply_parameters: { message_id: msgId } } : {})
+    await bot.api.sendMessage(chatId, `已下发: ${trimmed}`, replyOpt)
   } catch (e) {
-    await bot.api.sendMessage(chatId, `[slash bridge 失败: ${String(e).slice(0, 200)}]`,
-      msgId != null ? { reply_parameters: { message_id: msgId } } : {}).catch(() => {})
+    await bot.api.sendMessage(chatId, `[slash bridge 失败: ${String(e).slice(0, 200)}]`, replyOpt).catch(() => {})
   }
   return true
 }
@@ -487,14 +649,35 @@ async function handleInbound(
   //     Skip synthetic peer-injected msgs and bot senders to avoid loops.
   if (isGroup && !isBotSender && !options?.synthetic && groupChatId &&
       /^\/clearall(@\w+)?$/.test(text.trim())) {
-    // unified：只有一个 worker（群+私聊同脑）。/clearall 杀 worker（jsonl 保留，下次 resume）。
-    const mgr = getManager()
-    const killed = mgr.isAlive()
-    mgr.kill({ intentional: true })
-    process.stderr.write(`dispatcher[${BOT_NAME}]: /clearall chat=${groupChatId} killed=${killed}\n`)
+    // unified：只有一个 worker（群+私聊同脑）。只 kill worker 是清不掉记忆的——下次 spawn
+    // 又 --resume 同一个会话文件。这里改成真清（备份后移走会话），但先用 scope:'dm' 把
+    // 私聊聊到哪写进自动记忆：同脑架构下没法只删群聊那一部分。
     const msgId = ctx.message?.message_id
-    await bot.api.sendMessage(groupChatId, `[${BOT_NAME}] ${killed ? '已清空本群记忆' : '本群无活跃 worker'}`,
-      msgId != null ? { reply_parameters: { message_id: msgId } } : {}).catch(() => {})
+    const replyOpt = msgId != null ? { reply_parameters: { message_id: msgId } } : {}
+    if (clearInProgress) {
+      await bot.api.sendMessage(groupChatId, `[${BOT_NAME}] 上一次清理还没走完，稍等`, replyOpt).catch(() => {})
+      return
+    }
+    clearInProgress = true
+    void (async () => {
+      try {
+        const kept = await saveClearSummary('dm')          // 摘要必须先于删除
+        const mgr = getManager()
+        const killed = mgr.isAlive()
+        mgr.kill({ intentional: true })
+        // 先杀 worker 再删文件：claude 活着时仍在写这个 jsonl，先删会被它重新落盘
+        await new Promise(r => setTimeout(r, 500))
+        const wiped = wipeSessionJsonl()
+        process.stderr.write(`dispatcher[${BOT_NAME}]: /clearall chat=${groupChatId} killed=${killed} wiped=${wiped} summary=${kept}\n`)
+        await bot.api.sendMessage(groupChatId,
+          `[${BOT_NAME}] ${wiped ? '记忆已清空' : '没找到会话记录（本来就是空的）'}${kept ? '，私聊聊到哪我记小本本上了' : ''}`,
+          replyOpt).catch(() => {})
+      } catch {
+        process.stderr.write(`dispatcher[${BOT_NAME}]: /clearall failed\n`)
+      } finally {
+        clearInProgress = false
+      }
+    })()
     return
   }
 
@@ -767,11 +950,23 @@ const server = Bun.serve({
         const limit = Math.max(1, Math.min(access.textChunkLimit ?? MAX_CHUNK_LIMIT, MAX_CHUNK_LIMIT))
         const mode = access.chunkMode ?? 'length'
         const replyMode = access.replyToMode ?? 'first'
-        const paragraphs = access.splitOnParagraph
-          ? text.split('\n\n').map(s => s.trim()).filter(s => s.length > 0)
-          : [text]
-        const allChunks: string[] = []
-        for (const p of paragraphs) allChunks.push(...chunkText(p, limit, mode))
+        // [[图N]] 标记：让图片能插在文字气泡中间发。无标记时 plan = 全部文字 + 图片压尾，
+        // 与旧行为逐字节一致。展开成 chunk 粒度的发送序列后，文字项照旧走分段/打字延迟/
+        // 语音配对，图片项在它标记的位置发出。
+        const { plan, cleanText } = buildSendPlan(text, files.length)
+        type SendItem = { kind: 'text'; chunk: string } | { kind: 'file'; path: string }
+        const items: SendItem[] = []
+        for (const it of plan) {
+          if (it.kind === 'text') {
+            const paragraphs = access.splitOnParagraph
+              ? it.text.split('\n\n').map(s => s.trim()).filter(s => s.length > 0)
+              : (it.text.trim() ? [it.text] : [])
+            for (const p of paragraphs) for (const c of chunkText(p, limit, mode)) items.push({ kind: 'text', chunk: c })
+          } else {
+            const f = files[it.index]
+            if (f) items.push({ kind: 'file', path: f })
+          }
+        }
         const voiceChunks: string[] = asVoice && voiceTextRaw
           ? voiceTextRaw.split('\n\n').map(s => s.trim())
           : []
@@ -805,8 +1000,24 @@ const server = Bun.serve({
           return null
         }
 
-        for (let i = 0; i < allChunks.length; i++) {
-          if (i > 0 && delay > 0) {
+        let textIdx = 0   // 只数文字气泡，语音配对和 reply-to-first 都按它算
+        for (let n = 0; n < items.length; n++) {
+          const item = items[n]
+          if (item.kind === 'file') {
+            const ext = extname(item.path).toLowerCase()
+            const replyToId = (replyTo != null && replyMode !== 'off') ? replyTo : undefined
+            const isPhoto = PHOTO_EXTS.has(ext)
+            // 缓冲 multipart 直连 Telegram（见 sendFileBuffered 注释：流式 body 过代理会失败）
+            const mid = await sendFileBuffered(
+              isPhoto ? 'sendPhoto' : 'sendDocument',
+              isPhoto ? 'photo' : 'document',
+              chatId, item.path, replyToId,
+            )
+            sentIds.push(mid)
+            continue
+          }
+          const i = textIdx++
+          if (n > 0 && delay > 0) {
             void bot.api.sendChatAction(chatId, 'typing').catch(() => {})
             await new Promise(r => setTimeout(r, delay))
           }
@@ -815,10 +1026,10 @@ const server = Bun.serve({
             const voiceId = access.voiceId
             if (!voiceId) throw new Error('as_voice=true but access.json missing voiceId')
             const hasDual = voiceChunks.length > 0
-            const ttsText = hasDual ? (voiceChunks[i] ?? '') : allChunks[i]
+            const ttsText = hasDual ? (voiceChunks[i] ?? '') : item.chunk
             const skipVoice = !ttsText || ttsText.trim() === ''
             if (hasDual) {
-              const sent = await sendChunk(allChunks[i],
+              const sent = await sendChunk(item.chunk,
                 shouldReplyTo ? { reply_parameters: { message_id: replyTo! } } : {})
               if (sent) sentIds.push(sent.message_id)
             }
@@ -841,29 +1052,17 @@ const server = Bun.serve({
               sentIds.push(message_id)
             }
           } else {
-            const sent = await sendChunk(allChunks[i],
+            const sent = await sendChunk(item.chunk,
               shouldReplyTo ? { reply_parameters: { message_id: replyTo! } } : {})
             if (sent) sentIds.push(sent.message_id)
           }
         }
-
-        for (const f of files) {
-          const ext = extname(f).toLowerCase()
-          const replyToId = (replyTo != null && replyMode !== 'off') ? replyTo : undefined
-          const isPhoto = PHOTO_EXTS.has(ext)
-          // 缓冲 multipart 直连 Telegram（见 sendFileBuffered 注释：流式 body 过代理会失败）
-          const mid = await sendFileBuffered(
-            isPhoto ? 'sendPhoto' : 'sendDocument',
-            isPhoto ? 'photo' : 'document',
-            chatId, f, replyToId,
-          )
-          sentIds.push(mid)
-        }
+        // （旧的"图片统一压尾"循环已并入上方计划循环：无标记时行为不变，仍是压尾）
         // Peer inject (groups only; fire-and-forget). Bypass Telegram's
         // bot-to-bot invisibility by notifying peer dispatchers directly.
         // Peer 看到的"真实内容"优先用 voice_text（as_voice 时 text 是播报稿/占位符，
         // voice_text 才是 TTS 合成前的原文）。否则用 text。
-        const peerText = (asVoice && voiceTextRaw) ? voiceTextRaw : text
+        const peerText = (asVoice && voiceTextRaw) ? voiceTextRaw : cleanText
         // Peer 互推：无论导演模式与否都推。原因——Telegram 平台不投递 bot→bot 消息，
         // peer_inbound 是 bot 发言进入 group_transcript 的唯一通道；director.py 靠 transcript
         // 里的 bot 发言算 heat、判断该谁接、给被选中 bot 提供群内上下文。导演模式下不推 =
