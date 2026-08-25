@@ -21,6 +21,7 @@ import { join, extname, basename, dirname } from 'path'
 import { homedir, tmpdir } from 'os'
 import { getManager, unifiedSessionUuid, projectSlug, resolveClaude } from './worker-manager.ts'
 import { buildSendPlan } from './send_plan'
+import { startProviderWatch } from './provider_watch'
 import {
   extractRecentTurns, summarizeTurns, renderMemoryNote, upsertMemoryIndex, AUTH_FAILED,
 } from './clear_summary'
@@ -315,6 +316,24 @@ function ensureWorkerRunning(_chatId: string): { uuid: string; spawned: boolean 
   void mgr.ensure()
   return { uuid: mgr.sessionUuid, spawned }
 }
+
+// ─── provider 自动跟随（cc-switch / 手改 settings.json 后免手动重启）──────
+// settings.json 的 provider 字段真变了 → 杀掉 worker，走 worker-manager 既有的崩溃重启
+// 路径（backoff → --resume 续会话 → 在飞 raw 消息回插队列 → drainInbox 补投 inbox）。
+// dispatcher 本体不重启，Telegram 连接不断。
+startProviderWatch({
+  log: line => process.stderr.write(`dispatcher[${BOT_NAME}]: provider-sync ${line}\n`),
+  onProviderChanged: () => {
+    const mgr = getManager()
+    if (!mgr.isAlive()) {
+      // 没在跑就不用动：下次 spawn 时 buildEnv 自然读到新 settings.json
+      process.stderr.write(`dispatcher[${BOT_NAME}]: provider-sync worker_restart=false reason=not_running\n`)
+      return
+    }
+    process.stderr.write(`dispatcher[${BOT_NAME}]: provider-sync worker_restart=true reason=provider_changed\n`)
+    mgr.kill()   // 非 intentional → onExit 自动 --resume 重启并回插在飞消息
+  },
+})
 
 // ─── attachment download (post-gate) ──────────────────────────────────
 async function downloadToMedia(fileId: string, chatType: string | undefined): Promise<string | undefined> {
