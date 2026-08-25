@@ -47,6 +47,41 @@ if grep -q "YOUR_TELEGRAM_USER_ID" "$HOME/.claude/channels/chenlulu/access.json"
   todo "~/.claude/channels/chenlulu/access.json → allowFrom 填你的数字 user_id（@userinfobot 可查）"; left=1
 else ok "access.json 的白名单已填"; fi
 
+# ── ⑤ 注册开机自启 ────────────────────────────────────────
+# 幂等：每次都重新渲染 plist、先 bootout 再 bootstrap，重复跑结果一致。
+# 任何一步失败只 warn 不中断安装（比如 SSH 里没有图形会话，bootstrap 会拒）。
+say "⑤ 注册开机自启"
+AUTOSTART_LABEL="com.claudebotlife.autostart"
+AUTOSTART_PLIST="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
+autostart_on=0
+if [ "$(uname -s)" != "Darwin" ]; then
+  todo "非 macOS：没有 launchd，想开机自启请自己挂 cron（@reboot bash $PWD/restart-bots.sh）或 systemd user service"
+else
+  tmp_plist="$(mktemp "${TMPDIR:-/tmp}/claudebotlife-autostart.XXXXXX")"
+  # launchd 不展开 ~，模板里的 ~/.bun/bin 必须换成真实家目录，否则非 homebrew 装的 bun 找不到
+  sed -e "s#{REPO_DIR}#$PWD#g" -e "s#~/.bun/bin#$HOME/.bun/bin#g" \
+      plist-templates/autostart.plist.tmpl > "$tmp_plist"
+  if plutil -lint "$tmp_plist" >/dev/null 2>&1; then
+    mkdir -p "$HOME/Library/LaunchAgents"
+    mv -f "$tmp_plist" "$AUTOSTART_PLIST"
+    launchctl bootout "gui/$UID/$AUTOSTART_LABEL" >/dev/null 2>&1 || true
+    if launchctl bootstrap "gui/$UID" "$AUTOSTART_PLIST" >/dev/null 2>&1; then
+      ok "开机自启已注册（$AUTOSTART_LABEL）"
+      autostart_on=1
+    else
+      todo "plist 已写好但没加载上（常见于 SSH，没有图形会话）。图形登录后手动跑：launchctl bootstrap gui/\$UID $AUTOSTART_PLIST"
+    fi
+  else
+    rm -f "$tmp_plist"
+    todo "自启 plist 渲染后格式校验没过，已跳过（不影响手动 bash restart-bots.sh）"
+  fi
+  # 老版 README 手动挂过的自启，标签不同不会被上面覆盖 → 会起两次，提醒删掉
+  old_plist="$HOME/Library/LaunchAgents/com.example.claudebotlife-autostart.plist"
+  if [ -f "$old_plist" ]; then
+    todo "检测到旧版自启，删掉免得开机起两次：launchctl bootout gui/\$UID/com.example.claudebotlife-autostart; rm $old_plist"
+  fi
+fi
+
 echo
 if [ "$left" = 0 ]; then
   say "全部就绪！启动："
@@ -56,4 +91,8 @@ else
   say "把上面 ⚠️ 的几项填完，然后："
   echo "  bash restart-bots.sh"
   echo "（想复查可以再跑一次 bash install.sh，全 ✅ 即就绪。可选的网页打电话模块见 voicecall/README.md）"
+fi
+if [ "$autostart_on" = 1 ]; then
+  echo "以后开机自动起 bot，不想要就卸掉："
+  echo "  launchctl bootout gui/\$UID/$AUTOSTART_LABEL; rm $AUTOSTART_PLIST"
 fi
