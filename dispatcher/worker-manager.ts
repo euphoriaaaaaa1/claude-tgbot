@@ -352,6 +352,7 @@ export class WorkerManager {
   private phase: 'stopped' | 'starting' | 'ready' = 'stopped'
   private inFlight: QueueItem | null = null
   private inFlightSince = 0
+  private inFlightContent = ''            // 在飞那条的组装结果：inbox 文件已删，重启回插只能靠它
   private queue: QueueItem[] = []
   private restartAttempt = 0
   private intentionalKill = false
@@ -484,8 +485,9 @@ export class WorkerManager {
       const s = chunk.toString().trim()
       if (s) logStream({ type: '_stderr', text: s.slice(0, 2000) })
     })
-    proc.on('error', (err) => { logSpawn(`spawn error: ${err}`); this.onExit(-1) })
-    proc.on('exit', (code) => this.onExit(code ?? 0))
+    // 带上 proc 身份：onExit 要能认出「这条是上一个进程的遗言」（见 onExit 的陈旧退出守卫）
+    proc.on('error', (err) => { logSpawn(`spawn error: ${err}`); this.onExit(-1, proc as ChildProcessWithoutNullStreams) })
+    proc.on('exit', (code) => this.onExit(code ?? 0, proc as ChildProcessWithoutNullStreams))
 
     // spawn 即 ready：stdin 管道会缓冲，claude 启动完自然消费第一条消息。
     // （不能等 system/init——headless 下它在收到第一条输入后才发，等它=死锁）
@@ -539,23 +541,40 @@ export class WorkerManager {
     }
     if (ev.type === 'result') {
       this.inFlight = null
+      this.inFlightContent = ''      // 跑完了，别把上一条内容留在内存里等着被误回插
       if (this.resultTimer) { clearTimeout(this.resultTimer); this.resultTimer = null }
       this.pump()
       return
     }
   }
 
-  private onExit(code: number): void {
+  private onExit(code: number, proc?: ChildProcessWithoutNullStreams): void {
+    // 陈旧退出守卫：kill() 到 exit 事件之间若有新消息触发 ensure() 起了新 worker，这条 exit 是
+    // 上一个进程的。再往下走会把新 worker 的 proc/phase 清成 stopped 并多排一次 spawn ——
+    // 两个 claude 写同一个 jsonl = 记忆损坏。provider 自动跟随把「主动 kill」变成常规操作，
+    // 这个原本毫秒级没人踩到的窗口从此会被踩到。
+    if (proc && this.proc && this.proc !== proc) {
+      logSpawn(`忽略陈旧 worker 的 exit code=${code}（新 worker 已在跑）`)
+      return
+    }
     logSpawn(`worker exit code=${code}${this.intentionalKill ? ' (intentional)' : ''}`)
     try { rmSync(join(CHANNEL_DIR, '.worker.pid'), { force: true }) } catch {}  // 进程死了，pid 文件作废
     this.proc = null
     this.phase = 'stopped'
     const wasInFlight = this.inFlight
+    const wasContent = this.inFlightContent
     this.inFlight = null
+    this.inFlightContent = ''
     if (this.resultTimer) { clearTimeout(this.resultTimer); this.resultTimer = null }
     if (this.intentionalKill) { this.intentionalKill = false; return }
-    // 在飞那条没跑完 → 重投队头（inbox 文件已删，raw 条目内容还在内存里）
-    if (wasInFlight && wasInFlight.kind === 'raw') this.queue.unshift(wasInFlight)
+    // 在飞那条没跑完 → 重投队头。file 条目的 inbox 文件在写 stdin 那一刻就删了，只能拿内存里
+    // 的组装结果按 raw 回插（时间/关系前缀与 <channel> meta 都已在里面，回插即原样重跑）。
+    // 取舍：claude 若已经调过 reply 只是没来得及发 result 就被杀，用户会看到同一轮回两次——
+    // 宁可极小概率重复，不可丢消息（reply 在一轮里通常靠后，重复窗口不到一秒）。
+    if (wasInFlight?.kind === 'raw') this.queue.unshift(wasInFlight)
+    else if (wasInFlight && wasContent) {
+      this.queue.unshift({ kind: 'raw', content: wasContent, label: 'requeue-after-restart' })
+    }
     const delay = BACKOFF_MS[Math.min(this.restartAttempt, BACKOFF_MS.length - 1)]
     this.restartAttempt++
     logSpawn(`${delay}ms 后自动 --resume 重启 (attempt ${this.restartAttempt})`)
@@ -641,6 +660,7 @@ export class WorkerManager {
   private dispatchContent(item: QueueItem, content: string, deletePath: string | null): void {
     if (!this.proc || !this.proc.stdin.writable) { this.queue.unshift(item); return }
     this.inFlight = item
+    this.inFlightContent = content
     this.inFlightSince = Date.now()
     this.resultTimer = setTimeout(() => this.checkStuck(), RESULT_TIMEOUT_MS + 1000)
     // 冷轮前置 reply 提醒（slash 命令本身不加，且提醒只加一次就清标记）
