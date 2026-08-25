@@ -46,3 +46,4 @@ voicecall/.pytest_cache/
 # 内部开发产物：测试套件与流程文档不进公开库（部分文件为字符串比对内联了红线字面量）
 voicecall/tests/
 voicecall/.devflow/
+.devflow/
