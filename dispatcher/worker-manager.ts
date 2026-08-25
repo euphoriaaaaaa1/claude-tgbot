@@ -22,6 +22,7 @@ import {
 import { join, delimiter } from 'path'
 import { homedir, tmpdir, platform } from 'os'
 import { buildTimePrefix } from './time_annotate'
+import { settingsPath } from './provider_watch'
 
 // ─── 配置（与 dispatcher.ts 同源的 env）────────────────────────────────
 const BOT = process.env.BOT_NAME || ''
@@ -189,7 +190,8 @@ function credentialFingerprint(): string {
 
 function settingsEnv(): Record<string, string> {
   try {
-    const d = JSON.parse(readFileSync(join(homedir(), '.claude', 'settings.json'), 'utf8'))
+    // 路径必须与 provider_watch 监听的那份一致，否则「盯 A 文件、起进程读 B 文件」
+    const d = JSON.parse(readFileSync(settingsPath(), 'utf8'))
     const out: Record<string, string> = {}
     for (const [k, v] of Object.entries(d.env || {})) {
       if (/^(ANTHROPIC_|CLAUDE_CODE_|DISABLE_|ENABLE_)/.test(k)) out[k] = String(v)
