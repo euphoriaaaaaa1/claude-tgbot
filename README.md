@@ -340,7 +340,8 @@ cd dispatcher && bun test-e2e.ts     # Windows: cd dispatcher; bun test-e2e.ts
 - **C. [cc-switch](https://github.com/farion1231/cc-switch)（✅ 推荐 · 图形界面，不想手改 JSON 就用它）**：加几个 provider，点一下切换，它替你写 `settings.json`。切完程序自动跟随（见下）。
   > ⚠️ 别同时用多个「写 settings.json」的工具（cc-switch / 手改会互相覆盖），选一个。
 
-**切完不用手动重启**：dispatcher 一直盯着 `settings.json`，provider 字段一变（防抖约 1.2 秒）就自动把 worker 换成新 provider 重生——记忆不丢（`--resume` 续上原会话），排队等着的消息不丢（重启后自动补投），Telegram 连接也不断（dispatcher 本体不重启）。唯一代价：**正在回复中的那一条会被打断**，重发一遍即可。
+**切完不用手动重启**：dispatcher 一直盯着 `settings.json`，provider 字段一变（防抖约 1.2 秒）就自动把 worker 换成新 provider 重生——记忆不丢（`--resume` 续上原会话），消息也不丢：排队等着的重启后自动补投，**正在回复中的那条会自动重新排队、用新 provider 重跑一遍**，你不用重发。Telegram 连接也不断（dispatcher 本体不重启）。
+唯一的小代价：万一它其实已经回过话、只差最后一步收尾时被换掉（不到一秒的窗口），你会看到同一轮回两次。
 
 - 只有这几个字段变了才重生：`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` / 顶层 `model`。改 hooks、改别的偏好一律不动。
 - 配置文件想放别处：设环境变量 `CLAUDE_SETTINGS_PATH` 指到你那份（不设就是 `~/.claude/settings.json`）。
