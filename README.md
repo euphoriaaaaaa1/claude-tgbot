@@ -324,7 +324,7 @@ cd dispatcher && bun test-e2e.ts     # Windows: cd dispatcher; bun test-e2e.ts
 | 角色说话（worker） | `claude` CLI | `~/.claude/settings.json` 的 `env` |
 | 后台情绪/关系数值裁判 + 群聊导演 | DeepSeek（独立） | `configs/_global.yml` 的 `jiwen.delta_llm` |
 
-换角色说话用的模型/中转，只改 `~/.claude/settings.json`。三种配法任选一种：
+换角色说话用的模型/中转，只改 `~/.claude/settings.json`。三种配法任选一种（**推荐 C：点一下就切，程序自动跟随**）：
 
 - **A. 官方订阅（最省事）**：`claude` 登录一次 Claude 账号即可；`settings.json` 的 `env` **不要**写 `ANTHROPIC_BASE_URL`。worker 自动读系统凭证并续期。
 - **B. 第三方中转 / API key（手动）**：编辑 `~/.claude/settings.json`：
@@ -337,11 +337,35 @@ cd dispatcher && bun test-e2e.ts     # Windows: cd dispatcher; bun test-e2e.ts
     }
   }
   ```
-- **C. [cc-switch](https://github.com/farion1231/cc-switch)（图形界面，不想手改用它）**：加个 provider 点切换，它替你写 `settings.json`。
+- **C. [cc-switch](https://github.com/farion1231/cc-switch)（✅ 推荐 · 图形界面，不想手改 JSON 就用它）**：加几个 provider，点一下切换，它替你写 `settings.json`。切完程序自动跟随（见下）。
   > ⚠️ 别同时用多个「写 settings.json」的工具（cc-switch / 手改会互相覆盖），选一个。
 
-**切完必须重启一次**（worker 只在启动时读 settings.json）：`bash restart-bots.sh`（Windows：`windows\restart-bots.ps1`）。重启有几秒窗口，但**消息不丢**（Telegram 会补投）、**记忆不丢**（worker 自动 `--resume` 续上）——不是零中断，是"断几秒、无损"。
+**切完不用手动重启**：dispatcher 一直盯着 `settings.json`，provider 字段一变（防抖约 1.2 秒）就自动把 worker 换成新 provider 重生——记忆不丢（`--resume` 续上原会话），排队等着的消息不丢（重启后自动补投），Telegram 连接也不断（dispatcher 本体不重启）。唯一代价：**正在回复中的那一条会被打断**，重发一遍即可。
+
+- 只有这几个字段变了才重生：`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` / 顶层 `model`。改 hooks、改别的偏好一律不动。
+- 配置文件想放别处：设环境变量 `CLAUDE_SETTINGS_PATH` 指到你那份（不设就是 `~/.claude/settings.json`）。
+- **兜底**：万一没跟上（网络盘/容器里文件监听可能失效，正常最慢 10 秒会被轮询捡到），手动 `bash restart-bots.sh`（Windows：`windows\restart-bots.ps1`）照样有效。
+
 另外要能用还需：① `configs/_global.yml` 的 DeepSeek key 已配好；② 中转站支持 Claude 的 **Messages API** 格式（多数 claude 中转支持，纯 OpenAI 格式的不行）。
+
+### 用 DeepSeek 当说话模型（便宜，中文顺）
+
+DeepSeek 官方就提供 Anthropic 格式的兼容端点，不用中转站，直接填进 `~/.claude/settings.json`：
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "你的 DeepSeek key",
+    "ANTHROPIC_MODEL": "deepseek-chat"
+  }
+}
+```
+
+用 cc-switch 的话就照这三行加一个 provider，以后和 Claude 之间点一下互切。
+
+> ⚠️ **别和后台那把 DeepSeek key 搞混**：这里填的是**角色说话**用的；`configs/_global.yml` 里 `jiwen.delta_llm.api_key` 是**后台情绪 / 关系数值 / 群聊导演**用的，两处互相独立、各配各的。
+> 但 **同一把 DeepSeek key 两处都能用**——不用申请两把，同一个 `sk-` 复制粘贴过去即可。
 
 ---
 
