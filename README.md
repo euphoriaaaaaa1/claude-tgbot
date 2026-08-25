@@ -141,6 +141,13 @@ git clone https://github.com/euphoriaaaaaa1/claude-tgbot.git ~/claudebotlife && 
 
 按提示把 3 个密钥填完（DeepSeek key / bot token / 你的 user_id），跑 `bash restart-bots.sh` 就上线了。脚本可重复运行（复查用），不会覆盖你填过的配置。
 
+`install.sh` 还会顺手把**开机自启**注册好（launchd，以后每次登录自动起 bot），不用再手动填 plist。不想要就卸掉：
+
+```bash
+launchctl bootout gui/$UID/com.claudebotlife.autostart
+rm ~/Library/LaunchAgents/com.claudebotlife.autostart.plist
+```
+
 <details>
 <summary>想手动一步步来？点开看分步说明（与脚本等价）</summary>
 
@@ -178,7 +185,12 @@ cd ~/claudebotlife       # 回到仓库目录
 cp restart-bots.example.sh restart-bots.sh
 bash restart-bots.sh     # 起后台收发进程；之后在 Telegram 给你的 bot 发消息就有回应了
 
-# ⑦（可选）开启情绪/关系数值引擎，每 5 分钟算一次
+# ⑦ 开机自启（install.sh 自动做的就是这两条；仅 macOS，Linux 用 cron/systemd）
+sed "s#{REPO_DIR}#$HOME/claudebotlife#g; s#~/.bun/bin#$HOME/.bun/bin#g" \
+  plist-templates/autostart.plist.tmpl > ~/Library/LaunchAgents/com.claudebotlife.autostart.plist
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.claudebotlife.autostart.plist
+
+# ⑧（可选）开启情绪/关系数值引擎，每 5 分钟算一次
 python3 jiwen/tick.py    # 想长期自动跑，就挂到 launchd / cron 定时任务
 ```
 
@@ -223,13 +235,15 @@ cd $env:USERPROFILE\claudebotlife    # 回到仓库目录
 # ⑥ 启动！（首次若提示"禁止运行脚本"，前面加 -ExecutionPolicy Bypass）
 powershell -ExecutionPolicy Bypass -File windows\start-bots.ps1
 
-# ⑦（可选）注册后台任务：开机自启 + 主动消息 + 情绪引擎 + 朋友圈 + 记忆压缩
-notepad windows\register-tasks.ps1       # 先把里面的 YOUR_TELEGRAM_USER_ID 改成你的 user_id，存盘
+# ⑦ 注册后台任务：开机自启 + 主动消息 + 情绪引擎 + 朋友圈 + 记忆压缩
+#    不用改任何文件，脚本会自己去 access.json 读你填的 user_id
 powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 ```
 
 看实时对话：`powershell -File windows\watch-bot.ps1 chenlulu`
-常用运维：`windows\restart-bots.ps1` 重启全部 · `windows\unregister-tasks.ps1` 卸载后台任务。
+常用运维：`windows\restart-bots.ps1` 重启全部 · `windows\unregister-tasks.ps1` 卸载后台任务（含开机自启）。
+
+> ⑦ 里的「主动消息」任务需要你的数字 user_id。如果 ⑤ 的 `access.json` 还没填，脚本会黄字提示跳过这一个任务、其余照常注册；填好后重跑一次 ⑦ 就补上了。
 
 **先自测环境（强烈建议，不碰 Telegram）**：`cd dispatcher; bun test-e2e.ts` —— 打出 `5 过 / 0 挂` 说明这台机器整条链路 OK。
 
@@ -241,17 +255,12 @@ powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 |------|-------------|---------|
 | **启动 / 重启全部 bot** | `bash restart-bots.sh` | `powershell -File windows\restart-bots.ps1` |
 | **停止全部 bot** | `cp stop-bots.example.sh stop-bots.sh && bash stop-bots.sh` | `powershell -File windows\stop-bots.ps1` |
-| **开机自启** | 见下方 | `windows\register-tasks.ps1`（已含 dispatcher 登录自启，一步到位） |
+| **开机自启** | `bash install.sh` 已自动注册，无需额外操作 | `windows\register-tasks.ps1`（已含 dispatcher 登录自启，一步到位） |
+| **不想要开机自启** | `launchctl bootout gui/$UID/com.claudebotlife.autostart`<br>`rm ~/Library/LaunchAgents/com.claudebotlife.autostart.plist` | `powershell -File windows\unregister-tasks.ps1`（连同其它后台任务一起卸） |
 
-**Mac 开机自启**（Windows 用户跳过——`register-tasks.ps1` 已经全包了）：
-```bash
-# 1) 填模板：把 {REPO_DIR} 换成仓库真实路径（如 ~/claudebotlife），生成正式 plist
-sed "s#{REPO_DIR}#$HOME/claudebotlife#g" plist-templates/autostart.plist.tmpl \
-  > ~/Library/LaunchAgents/com.example.claudebotlife-autostart.plist
-# 2) 加载（以后每次登录自动跑 restart-bots.sh 起 bot）
-launchctl load ~/Library/LaunchAgents/com.example.claudebotlife-autostart.plist
-```
-`plist-templates/` 里还有 `self-initiate`（主动消息）、`jiwen-tick`（情绪引擎）、`moments-web`（朋友圈网页）、`memory-compactor`（记忆压缩）等模板，同样 `sed` 填占位（`{REPO_DIR}`/`{BOT_ID}`/`{CHAT_ID}`）后 `launchctl load` 挂上，是可选的后台服务。
+**Mac 开机自启的细节**：`install.sh` 第 ⑤ 步会把 `plist-templates/autostart.plist.tmpl` 填好路径写到 `~/Library/LaunchAgents/com.claudebotlife.autostart.plist` 并 `launchctl bootstrap` 挂上，以后每次登录自动跑 `restart-bots.sh`。重复跑 `install.sh` 不会挂两份。若你是在 SSH 里跑的（没有图形会话），加载会失败但 plist 已写好，脚本会打出手动加载命令，图形登录后跑一次即可。**Linux 没有 launchd，这步自动跳过**，想自启请自己挂 `cron`（`@reboot`）或 systemd user service 跑 `restart-bots.sh`。
+
+`plist-templates/` 里还有 `self-initiate`（主动消息）、`jiwen-tick`（情绪引擎）、`moments-web`（朋友圈网页）、`memory-compactor`（记忆压缩）等模板，是**可选**的后台服务，需要自己 `sed` 填占位（`{REPO_DIR}`/`{BOT_ID}`/`{CHAT_ID}`）写进 `~/Library/LaunchAgents/` 再 `launchctl bootstrap gui/$UID <plist>` 挂上。
 
 ## 朋友圈网页（`:8765`，可选）
 
