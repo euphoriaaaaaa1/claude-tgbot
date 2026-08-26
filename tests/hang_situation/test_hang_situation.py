@@ -40,7 +40,8 @@ def test_命中的作息标了interruptible_false_原样透出(fake_cfg):
     import hang_situation
     fake_cfg(_all_day("上课", "busy_class", interruptible=False))
     out = hang_situation.query("faketestbot")
-    assert out == {"name": "上课", "state": "busy_class", "interruptible": False}
+    assert out == {"name": "上课", "state": "busy_class",
+                   "interruptible": False, "term_label": ""}
 
 
 def test_没标interruptible_默认可打断(fake_cfg):
@@ -63,6 +64,32 @@ def test_作息表整个缺失_不炸_退到兜底档且可打断(fake_cfg):
     assert out["name"] and out["state"]        # 兜底档（睡觉中 / 自由时间）
 
 
+def test_没配school_calendar_学期标签为空串_在校是常态不用讲(fake_cfg):
+    import hang_situation
+    fake_cfg(_all_day("备课", "busy_work"))
+    assert hang_situation.query("faketestbot")["term_label"] == ""
+
+
+@pytest.mark.parametrize("term,label", [
+    ("summer_break", "暑假"), ("winter_break", "寒假"),
+    ("early_return", "提前返校期"), ("in_session", ""), ("啥也不是", ""),
+])
+def test_学期标签取act_term映射中文_在校与未知一律空串(term, label):
+    import hang_situation
+    from generators.situation import Activity
+    act = Activity(name="x", description="", state="free", term=term)
+    assert hang_situation._term_label(act) == label
+
+
+def test_活动对象没有term字段_不炸_按在校处理():
+    import hang_situation
+
+    class Bare:
+        name, state = "x", "free"
+
+    assert hang_situation._term_label(Bare()) == ""
+
+
 def _run(*args):
     return subprocess.run([sys.executable, SCRIPT, *args],
                           cwd=ROOT, capture_output=True, text=True, timeout=60)
@@ -72,10 +99,11 @@ def test_命令行跑真配置_吐一行合法JSON且三个键齐全():
     r = _run("chenlulu")
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
-    assert set(out) == {"name", "state", "interruptible"}
+    assert set(out) == {"name", "state", "interruptible", "term_label"}
     assert isinstance(out["name"], str) and out["name"]
     assert isinstance(out["state"], str) and out["state"]
     assert isinstance(out["interruptible"], bool)
+    assert isinstance(out["term_label"], str)
 
 
 def test_缺bot参数_退2且不吐JSON():

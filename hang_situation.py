@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""被晾感知（hang）的活动查询桥：吐一行 JSON {"name","state","interruptible"}。
+"""被晾感知（hang）的活动查询桥：吐一行 JSON
+{"name","state","interruptible","term_label"}。
 
 只读：加载 configs/<bot>.yml 的作息表，问 generators.situation "她此刻应该在干什么"。
 不写库、不发消息、不回显配置内容（configs 里有 token 和 chat_id，出错时只报异常类名，
@@ -15,6 +16,24 @@ from datetime import datetime
 # 本文件就躺在仓根，与 configs/ generators/ school_calendar.py 同级；
 # 装到别处时用 BOTLIFE_DIR 指过去。
 REPO_DIR = os.environ.get("BOTLIFE_DIR") or os.path.dirname(os.path.abspath(__file__))
+
+
+def _term_label(act) -> str:
+    """中文学期标签。取 act.term——它就是 school_calendar.term_state 在这同一时刻
+    算出来的值（generators.situation 已经调过），再调一遍既多算一次又可能跨天不一致。
+
+    "在校"是常态不用讲，映射成空串（口径与 formatter.py 的学期状态行一致）；
+    没配 school_calendar 的 bot 判定恒为 in_session，同样得空串。
+    取不到一律空串，绝不连累主判定。
+    """
+    try:
+        from school_calendar import IN_SESSION, TERM_LABEL_ZH
+        term = getattr(act, "term", IN_SESSION)
+        return "" if term == IN_SESSION else TERM_LABEL_ZH.get(term, "")
+    except Exception as e:
+        sys.stderr.write("hang_situation: term_label lookup failed (%s)\n"
+                         % type(e).__name__)
+        return ""
 
 
 def query(bot: str) -> dict:
@@ -39,7 +58,9 @@ def query(bot: str) -> dict:
     except Exception as e:            # 私有函数哪天改名也不能连累主判定
         sys.stderr.write("hang_situation: interruptible lookup failed (%s)\n"
                          % type(e).__name__)
-    return {"name": act.name, "state": act.state, "interruptible": interruptible}
+    # term_label 是后加的字段，hang_runtime 只读前三个键 → 向后兼容
+    return {"name": act.name, "state": act.state, "interruptible": interruptible,
+            "term_label": _term_label(act)}
 
 
 def main() -> int:

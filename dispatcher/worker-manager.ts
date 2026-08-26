@@ -25,6 +25,7 @@ import { buildTimePrefix } from './time_annotate'
 import { settingsPath } from './provider_watch'
 import { createBurstCollector, readBurstCfg } from './burst_inbox'
 import { takeHangArchive } from './hang_runtime'
+import { situAnchorLine } from './situation_bridge'
 
 // ─── 配置（与 dispatcher.ts 同源的 env）────────────────────────────────
 const BOT = process.env.BOT_NAME || ''
@@ -764,13 +765,17 @@ export class WorkerManager {
     const timePrefix = buildTimePrefix(tsMs, lastInboundTs[chatIdStr] ?? null)
     rememberInboundTs(chatIdStr, tsMs)
     // 真人私聊消息前注入关系数值提示（群聊/peer/导演 inject 不注入——与旧行为一致）
+    const isHumanPrivate = !isBotSender && scene === 'private'
     let relPrefix = ''
-    if (!isBotSender && scene === 'private') {
+    if (isHumanPrivate) {
       try {
         const d = JSON.parse(readFileSync(join(CHANNEL_DIR, 'relationship.json'), 'utf8'))
         if (typeof d.prompt_snippet === 'string' && d.prompt_snippet) relPrefix = `${d.prompt_snippet}\n\n`
       } catch {}
     }
+    // 情境锚点：她此刻的学期状态 + 正在做的事。这些原先只进主动消息的提示词，被动聊天
+    // 零锚点 → 用户一句"骗鬼呢"就能把她的世界观带崩。桥挂时返回空串，这条不带锚点。
+    const situLine = isHumanPrivate ? situAnchorLine(BOT) : ''
     // 被晾档案（她上课/工作时被晾过）：下课后的第一条消息带上一段迟到反应，带完即清。
     // 位置刻意在 <channel> 开标签之前——那之前的一切都算注入，clear_summary 会连同
     // 关系块/时刻行一起剥掉，真人这条消息不会因为夹带 [hang-check] 而被整条丢出摘要。
@@ -782,8 +787,9 @@ export class WorkerManager {
       .filter(([, v]) => v != null && v !== '')
       .map(([k, v]) => `${k}="${String(v).replace(/"/g, '&quot;')}"`)
       .join(' ')
+    // 场景标注必须紧贴 <channel>，注入的几行一律排在它前面（摘要按开标签一刀切）
     const content =
-      `${relPrefix}${timePrefix}${late ? `${late}\n` : ''}${sceneTag}<channel ${metaAttrs}>\n${body}\n</channel>`
+      `${relPrefix}${timePrefix}${situLine}${late ? `${late}\n` : ''}${sceneTag}<channel ${metaAttrs}>\n${body}\n</channel>`
     return { content, meta: notifMeta }
   }
 }
