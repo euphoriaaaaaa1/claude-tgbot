@@ -384,7 +384,8 @@ export class WorkerManager {
     mkdirSync(join(CHANNEL_DIR, 'inbox'), { recursive: true })
     mkdirSync(BURST_DIR, { recursive: true })
     // 崩在"合并件已落盘、还没入队"那一瞬 → 合并件留在 .burst，启动时收一次，绝不丢。
-    // （.burst 不进 inboxDirs：让 drainInbox 去扫它，合并件会被再收进一个新波次。）
+    // 只在这里收：.burst 刻意不进 inboxDirs，否则 drainInbox 每轮都会把合并件再收进
+    // 一个新波次，白白多押 5 秒。
     try {
       for (const f of readdirSync(BURST_DIR).sort()) {
         if (f.endsWith('.json')) this.queue.push({ kind: 'file', path: join(BURST_DIR, f) })

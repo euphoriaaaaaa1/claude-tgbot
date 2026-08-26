@@ -105,6 +105,7 @@ type Access = {
   splitOnParagraph?: boolean
   paragraphDelay?: number
   voiceId?: string
+  hangEnabled?: boolean       // 被晾感知总开关，缺省开；false = 她永远不会主动追问
 }
 function loadAccess(): Access {
   try {
@@ -122,6 +123,7 @@ function loadAccess(): Access {
       splitOnParagraph: p.splitOnParagraph,
       paragraphDelay: p.paragraphDelay,
       voiceId: p.voiceId,
+      hangEnabled: p.hangEnabled,
     }
   } catch {
     return { dmPolicy: 'disabled', allowFrom: [], groups: {}, pending: {} }
@@ -378,6 +380,8 @@ function writeInbox(chatId: string, messageId: number | string, meta: any): void
 // 她此刻在做什么（作息表 interruptible）。判定全在 hang_plan.ts / hang_runtime.ts，
 // 这里只接三根线：出站成功、入站、60s 定时器，外加那根查作息的 python 桥。
 const HANG_TICK_MS = 60_000
+// access.json 的 hangEnabled: false → 整套关掉（不武装 → 没有事件 → tick 也没得跑）
+const HANG_ON = loadAccess().hangEnabled !== false
 
 const hang = createHangRuntime({
   channelDir: CHANNEL_DIR,
@@ -408,7 +412,7 @@ const hangGuard = (what: string, fn: () => void): void => {
       `dispatcher[${BOT_NAME}]: hang_${what}_failed reason=${e instanceof Error ? e.name : 'unknown'}\n`)
   }
 }
-setInterval(() => hangGuard('tick', hang.tick), HANG_TICK_MS)
+if (HANG_ON) setInterval(() => hangGuard('tick', hang.tick), HANG_TICK_MS)
 
 // ─── group transcript (post-gate) ─────────────────────────────────────
 function writeGroupTranscript(ctx: Context, text: string, imagePath?: string, attachment?: { kind: string; file_id: string }): void {
@@ -1152,7 +1156,7 @@ const server = Bun.serve({
           }
         }
         // 被晾感知：只有私聊、且真发出去了才武装（群聊不算被晾；一条没发成就没有"等回音"）
-        if (sentIds.length > 0 && !String(chatId).startsWith('-')) {
+        if (HANG_ON && sentIds.length > 0 && !String(chatId).startsWith('-')) {
           hangGuard('arm', () => hang.onOutbound(String(chatId)))
         }
         return Response.json({ ok: true, message_ids: sentIds })
