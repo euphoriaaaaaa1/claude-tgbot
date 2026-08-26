@@ -23,6 +23,7 @@ import { join, delimiter } from 'path'
 import { homedir, tmpdir, platform } from 'os'
 import { buildTimePrefix } from './time_annotate'
 import { settingsPath } from './provider_watch'
+import { createBurstCollector, readBurstCfg } from './burst_inbox'
 
 // ─── 配置（与 dispatcher.ts 同源的 env）────────────────────────────────
 const BOT = process.env.BOT_NAME || ''
@@ -331,6 +332,14 @@ function writeMcpConfig(): string {
   return p
 }
 
+// ─── 凑一波再递（进线防抖合并）────────────────────────────────────────
+// 用户连发 N 条时，第一条一进 stdin 就开了回合 → claude 只看到第一条，其余挤进下一轮。
+// 改成：空闲时首条先不入队，开 burstWindowMs 窗口收同 chat 的后续消息，静默满窗（或自
+// 首条起满 burstMaxMs）再合并成一条入队。媒体 / 内部合成消息 / 群里换人都不并（截波单投）。
+// burstWindowMs=0 → collector.enabled=false，入队路径回归现状。
+const BURST_DIR = join(CHANNEL_DIR, '.burst')
+const BURST_TICK_MS = 500
+
 // ─── 队列条目 ──────────────────────────────────────────────────────────
 type QueueItem =
   | { kind: 'file'; path: string }
@@ -360,14 +369,29 @@ export class WorkerManager {
   private stdoutBuf = ''
   private watchers: FSWatcher[] = []
   private resultTimer: ReturnType<typeof setTimeout> | null = null
+  private burst = createBurstCollector({
+    ...readBurstCfg(CHANNEL_DIR),
+    destDir: BURST_DIR,
+    deliver: p => this.enqueueFile(p),
+    log: logSpawn,
+  })
   readonly sessionUuid: string
 
   constructor() {
     this.sessionUuid = unifiedSessionUuid(BOT)
     mkdirSync(join(CHANNEL_DIR, 'inbox'), { recursive: true })
+    mkdirSync(BURST_DIR, { recursive: true })
+    // 崩在"合并件已落盘、还没入队"那一瞬 → 合并件留在 .burst，启动时收一次，绝不丢。
+    // （.burst 不进 inboxDirs：让 drainInbox 去扫它，合并件会被再收进一个新波次。）
+    try {
+      for (const f of readdirSync(BURST_DIR).sort()) {
+        if (f.endsWith('.json')) this.queue.push({ kind: 'file', path: join(BURST_DIR, f) })
+      }
+    } catch {}
     this.watchInboxes()
     setInterval(() => this.drainInbox(), 5_000)  // Windows fs.watch 语义差异保险
     setInterval(() => this.checkStuck(), 30_000)
+    if (this.burst.enabled) setInterval(() => this.burst.tick(), BURST_TICK_MS)
   }
 
   // ── 对外接口 ─────────────────────────────────────────────────────
@@ -616,16 +640,32 @@ export class WorkerManager {
     }
   }
 
+  /** 攒波的前提 = 此刻入队就会立刻开回合（没有在飞轮次、也没有积压）。
+   *  有积压时照旧排队——pump 本来就会把队里同 chat 的连发并成一条，行为不变。 */
+  private burstIdle(): boolean {
+    return !this.inFlight && this.queue.length === 0
+  }
+
+  /** 入队一个 inbox 原件/合并件（波次层 flush 的落点；tick 触发的 flush 不经过 drainInbox，
+   *  所以这里自己推一次 pump）。已在队里/正在飞的直接跳过，绝不重复投。 */
+  private enqueueFile(path: string): void {
+    if (this.queue.some(q => q.kind === 'file' && q.path === path)) return
+    if (this.inFlight?.kind === 'file' && this.inFlight.path === path) return
+    this.queue.push({ kind: 'file', path })
+    void this.ensure().then(() => this.pump())
+  }
+
   private drainInbox(): void {
     for (const dir of this.inboxDirs()) {
       try {
         for (const f of readdirSync(dir).sort()) {
           if (!f.endsWith('.json')) continue
           const p = join(dir, f)
-          if (!this.queue.some(q => q.kind === 'file' && q.path === p)
-              && !(this.inFlight?.kind === 'file' && this.inFlight.path === p)) {
-            this.queue.push({ kind: 'file', path: p })
-          }
+          // 已在攒波时也要走波次层：arrive() 认得出重复路径（fs.watch + 5s 兜底扫会重复报），
+          // 走原路就会把还在波里的原件又入一次队 → 同一句话投两遍。
+          if (this.burst.enabled && (this.burst.waves() > 0 || this.burstIdle())
+              && this.burst.arrive(p)) continue
+          this.enqueueFile(p)
         }
       } catch {}
     }

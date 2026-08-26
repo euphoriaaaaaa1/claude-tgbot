@@ -1,9 +1,14 @@
-// 白盒测试 · WorkerManager.onExit —— 陈旧退出守卫 + 在飞消息回插。
+// 白盒测试 · WorkerManager —— onExit（陈旧退出守卫 + 在飞消息回插）与 inbox→队列的波次层。
 // 全程假 proc、临时 CHANNEL_DIR，不起真 claude、不碰真实 ~/.claude。
+//
+// ⚠️ WorkerManager 的白盒测试请一律加在本文件里，别另起一个 *.test.ts：bun test 全仓共用
+// 一份模块缓存，worker-manager 的模块级 CHANNEL_DIR 由**第一个** import 它的测试文件定死，
+// 第二个文件再设 env 也没用（会拿到别人的临时目录，按文件名顺序随机翻车）。
 import { test, expect, afterEach } from 'bun:test'
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { createBurstCollector } from './burst_inbox'
 
 // 模块级 CHANNEL_DIR 在 import 时就定死，必须先设 env 再动态 import
 const TMP = mkdtempSync(join(tmpdir(), 'worker-exit-test-'))
@@ -135,4 +140,72 @@ test('没有在飞消息_队列不动', () => {
   const m = mkManager({ proc: p, phase: 'ready', queue: [{ kind: 'file', path: '/tmp/y.json' }] })
   m.onExit(1, p)
   expect(m.queue.length).toBe(1)
+})
+
+// ─── inbox → 队列的波次层接线（凑一波再递）──────────────────────────────
+// 纯逻辑与落盘由 burst.test.ts / burst_collect.test.ts 覆盖，这里只验两件接线的事：
+// 空闲时首条不入队、以及 5s 兜底扫重复看见同一个原件时不会把它再入一次队。
+function mkBurstManager(windowMs = 5000) {
+  const inbox = join(TMP, 'inbox')
+  const dest = join(TMP, '.burst')
+  mkdirSync(inbox, { recursive: true })
+  let clock = 1_000_000
+  let seq = 0
+  const m = mkManager({ phase: 'ready' })
+  delete m.drainInbox          // mkManager 把它桩掉了，这几条测的就是它
+  m.ensure = async () => {}
+  m.pump = () => {}
+  m.burst = createBurstCollector({
+    windowMs, maxMs: 12_000, destDir: dest, now: () => clock,
+    deliver: (p: string) => m.enqueueFile(p),
+  })
+  return {
+    m,
+    at: (ms: number) => { clock = ms },
+    tick: () => m.burst.tick(),
+    add: (text: string, extra: Record<string, unknown> = {}) => {
+      const p = join(inbox, `FAKECHAT-1_${++seq}.json`)
+      writeFileSync(p, JSON.stringify({
+        chat_id: 'FAKECHAT-1', message_id: seq, from_id: 'U1', scene: 'private',
+        chat_type: 'private', ts: `2026-08-25T0${seq}:00:00.000Z`, text, ...extra,
+      }))
+      return p
+    },
+  }
+}
+
+test('空闲时连发三条_先攒波不入队_满窗后只入队一个合并件', () => {
+  const r = mkBurstManager()
+  r.at(1000); r.add('A1'); r.add('B2'); r.add('C3')
+  r.m.drainInbox()
+  expect(r.m.queue).toEqual([])            // 三条都在波里，一条都没进队
+  r.at(6100); r.tick()
+  expect(r.m.queue.length).toBe(1)
+  const merged = JSON.parse(readFileSync(r.m.queue[0].path, 'utf8'))
+  expect([merged.text, merged.chat_id, merged.message_id]).toEqual(['A1\nB2\nC3', 'FAKECHAT-1', 1])
+})
+
+test('攒波期间被兜底扫重复看见_同一原件不会重复入队', () => {
+  const r = mkBurstManager()
+  r.at(1000); r.add('A1'); r.add('B2')
+  r.m.drainInbox(); r.m.drainInbox(); r.m.drainInbox()   // 5s 定时扫 + fs.watch 重复触发
+  expect(r.m.queue).toEqual([])
+  r.at(6100); r.tick()
+  expect(r.m.queue.length).toBe(1)
+  expect(JSON.parse(readFileSync(r.m.queue[0].path, 'utf8')).text).toBe('A1\nB2')
+})
+
+test('队列有积压时不攒波_照旧直接入队', () => {
+  const r = mkBurstManager()
+  r.m.queue.push({ kind: 'raw', content: '/compact', label: 'slash /compact' })
+  r.at(1000); const a = r.add('A1')
+  r.m.drainInbox()
+  expect(r.m.queue.map((q: any) => q.path ?? q.label)).toEqual(['slash /compact', a])
+})
+
+test('burstWindowMs=0_关闭防抖_原件逐条直接入队', () => {
+  const r = mkBurstManager(0)
+  r.at(1000); const a = r.add('A1'); const b = r.add('B2')
+  r.m.drainInbox()
+  expect(r.m.queue.map((q: any) => q.path)).toEqual([a, b])
 })
