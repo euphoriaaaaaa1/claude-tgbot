@@ -24,6 +24,7 @@ import { homedir, tmpdir, platform } from 'os'
 import { buildTimePrefix } from './time_annotate'
 import { settingsPath } from './provider_watch'
 import { createBurstCollector, readBurstCfg } from './burst_inbox'
+import { takeHangArchive } from './hang_runtime'
 
 // ─── 配置（与 dispatcher.ts 同源的 env）────────────────────────────────
 const BOT = process.env.BOT_NAME || ''
@@ -770,13 +771,19 @@ export class WorkerManager {
         if (typeof d.prompt_snippet === 'string' && d.prompt_snippet) relPrefix = `${d.prompt_snippet}\n\n`
       } catch {}
     }
+    // 被晾档案（她上课/工作时被晾过）：下课后的第一条消息带上一段迟到反应，带完即清。
+    // 位置刻意在 <channel> 开标签之前——那之前的一切都算注入，clear_summary 会连同
+    // 关系块/时刻行一起剥掉，真人这条消息不会因为夹带 [hang-check] 而被整条丢出摘要。
+    // ponytail: 取不到一律空串，绝不阻断投递；worker 恰好死在这一刻时最多少带一次口吻。
+    const late = takeHangArchive(CHANNEL_DIR, chatIdStr)
     // meta 以 <channel> 标签形态附在正文后（替代 channel notification 的 params.meta，
     // 让 model 依旧能读到 chat_id/message_id/附件等字段）
     const metaAttrs = Object.entries(notifMeta)
       .filter(([, v]) => v != null && v !== '')
       .map(([k, v]) => `${k}="${String(v).replace(/"/g, '&quot;')}"`)
       .join(' ')
-    const content = `${relPrefix}${timePrefix}${sceneTag}<channel ${metaAttrs}>\n${body}\n</channel>`
+    const content =
+      `${relPrefix}${timePrefix}${late ? `${late}\n` : ''}${sceneTag}<channel ${metaAttrs}>\n${body}\n</channel>`
     return { content, meta: notifMeta }
   }
 }

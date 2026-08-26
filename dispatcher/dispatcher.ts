@@ -25,6 +25,8 @@ import { startProviderWatch } from './provider_watch'
 import {
   extractRecentTurns, summarizeTurns, renderMemoryNote, upsertMemoryIndex, AUTH_FAILED,
 } from './clear_summary'
+import { createHangRuntime } from './hang_runtime'
+import { probeSituation } from './situation_bridge'
 
 // ─── env ──────────────────────────────────────────────────────────────
 const CHANNEL_DIR = process.env.CHANNEL_DIR || ''
@@ -370,6 +372,43 @@ function writeInbox(chatId: string, messageId: number | string, meta: any): void
   writeFileSync(tmp, JSON.stringify(meta, null, 2))
   renameSync(tmp, fin)
 }
+
+// ─── 被晾感知（有生活的追问）──────────────────────────────────────────
+// 私聊回完话、她一直没回音时，按 7±2 / 25±5 / 90±15 三档决定追不追；追不追取决于
+// 她此刻在做什么（作息表 interruptible）。判定全在 hang_plan.ts / hang_runtime.ts，
+// 这里只接三根线：出站成功、入站、60s 定时器，外加那根查作息的 python 桥。
+const HANG_TICK_MS = 60_000
+
+const hang = createHangRuntime({
+  channelDir: CHANNEL_DIR,
+  probe: () => probeSituation(BOT_NAME),
+  // 内部合成消息：schema 与 scripts/self_initiate.py 那条对齐（worker-manager 的
+  // readInboxMeta 按这些字段组装）。'[' 开头 → 波次层不合并它。
+  inject: (chatId, text) => {
+    const ms = Date.now()
+    writeInbox(chatId, `hang${ms}`, {
+      text,
+      chat_id: chatId,
+      scene: 'private',
+      from_id: chatId,
+      from_username: 'user',
+      sender_username: 'user',
+      chat_type: 'private',
+      is_bot_sender: false,
+      ts: new Date(ms).toISOString(),
+      message_id: String(ms),
+    })
+  },
+  log: line => process.stderr.write(`dispatcher[${BOT_NAME}]: ${line}\n`),
+})
+// 包一层 try：被晾感知是锦上添花的功能，出任何岔子都不能把 dispatcher 拖崩
+const hangGuard = (what: string, fn: () => void): void => {
+  try { fn() } catch (e) {
+    process.stderr.write(
+      `dispatcher[${BOT_NAME}]: hang_${what}_failed reason=${e instanceof Error ? e.name : 'unknown'}\n`)
+  }
+}
+setInterval(() => hangGuard('tick', hang.tick), HANG_TICK_MS)
 
 // ─── group transcript (post-gate) ─────────────────────────────────────
 function writeGroupTranscript(ctx: Context, text: string, imagePath?: string, attachment?: { kind: string; file_id: string }): void {
@@ -798,6 +837,8 @@ async function handleInbound(
   // 仅当真人私聊（非 bot sender、非 synthetic peer 注入）时才更新。否则 since 会
   // 被 peer-inbound / synthetic 重置为 0，self-initiate 永远进入"非静默期"被拦下。
   if (!meta.is_bot_sender && !options?.synthetic && (meta.chat_type === 'private' || ctx.chat?.type === 'private')) {
+    // 她回话了 → 取消这条 chat 上的被晾事件（也记下最后入站时刻，供出站时判"这是回她的话"）
+    hangGuard('cancel', () => hang.onInbound(chatId))
     try {
       const stateDir = join(homedir(), '.claude', 'dispatcher', '.self-initiate-state')
       mkdirSync(stateDir, { recursive: true })
@@ -1109,6 +1150,10 @@ const server = Bun.serve({
             }).catch(e => process.stderr.write(
               `dispatcher[${BOT_NAME}]: peer inject ${peer.name} failed: ${e}\n`))
           }
+        }
+        // 被晾感知：只有私聊、且真发出去了才武装（群聊不算被晾；一条没发成就没有"等回音"）
+        if (sentIds.length > 0 && !String(chatId).startsWith('-')) {
+          hangGuard('arm', () => hang.onOutbound(String(chatId)))
         }
         return Response.json({ ok: true, message_ids: sentIds })
       }
