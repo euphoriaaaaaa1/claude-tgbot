@@ -27,7 +27,7 @@ const DATA_CLOSE = '<<<END_EXTERNAL_DATA>>>'
 const INTERNAL_MARKERS = [
   '[self-initiate]', '[director]', '[group-dm-nudge]', '[peer-inbound]',
   '[moment-', '[voice-image]', '[voice-recap]', '[wildcard-daily]',
-  '[memory-compactor]', '[系统自检]',
+  '[memory-compactor]', '[系统自检]', '[hang-check]',
   'Continue from where you left off.', '[Request interrupted by user]',
   'No response requested.', 'This session is being continued',
   '<command-name>', '<command-message>', '<command-args>', '<local-command-',

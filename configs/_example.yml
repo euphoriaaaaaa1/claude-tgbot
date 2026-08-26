@@ -55,6 +55,12 @@ sleep_hours: ["00:00-07:30"]
 
 # ─── L3a 常驻活动（必然发生的固定生活节奏）───
 # state 字段必须是: free | busy_class | busy_work | busy_other
+#
+# interruptible（可选，默认 true）：这一档「被晾感知」允不允许她开口追问。
+# 你回完话之后一直没回音时，她会按 7 / 25 / 90 分钟三档决定要不要追一句；
+# 标 false 的时段（上课、开会、上班）她一句都不发，只把"被晾了多久"记进档案，
+# 等这段忙完，你下一条消息她会带着迟到反应回你（"刚下课才看到"）。
+# 睡觉时段不用标：睡着一律顺延，不追也不记账。
 recurring_activities:
   weekday:
     - name: 起床洗漱
@@ -65,6 +71,7 @@ recurring_activities:
       when: "09:00-12:00"
       state: busy_work
       description: "在公司，对着电脑"
+      interruptible: false        # 上班时不主动追问，只记档案
     - name: 午休
       when: "12:00-13:30"
       state: free
@@ -73,6 +80,7 @@ recurring_activities:
       when: "13:30-19:00"
       state: busy_work
       description: "下午继续"
+      interruptible: false
     - name: 自由时间
       when: "19:00-23:00"
       state: free
