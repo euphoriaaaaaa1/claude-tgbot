@@ -205,6 +205,21 @@ def _state_alive(state, provider=None):
     return provider is None or got[0] == provider
 
 
+def _consume_state(state, provider):
+    """§4.3 的"校验 + 用过即焚"，**必须是一步**：分两步做的话，一串 state 的并发重放
+    能在删除落地之前同时穿过检查，全都被转发给 cliproxy —— ㊱ 要防的就是这个放大器。
+
+    ``dict.pop`` 在 GIL 下是原子的，所以"摘牌"这一下天然只有一个请求拿得到。
+    返回摘下来的记录，供转发失败时挂回去（§4.3：只有 200 才作废）。
+    失配 / 超窗 / 已被消费三种情况同码同文案 —— 用户的动作都是重走一次 start。
+    """
+    got = _OAUTH_SESSIONS.pop(state, None)
+    if (got is None or got[0] != provider
+            or time.monotonic() - got[1] > OAUTH_WAIT_SECONDS):
+        raise HubError(409, "oauth_state_expired", _STATE_EXPIRED_TEXT)
+    return got
+
+
 def _mask_email(email):
     """§4.1：本地部分只留首字符（与 key_masked 同思路）。"""
     local, at, domain = (email if isinstance(email, str) else "").partition("@")
@@ -327,20 +342,18 @@ def oauth_submit():
             raise HubError(400, "bad_body", "code 形式必须同时带 state")
     else:
         raise HubError(400, "bad_body", "请给 redirect_url，或 code + state")
-    # state 只在**给了**的时候校验：各家回调不一定带 state，没带的那层由 cliproxy 自己兜；
-    # 给了却对不上本进程发出去的会话（或超了 5 分钟）→ §4.3 的专码 409：
-    # URL 通常完全正确，只是会话作废了，正确动作是重走 start 而不是改输入（400 会指错路）。
-    if state and not _state_alive(state, provider):
-        raise HubError(409, "oauth_state_expired", _STATE_EXPIRED_TEXT)
-    client = cliproxy_client.from_env()
-    payload = {"provider": provider, "code": code, "state": state}
-    if redirect_url:            # 两种字段都送：真机认哪个由 cliproxy 定，桩两种都认
-        payload["redirect_url"] = redirect_url
-    client.mgmt_post("oauth-callback", payload)
-    # §4.3 成功消费即作废：授权码本就是一次性凭据。不删就是同一串可无限重放、
-    # 每次都真转发给 cliproxy —— 等于给公网可达的门户装了个免费放大器。
-    # **只在 200 之后删**：上面任何一步抛错时 state 保留，用户可修正后重试。
-    _OAUTH_SESSIONS.pop(state, None)
+    # state 只在**给了**的时候校验：各家回调不一定带 state，没带的那层由 cliproxy 自己兜。
+    ticket = _consume_state(state, provider) if state else None
+    try:
+        client = cliproxy_client.from_env()
+        payload = {"provider": provider, "code": code, "state": state}
+        if redirect_url:        # 两种字段都送：真机认哪个由 cliproxy 定，桩两种都认
+            payload["redirect_url"] = redirect_url
+        client.mgmt_post("oauth-callback", payload)
+    except HubError:
+        if ticket is not None:  # §4.3：只有 200 才作废，失败时挂回去让用户能重试
+            _OAUTH_SESSIONS[state] = ticket
+        raise
     return jsonify({"ok": True})               # §4.3：只表示已提交，不代表已落盘
 
 
