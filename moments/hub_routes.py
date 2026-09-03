@@ -33,6 +33,25 @@ def _todo():
     return jsonify({"error": "not_implemented"}), 501
 
 
+def _require_json_object(body):
+    """§0.1 通则（BUG-18 → §12.7 ㊳）：请求体不是 dict 一律 ``400 bad_body``。
+
+    **三段共用** —— provider 段 / oauth 段 / bots 段的每个收请求体的端点都调这一个。
+    放在模块公共区、名字不带段前缀，是因为它**本来就该只有一份**；
+    段内辅助才必须带段前缀（第 2/3 段各写一个同名 ``_compensate`` 互顶过，
+    把 provider activate 顶成了 404）。要加新的段内辅助请回各自段里加。
+
+    入参是 ``request.get_json(silent=True)`` 的结果：``None``（空体 / Content-Type 不是
+    json / 非法 JSON）与**合法 JSON 但顶层是数组 / 字符串 / 数字 / null / 布尔**在这里一视同仁
+    —— 不拦的话下一步 ``body.get()`` 就是 ``AttributeError`` → 500，
+    把用户的输入错误报成服务器故障。
+    空体想报更准的码（如 §4.2 的 ``bad_provider``）由调用方在传进来之前自己兜。
+    """
+    if not isinstance(body, dict):
+        raise provider_model.HubError(400, "bad_body", "请求体必须是一个 JSON 对象")
+    return body
+
+
 # ======================================================================
 # 第 1 段 · 页面路由（M1，已完成）
 #
@@ -138,9 +157,15 @@ def hold_activate_lock(app=None):
 
 
 def _validated(body, base=None):
-    """§3.3 校验（PATCH 传 base = 原条目字段，请求体是子集）。逃生门默认关。"""
+    """§3.3 校验（PATCH 传 base = 原条目字段，请求体是子集）。逃生门默认关。
+
+    §0.1 通则在这里过一道：本段两个收请求体的端点（POST / PATCH provider）都经由它，
+    非 dict 的体到不了下面的逐字段校验。纯函数层自己也有同一道守卫（它是公开函数，
+    谁都能直接调），这里这道是**路由层的契约点**，不是重复。
+    """
     return provider_model.validate_provider_payload(
-        body, allow_private=os.environ.get("HUB_ALLOW_PRIVATE_BASE_URL") == "1", base=base)
+        _require_json_object(body),
+        allow_private=os.environ.get("HUB_ALLOW_PRIVATE_BASE_URL") == "1", base=base)
 
 
 def _settings_now():
@@ -503,19 +528,14 @@ def _json_errors(fn):
 
 
 def _json_body():
-    """§0.1 通则：请求体不是 JSON 对象一律 ``400 bad_body``（BUG-18）。
+    """本段取请求体：§0.1 通则走模块公共区的 ``_require_json_object``（三段共用）。
 
-    ``get_json(silent=True)`` 对**合法但顶层是数组/字符串/数字/布尔**的体会原样返回，
-    再 ``body.get()`` 就是 AttributeError → 500，把用户的输入错误说成门户坏了。
-    空体 / Content-Type 不对回 ``None`` → 按"体缺失"当空对象，
+    只在"空体"这一处与它不同：Content-Type 不对 / 空体回 ``None`` → 按"体缺失"当空对象，
     交给各端点自己的必填校验去报更准的码（如 ``bad_provider``）。
+    合法但顶层是数组 / 字符串 / 数字 / 布尔的体照样 ``400 bad_body``。
     """
     body = request.get_json(silent=True)
-    if body is None:
-        return {}
-    if not isinstance(body, dict):
-        raise HubError(400, "bad_body", "请求体必须是一个 JSON 对象")
-    return body
+    return {} if body is None else _require_json_object(body)
 
 
 def _provider_or_400(raw):

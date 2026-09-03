@@ -687,3 +687,54 @@ def test_reconcile修I2_haiku也收敛成一条且是同一条目(env, stub, cap
     assert len(live) == 1 and live[0]["models"][0]["alias"] == ALIAS
     out = capfd.readouterr()[1]
     assert "alias=%s" % ALIAS in out and "haiku=%s" % HAIKU in out and "fixed=true" in out
+
+
+# ---------------- §0.1 通则排查：第 2 段每个收请求体的端点（BUG-18 / §12.7 ㊳） ----------------
+#
+# 排查结论（本段 6 个写端点，只有两个真读请求体）：
+#   POST   /hub/api/provider              读体 → 必须 400 bad_body
+#   PATCH  /hub/api/provider/<pid>        读体 → 必须 400 bad_body
+#   DELETE /hub/api/provider/<pid>        不读体
+#   POST   /hub/api/provider/<pid>/activate   不读体
+#   POST   /hub/api/provider/<pid>/test       不读体
+#   POST   /hub/api/claude-native/activate    不读体
+# 不读体的四个照契约走自己的码，**关键是不许因为顶层数组冒成 500**（§0.1 的病根就是
+# body.get() 抛 AttributeError）。下面两组分别盯这两件事。
+
+NON_DICT_BODIES = [[], [1, 2, 3], ["label"], "s", 123, 1.5, True, None]
+
+
+@pytest.mark.parametrize("raw", NON_DICT_BODIES)
+def test_POST_provider_顶层非对象一律400_bad_body(c, raw):
+    r = c.post("/hub/api/provider", json=raw)
+    assert (r.status_code, r.get_json()["error"]) == (400, "bad_body"), raw
+
+
+@pytest.mark.parametrize("raw", NON_DICT_BODIES)
+def test_PATCH_provider_顶层非对象一律400_bad_body(c, raw):
+    """条目必须真实存在：否则 404 会先命中，测不到体校验这一步。"""
+    code, created = create(c)
+    assert code == 201, created
+    r = c.patch("/hub/api/provider/%s" % created["id"], json=raw)
+    assert (r.status_code, r.get_json()["error"]) == (400, "bad_body"), raw
+
+
+@pytest.mark.parametrize("path,method", [
+    ("/hub/api/provider/%s", "delete"),
+    ("/hub/api/provider/%s/activate", "post"),
+    ("/hub/api/provider/%s/test", "post"),
+])
+def test_不读体的端点收到顶层数组不得冒成500(c, stub, path, method):
+    """§0.1 只管"收请求体的端点"。这三个不读体，顶层数组该被无视 ——
+    但绝不许走到 body.get() 抛 AttributeError → 500（那正是 BUG-18 的病根）。"""
+    code, created = create(c)
+    assert code == 201, created
+    r = getattr(c, method)(path % created["id"], json=[1, 2, 3])
+    assert r.status_code < 500, r.get_json()
+    assert r.status_code != 400 or r.get_json().get("error") != "bad_body"
+
+
+def test_claude_native_activate收到顶层数组照常成功(c):
+    """§5 端点不读请求体（形态是四键全删，没有入参）。"""
+    r = c.post("/hub/api/claude-native/activate", json=[1, 2, 3])
+    assert (r.status_code, r.get_json()) == (200, {"ok": True, "active_kind": "claude_native"})

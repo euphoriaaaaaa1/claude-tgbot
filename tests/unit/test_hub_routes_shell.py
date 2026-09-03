@@ -136,3 +136,37 @@ def test_回调端口表只此一份():
     assert hub_routes.OAUTH_CALLBACK_PORTS == {"codex": 1455, "antigravity": 51121}
     src = (TEMPLATES / "hub_provider.html").read_text(encoding="utf-8")
     assert "1455" not in src, "页面模板里又硬编码了一遍回调端口"
+
+
+def test_四段之间没有重名的顶层函数():
+    """四段并行开发合到一个文件里，后定义的同名函数会**静默**顶掉前一个。
+
+    真出过事：第 2 段与第 3 段各写了一个 `_compensate` / `_activate_lock`，
+    合并后 provider activate 变 404，四段路由都没报错。
+    规矩：段内辅助带段前缀（`_oauth_*`），共用的放模块公共区且只此一份。
+    """
+    import ast
+    import collections
+
+    from moments import hub_routes
+
+    src = Path(hub_routes.__file__).read_text(encoding="utf-8")
+    names = [n.name for n in ast.parse(src).body
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    dup = [n for n, k in collections.Counter(names).items() if k > 1]
+    assert dup == [], "hub_routes 顶层函数重名（后者顶掉前者）：%s" % dup
+
+
+def test_请求体通则辅助三段共用而不是各段一份():
+    """§0.1 是三段通用的通则，各段再造一个就是上一条要防的事故形状。
+
+    直接验"用的是同一个"：第 2 段的 `_validated` 与第 3 段的 `_json_body`
+    源码里都得引它，不能自己再写一遍 isinstance 判断。
+    """
+    import inspect
+
+    from moments import hub_routes
+
+    assert callable(hub_routes._require_json_object)
+    for fn in (hub_routes._validated, hub_routes._json_body):
+        assert "_require_json_object" in inspect.getsource(fn), fn.__name__
