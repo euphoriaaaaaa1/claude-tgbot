@@ -193,8 +193,15 @@ def provider_list():
         settings = None                         # 读不出/坏了：恒 200，故障走 warnings
     active, warn = provider_model.resolve_active(settings, cfg["port"], providers)
     warnings.extend(warn)
+    hit = None
     for p in providers:
         p["active"] = active["id"] is not None and p["id"] == active["id"]
+        hit = p if p["active"] else hit
+    # 第六个 warning（§3.2）：与 active.kind **正交** —— active 条目的 haiku alias 下
+    # 不带 prefix 的条目数 ≠ 1（0 个 = 后台摘要必 502；≥2 个 = 在多家之间轮询，
+    # 用户只看到"摘要偶尔串味"）。可与 alias_disabled 同时出现，warnings 是数组。
+    if hit and hit["haiku_alias"] and len(_unprefixed(providers, hit["haiku_alias"])) != 1:
+        warnings.append("haiku_conflict")
     return jsonify({"cliproxy": info, "active": active,
                     "providers": providers, "warnings": warnings})
 
@@ -276,6 +283,21 @@ def _both_aliases(view):
         if a and a not in out:
             out.append(a)
     return out
+
+
+def _unprefixed(views, alias):
+    """注册了该 alias 且**当前不带 prefix** 的条目 —— 就是运行时会接裸模型名的那些。
+
+    读侧 `disabled` = `prefix 非空 or 用户手写 disabled: true` 的或（§3.0d）：
+    手改停用的条目同样不接请求，一起排除掉才不说谎。
+    """
+    return [p for p in views if not p["disabled"] and alias in _both_aliases(p)]
+
+
+def _sole(views, alias, target_id):
+    """该 alias 下不带 prefix 的恰好是 target 一条（§3.6 reconcile 的 I1/I2）。"""
+    live = _unprefixed(views, alias)
+    return len(live) == 1 and live[0]["id"] == target_id
 
 
 def _compensate(client, records):
@@ -378,19 +400,22 @@ def claude_native_activate():
 
 
 def _reconcile():
-    """启动自愈（[RA] F4，全方案唯一收住漂移的东西）：读 settings 的 ANTHROPIC_MODEL，
-    该 alias 下 enabled 条目数 ≠ 1 就按 §3.2 的 active 判定收敛成 1 个。
+    """启动自愈（[RA] F4，全方案唯一收住漂移的东西）。维护的是**两条**不变量：
 
-    只动 cliproxy，**不写 settings** —— 用户的意图（要用哪个 alias）以 settings 为准，
-    我们只把运行时对齐到它。cliproxy 不可达/没配/settings 坏了一律跳过：
-    启动路径上任何一步都不许把门户拦死（§2 铁律）。
+      I1 主 alias（settings 的 ANTHROPIC_MODEL）下恰有一个条目不带 prefix，且是 active 条目
+      I2 该条目的 haiku alias 同样恰有一个不带 prefix，**且必须是同一条**
+
+    只修 I1 会留一个永远自愈不了的态：两个 provider 主 alias 各自唯一、共用默认 haiku 名，
+    补偿失败后两条都不带 prefix —— 主模型走对后端，**后台摘要在两家之间轮询**，
+    用户只看到"摘要偶尔风格不对"（BUG-20）。
+
+    自愈只写 prefix（§3.0d 禁写 cliproxy 的 disabled 键），只动 cliproxy、**不写 settings**
+    —— 用哪个 alias 是用户的意图，以 settings 为准，我们只把运行时对齐到它。
+    cliproxy 不可达/没配/settings 坏了一律跳过：启动路径不许把门户拦死（§2 铁律）。
     """
-    def log(state, alias=""):
+    def log(*fields):
         # alias 来自 settings.json（用户数据），过一遍兜底脱敏再落日志
-        line = "hub_reconcile %s" % state
-        if alias:
-            line += " alias=%s" % redact.scrub_text(alias)
-        print(line, file=sys.stderr)
+        print("hub_reconcile " + " ".join(redact.scrub_text(f) for f in fields), file=sys.stderr)
 
     try:
         if not cliproxy_client.load_config()["configured"]:
@@ -402,18 +427,21 @@ def _reconcile():
         if not isinstance(alias, str) or not alias:
             return log("skipped")
         views = client.providers()
-        # 注册了该 alias（主或 haiku）且还 enabled 的条目数 —— 恰好 1 个才是健康态
-        if len([p for p in views if not p["disabled"] and alias in _both_aliases(p)]) == 1:
-            return
-        # 收敛目标 = §3.2 的 active 判定：只看主 alias，优先取还 enabled 的那条
+        # 收敛目标 = §3.2 的 active 判定：只看主 alias，优先取还不带 prefix 的那条
         cands = [p for p in views if p["model_alias"] == alias]
         target = next((p for p in cands if not p["disabled"]), None) or (cands or [None])[0]
-        if target is None:                # alias 在 cliproxy 里根本不存在 = active_unknown，
-            return log("fixed=false", alias)   # 列表端点会提示"点一次切换即可修复"
+        if target is None:                 # alias 在 cliproxy 里根本不存在 = active_unknown，
+            return log("alias=%s" % alias, "fixed=false")   # 列表端点提示"点一次切换即可修复"
+        haiku = target["haiku_alias"]
+        if _sole(views, alias, target["id"]) and (not haiku or _sole(views, haiku, target["id"])):
+            return                                          # I1 与 I2 都成立，健康
+        records = client.set_alias_exclusive(alias, target["id"])
+        if haiku:
+            records += client.set_alias_exclusive(haiku, target["id"])
         # 真写了才算 fixed=true：目标条目是被用户手改的 disabled: true 停用的话这里写不动它
         # （§3.0d 禁止写 cliproxy 的 disabled 键），如实报 false，别把没修好说成修好了。
-        log("fixed=%s" % ("true" if client.set_alias_exclusive(alias, target["id"]) else "false"),
-            alias)
+        log("alias=%s" % alias, "haiku=%s" % (haiku or "-"),
+            "fixed=%s" % ("true" if records else "false"))
     except HubError as e:
         log("skipped reason=%s" % e.error)
     except Exception as e:                # 启动路径绝不因为自愈失败而起不来
