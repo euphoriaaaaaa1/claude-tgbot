@@ -22,9 +22,6 @@ TEMPLATES = Path(__file__).resolve().parents[2] / "moments" / "templates"
 SHELL_ENDPOINTS = [
     # 三段（provider/OAuth/bots）均已实现，空壳清单归空；各段契约见
     # test_hub_routes_provider.py / test_hub_oauth.py / test_bots_client.py
-    ("GET", "/hub/api/bots"),
-    ("POST", "/hub/api/bots/restart"),
-    ("GET", "/hub/api/bots/restart/deadbeef"),
 ]
 
 
