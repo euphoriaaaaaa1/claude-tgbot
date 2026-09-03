@@ -25,12 +25,7 @@ SHELL_ENDPOINTS = [
     ("POST", "/hub/api/provider/abc12345/activate"),
     ("POST", "/hub/api/provider/abc12345/test"),
     ("POST", "/hub/api/claude-native/activate"),
-    ("GET", "/hub/api/oauth/accounts"),
-    ("POST", "/hub/api/oauth/start"),
-    ("POST", "/hub/api/oauth/submit"),
-    ("GET", "/hub/api/oauth/status?state=x"),
-    ("DELETE", "/hub/api/oauth/accounts/codex/3f9a2c1b"),
-    ("POST", "/hub/api/oauth/accounts/codex/3f9a2c1b/activate"),
+    # 第 3 段（OAuth，§4）已由 M5 填完，六个端点挪进 tests/unit/test_hub_oauth.py
     ("GET", "/hub/api/bots"),
     ("POST", "/hub/api/bots/restart"),
     ("GET", "/hub/api/bots/restart/deadbeef"),
