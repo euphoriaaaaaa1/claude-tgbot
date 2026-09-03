@@ -17,14 +17,9 @@ from moments.hub_routes import hub_bp
 TEMPLATES = Path(__file__).resolve().parents[2] / "moments" / "templates"
 
 # 后三段的全部空壳端点（method, path）。M3/M5/M7 每填一个就把它从这里挪进各自的用例。
+# 第 2 段（provider CRUD / activate / claude-native / 自测）已由 M3 填完，
+# 用例挪到 tests/unit/test_hub_routes_provider.py，故不在此清单里。
 SHELL_ENDPOINTS = [
-    ("GET", "/hub/api/provider"),
-    ("POST", "/hub/api/provider"),
-    ("PATCH", "/hub/api/provider/abc12345"),
-    ("DELETE", "/hub/api/provider/abc12345"),
-    ("POST", "/hub/api/provider/abc12345/activate"),
-    ("POST", "/hub/api/provider/abc12345/test"),
-    ("POST", "/hub/api/claude-native/activate"),
     ("GET", "/hub/api/oauth/accounts"),
     ("POST", "/hub/api/oauth/start"),
     ("POST", "/hub/api/oauth/submit"),
