@@ -79,3 +79,20 @@ def test_投影时url里的userinfo凭据打码():
     # 不带 userinfo 的正常 URL 一个字节都不动
     assert R.project({"base-url": "https://api.deepseek.com/v1"})["base-url"] \
         == "https://api.deepseek.com/v1"
+
+
+def test_白名单字段拿到意料外类型不原样透传():
+    """BUG-16：url 打码有 isinstance(v, str) 前置，dict/list 落到 else 分支整包漏出。"""
+    sec = "p4ssw0rd-leak-9999"
+    for bad in ({"u": sec}, [sec], {"nested": {"deep": sec}}):
+        out = R.project({"name": "x", "base-url": bad})
+        assert out["base-url"] == "<invalid>", out
+        assert sec not in str(out)
+    assert R.project({"weight": 3, "disabled": True, "prefix": None}) == \
+        {"weight": 3, "disabled": True, "prefix": None}
+    assert R.project({"excluded-models": ["a", {"b": 1}]})["excluded-models"] == ["a"]
+
+
+def test_任何字符串字段里的url凭据都打码():
+    out = R.project({"name": "https://u:p4ss@g.io", "base-url": "https://a:b@g.io/v1"})
+    assert "p4ss" not in str(out) and out["base-url"] == "https://****@g.io/v1"
