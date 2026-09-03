@@ -46,3 +46,9 @@
 - 契约裁决 §3.0d @INTERFACE 1250 行：互斥改 per-entry prefix（禁写 disabled 键）+ M2 真机必验 V1–V4；
   haiku 并集判占用（第二个 provider 创建即停用=预期）；active.alias 恒回 env 原值；空 settings 等同不存在。
   待分发：dev-m4 改①③两处口径；出题人改⑲⑳㉑三处后第三次落锁（攒到三路实测齐再发）。
+### Bug 台账（provider-hub 开发期）
+| 编号 | 现象 | 状态 | 发现/负责 | 修复 commit |
+|---|---|---|---|---|
+| BUG-01 | config 骨架缺 force-model-prefix（§3.0d 后加键，缺则切换静默失效） | 修复中 | test-m6 / dev-m6 | |
+| BUG-02 | install.sh ⑥体检：无常驻单元走 else 仍报"就绪"，grep 只匹配目录串 | 修复中 | test-m6 / dev-m6 | |
+| BUG-03 | Linux unit 用 EnvironmentFile 把含口令的 hub.env 注进 cliproxy 进程 | 修复中 | test-m6 / dev-m6 | |
