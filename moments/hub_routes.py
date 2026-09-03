@@ -116,6 +116,23 @@ from moments.provider_model import HubError   # noqa: E402
 # 按码归类会在上游版本一变就把"配置缺失"误报成"上游报错"）。
 ROUTING_HINT = "unknown provider for model"
 
+# §3.2 ㉔：版本读**本地**这份钉死文件（仓库相对，跟随部署目录），cliproxy 没有 version 端点。
+CLIPROXY_VERSION_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs", "cliproxy.version")
+
+
+def _installed_version():
+    """"我们装了哪一版" —— 与"正在跑哪一版"在用户手工换二进制时会不一致，如实只报前者。
+
+    读不到（还没跑过 install）回 None，不影响 running 判定。每次现读：install 升级后
+    不必重启门户；文件是一行字，没有值得缓存的成本。
+    """
+    try:
+        with open(CLIPROXY_VERSION_FILE, encoding="utf-8") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
 
 def _api(fn):
     """把 HubError 翻成 §0.1 形状的错误响应；其余异常照旧冒泡给 500 internal 处理器。
@@ -188,8 +205,9 @@ def _active_id(port, views):
 def provider_list():
     """§3.2：**恒返回 200**（§2 铁律：页面要能打开），三种依赖故障用 warnings 区分。"""
     cfg = cliproxy_client.load_config()
-    info = {"running": False, "port": cfg["port"], "version": None,
-            # supported_kinds 是本地静态知识：没配/没跑照样得给，否则页面下拉是空的
+    info = {"running": False, "port": cfg["port"], "version": _installed_version(),
+            # version 与 supported_kinds 都是本地静态知识：没配/没跑照样给，
+            # 否则页面下拉是空的、版本条也空着
             "supported_kinds": list(provider_model.SUPPORTED_KINDS),
             "anthropic_compat": cfg["anthropic_compat"]}
     warnings, providers = [], []
@@ -198,10 +216,8 @@ def provider_list():
     else:
         try:
             client = cliproxy_client.from_env()
-            health = client.healthz()
+            client.healthz()
             info["running"] = True              # 拿到 HTTP 响应就算跑着（§0.4 传输层/应用层分界）
-            if isinstance(health, dict):
-                info["version"] = health.get("version")
             providers = client.providers()
         except HubError as e:
             providers = []
