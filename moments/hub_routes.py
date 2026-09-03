@@ -768,7 +768,8 @@ def _claim_aliases(client, aliases, undo):
         undo.append({"kind": e.kind, "index": e.index, "prefix": old})
 
 
-def _compensate(client, undo):
+# 段内辅助必须带段前缀（此前与第 2 段同名互顶导致 provider activate 404）
+def _oauth_compensate(client, undo):
     """§3.6 的补偿：prefix 原样写回、被我们启用的账户再禁回去。补偿本身失败 = 不一致态。"""
     try:
         client.restore_prefixes([r for r in undo if "kind" in r])
@@ -801,12 +802,12 @@ def oauth_account_activate(provider, email_hash):
     if not lock.acquire(blocking=False):
         raise HubError(409, "activate_busy", "另一个切换正在进行，请稍后再试")
     try:
-        return _activate_locked(provider, email_hash)
+        return _oauth_activate_locked(provider, email_hash)
     finally:
         lock.release()
 
 
-def _activate_locked(provider, email_hash):
+def _oauth_activate_locked(provider, email_hash):
     client = cliproxy_client.from_env()
     acc = _find_account(_auth_files(client), provider, email_hash)           # A1
     # 列表给的是 activatable:false，接口就不能背着页面把它切了 —— 用户自己用命令行登过的
@@ -833,7 +834,7 @@ def _activate_locked(provider, email_hash):
             path, provider_model.apply_cliproxy_env(settings, client.port,
                                                     client.api_key, aliases[0]))
     except HubError:
-        _compensate(client, undo)       # 补偿再失败会抛 500 activate_partial 顶掉原错
+        _oauth_compensate(client, undo)       # 补偿再失败会抛 500 activate_partial 顶掉原错
         raise
     return jsonify({"ok": True, "active_kind": "cliproxy"})
 
