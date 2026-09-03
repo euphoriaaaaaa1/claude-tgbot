@@ -34,7 +34,7 @@
   356 用例（328红/25绿/3skip）。施工版 PLAN 835 行 / INTERFACE 1155 行。开发放行。
 - 04 开发启动 @eddfc4c：3 条 worktree 并行（上限3，压掉方案里的4）——
   [测] M0 鉴权门+骨架  dev-m0 交付 @538470f（验收 270红/83绿），模块实测中
-  [测] M4 纯函数层     dev-m4 交付 @e2b4790（单测 180 绿），模块实测中；4 契约疑问已发 planner
+  [✓] M4 纯函数层     ready-to-merge @df14583（轮2五缺陷确认+两小修被复测方探针 88 条钉住全绿；unit 226/m4probe 227）
   [✓] M6 安装与常驻   ready-to-merge @20093e8（轮2三修复硬验全过+BUG-12 单测钉住；unit 34 绿/探针 56 绿）
   串行队列：M1 空壳骨架（M0 合并后）→ M2 客户端 → M3/M5/M7 → M8。桩已随测试锁定交付，M2 起只读复用。
 - M0→M1 交接备忘：feed/styles 各补一行 href="/hub"（归 M1）；/hub/healthz 已在 hub_auth.install() 注册，M1 勿重复。
@@ -66,5 +66,5 @@
 - 出题人待改批次（攒单，下次一并发→第三次落锁）：⑲ 桩 prefix 断言点、⑳ 连建多 provider 期望、㉑ active.alias 期望、
   ㉒ stub_cliproxy.aliases_enabled() 改读 prefix 语义；㉓ 验收 A8 补断言 force-model-prefix（复测发现该键修复前后验收同绿=测不到）。
 | BUG-12 | M6 systemd 分支 grep 子串匹配 | 已修复 | test-m6-r2 / dev-m6 | 20093e8 |
-| BUG-13 | M4 resolve_active：MODEL 非字符串未归 null（契约㉑另一半），int/dict/bool 原样回 | 修复中 | test-m4-r2 / dev-m4 | |
-| BUG-14 | M4 方括号内非法 IPv6 字面量当域名放行（[gggg::1] 等应 400；仅脏数据非 SSRF） | 修复中 | test-m4-r2 / dev-m4 | |
+| BUG-13 | M4 resolve_active：MODEL 非字符串未归 null（契约㉑另一半），int/dict/bool 原样回 | 已修复 | test-m4-r2 / dev-m4 | 5334847 |
+| BUG-14 | M4 方括号内非法 IPv6 字面量当域名放行（[gggg::1] 等应 400；仅脏数据非 SSRF） | 已修复 | test-m4-r2 / dev-m4 | df14583 |
