@@ -16,8 +16,17 @@ if str(_ROOT) not in sys.path:
 
 @pytest.fixture(autouse=True)
 def _no_real_settings(monkeypatch, tmp_path):
-    """任何用例都不许继承外部 env 的真实 settings 路径。"""
+    """任何用例都不许继承外部 env 的真实 settings 路径与真实 cliproxy 凭据。
+
+    第二段是 M3 加的：`hub_routes` 在蓝图注册时跑一次启动 reconcile（§3.6 F4），
+    它会读 cliproxy 三键；env 里读不到就**回落直读 `~/.claude-tgbot/hub.env`**（§0.3）。
+    不钉死 `HUB_ENV_FILE`，任何挂了蓝图的用例都可能连上机主真实的 8317 并改它的配置。
+    """
     monkeypatch.setenv("CLAUDE_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    for k in ("CLIPROXY_PORT", "CLIPROXY_MGMT_KEY", "CLIPROXY_API_KEY",
+              "CLIPROXY_ANTHROPIC_COMPAT", "HUB_ALLOW_PRIVATE_BASE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("HUB_ENV_FILE", str(tmp_path / "hub.env"))       # 有意指向不存在的文件
 
 
 def payload(**over):
