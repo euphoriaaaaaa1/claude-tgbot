@@ -90,3 +90,6 @@
   activate 5 红=桩 disabled 语义（批次㉒触发条件已齐）。
   **环境事故**：Clash TUN fake-IP(198.18.x)使 SSRF 把一切域名判内网→开 TUN 机器加不了任何 provider，
   测试用进程内 nofakedns 插件抵消（未改仓库）。待 planner 裁决 §3.3 fake-IP 段策略。
+- §12.6 fake-IP 裁决=方案A（字面量恒拦/198.18.0.0/15 解析判作废）。**合并后集成批**待办：
+  ①provider_model 实现两层判定（T4–T6 用例随批次）②web.py:454 _BOT_PORTS 收拢到 bots_client
+  ③M5 专码 400→409 两处（oauth_no_alias/oauth_state_expired）。
