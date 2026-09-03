@@ -59,9 +59,9 @@
 | BUG-08 | M4 id 派生分隔符可注入：不同四元组同 id f9b581f6 | 已修复 | test-m4 / dev-m4 | e4a8af1 |
 | 口径 | §3.0d prefix 互斥+active.alias 回原值 | 已修复 | planner / dev-m4 | 9b46a28 |
 | 文档 | CGNAT 段/零宽 RTL/BOM 自愈/软链语义/"归一化"名不副实 → 待 planner 补文 | 待处理 | test-m4 / planner | |
-| BUG-09 | M0 admin 口令零爆破防护，猜错反清空全站限速计数 | 修复中 | test-m0 / dev-m0 | |
-| BUG-10 | M0 只设 admin 不设 access → /hub 裸奔且无告警 | 修复中 | test-m0 / dev-m0 | |
-| BUG-11 | M0 管理锁 startswith 未归一化路径（今日被 404 兜住，反代下成真绕过） | 修复中 | test-m0 / dev-m0 | |
+| BUG-09 | M0 admin 口令零爆破防护，猜错反清空全站限速计数 | 已修复 | test-m0 / dev-m0 | d7d1e9c |
+| BUG-10 | M0 只设 admin 不设 access → /hub 裸奔且无告警 | 已修复 | test-m0 / dev-m0 | ce2caf4 |
+| BUG-11 | M0 管理锁 startswith 未归一化路径（今日被 404 兜住，反代下成真绕过） | 已修复 | test-m0 / dev-m0 | be36ea8 |
 | 备忘 | M0→M1 交接：cliproxy_client 异常消息勿携上游响应体（traceback 进日志）；#4 老路由抹敏更严格属向安全偏离→planner 备案 | 待处理 | test-m0 | |
 - 出题人待改批次（攒单，下次一并发→第三次落锁）：⑲ 桩 prefix 断言点、⑳ 连建多 provider 期望、㉑ active.alias 期望、
   ㉒ stub_cliproxy.aliases_enabled() 改读 prefix 语义；㉓ 验收 A8 补断言 force-model-prefix（复测发现该键修复前后验收同绿=测不到）。
