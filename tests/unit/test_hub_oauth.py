@@ -681,3 +681,32 @@ def test_空体与ContentType不对按体缺失处理(api, path):
                    content_type="application/x-www-form-urlencoded")
     assert r.status_code == 400
     assert r.get_json()["error"] in ("bad_body", "bad_provider")
+
+
+def test_submit成功后state即作废_二次提交409(api, env):
+    """§4.3：授权码是一次性凭据，不作废等于给门户装了个免费重放放大器。"""
+    st = _start(api)
+    assert api.post("/hub/api/oauth/submit",
+                    {"provider": "codex", "code": "abc", "state": st})[0] == 200
+    env.requests.clear()
+    code, body = api.post("/hub/api/oauth/submit",
+                          {"provider": "codex", "code": "abc", "state": st})
+    assert (code, body["error"]) == (409, "oauth_state_expired")
+    assert not env.paths_hit("oauth-callback"), "重放请求还是被转发出去了"
+
+
+def test_submit失败时state保留_可修正后重试(api, env):
+    """§4.3：作废只发生在 200 之后 —— 上游 502 后用户重试不该被当成过期。"""
+    st = _start(api)
+    env.mgmt_status = 502
+    assert api.post("/hub/api/oauth/submit",
+                    {"provider": "codex", "code": "abc", "state": st})[0] == 502
+    env.mgmt_status = 200
+    assert api.post("/hub/api/oauth/submit",
+                    {"provider": "codex", "code": "abc", "state": st})[0] == 200
+
+
+def test_没带state的提交不影响别的会话(api, env):
+    st = _start(api)
+    assert api.post("/hub/api/oauth/submit", {"provider": "codex", "redirect_url": CB})[0] == 200
+    assert st in hub_routes._OAUTH_SESSIONS, "没带 state 的提交把别人的会话清了"
