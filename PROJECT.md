@@ -29,3 +29,6 @@
 - **卡点2 已确认 @a986046 2026-09-03**：验收测试锁定 340 用例（313红/24绿/3skip，
   乱序一致；TEST-PLAN 563 行留本地 .devflow）。锁定 hash 记 .devflow/LOCK-provider-hub（本地，.devflow 被公开仓 ignore 属既有约定）。
   下一步：开工硬门槛 S0-A（真 claude 带 tool_use 经 cliproxy v7）/ S0-B（anthropic/gemini 兼容配置块探明）。
+- **测试重锁 @1b0596f**：S0 双门槛通过（.devflow/RESEARCH-spike-S0.md，382 行，8 处实测修正
+  含 CLAUDE_SETTINGS_PATH 非 CLI 变量的红线级纠正）；haiku 双 alias 契约变更由出题人修题后重锁，
+  356 用例（328红/25绿/3skip）。施工版 PLAN 835 行 / INTERFACE 1155 行。开发放行。
