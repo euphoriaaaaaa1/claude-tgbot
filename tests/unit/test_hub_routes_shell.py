@@ -31,9 +31,7 @@ SHELL_ENDPOINTS = [
     ("GET", "/hub/api/oauth/status?state=x"),
     ("DELETE", "/hub/api/oauth/accounts/codex/3f9a2c1b"),
     ("POST", "/hub/api/oauth/accounts/codex/3f9a2c1b/activate"),
-    ("GET", "/hub/api/bots"),
-    ("POST", "/hub/api/bots/restart"),
-    ("GET", "/hub/api/bots/restart/deadbeef"),
+    # 第 4 段（/hub/api/bots*）已由 M7 填完，用例挪到 tests/unit/test_bots_client.py
 ]
 
 
