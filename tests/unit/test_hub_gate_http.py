@@ -78,9 +78,23 @@ def test_admin填错不得清空全站失败计数(app_client):
     c = app_client(PW, ADMIN)
     for i in range(3):
         _login(c, "bad-%d" % i)
-    guard = c.application.extensions["hub_login_guard"]
+    ext = c.application.extensions
     _login(c, PW, "wrong-admin")
-    assert guard.record_failure() == 5, "错误 admin 口令重置了全站爆破窗口"
+    assert ext["hub_login_guard"].record_failure() == 4, "错误 admin 口令重置了全站爆破窗口"
+    assert ext["hub_admin_login_guard"].record_failure() == 2, "admin 失败没进 admin 窗"
+
+
+def test_只填access成功后_admin失败计数不清(app_client):
+    """持 access 口令者交替 [猜 admin, 只填 access 正常登录] 就能无限猜 —— 管理窗只能由两把全对清。"""
+    c = app_client(PW, ADMIN)
+    ag = c.application.extensions["hub_admin_login_guard"]
+    _login(c, PW, "guess-1")
+    assert _login(c, PW).status_code == 303          # 只填 access 的成功（免费清窗动作）
+    assert ag.record_failure() == 2, "只填 access 的成功清掉了 admin 窗"
+    ag.reset()
+    _login(c, PW, "guess-2")
+    assert _login(c, PW, ADMIN).status_code == 303   # 两把全对
+    assert ag.record_failure() == 1, "两把全对没清 admin 窗"
 
 
 def test_两把全对才清窗(app_client):

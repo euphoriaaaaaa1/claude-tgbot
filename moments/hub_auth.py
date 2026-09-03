@@ -202,7 +202,11 @@ def _eq(supplied, expected) -> bool:
 def install(app):
     """挂 before_request 门 + /login 两个方法 + 免鉴权的 /hub/healthz。"""
     guard = LoginGuard()
+    # 管理口令的失败自成一窗。合用一个窗时，"只填 access 的正常登录"会顺手把 admin 的
+    # 失败计数一并清掉 —— 持 access 口令的人（家人）交替 [猜 admin, 正常登录] 就能无限猜。
+    admin_guard = LoginGuard()
     app.extensions["hub_login_guard"] = guard
+    app.extensions["hub_admin_login_guard"] = admin_guard
 
     @app.before_request
     def _hub_gate():
@@ -236,7 +240,7 @@ def install(app):
         if request.method == "GET":
             return render_template("login.html", need_admin=bool(admin_password()), error=False)
 
-        if guard.blocked():
+        if guard.blocked() or admin_guard.blocked():
             resp = jsonify({"error": "too_many_attempts", "detail": "稍后再试"})
             resp.status_code = 429
             resp.headers["Retry-After"] = "60"
@@ -258,11 +262,13 @@ def install(app):
         # admin 填了却填错 = 有人在猜管理口令。全站口令本来就会分给家人，家人正是管理锁的
         # 攻击面，这条内锁不能是零成本的 —— 计入同一个滑窗，享受同样的递增延迟与 429。
         if admin_pw and supplied_admin and not admin_ok:
-            n = guard.record_failure()
+            n = admin_guard.record_failure()
             print("hub_login ok=false n=%d scope=admin" % n, flush=True)
-            time.sleep(guard.delay_for(n))
+            time.sleep(admin_guard.delay_for(n))
         else:
-            guard.reset()          # 只有"两把全对"或"只要浏览权"才清窗
+            guard.reset()               # 全站口令对了，全站窗清掉
+            if admin_ok:
+                admin_guard.reset()     # 管理窗**只能**由"两把全对"清
             print("hub_login ok=true n=0", flush=True)
         # 只有全站口令对 → 只签一个 cookie，跳 `/`（§1.5 表第二行）
         resp = redirect("/hub" if (not admin_pw or admin_ok) else "/", code=303)
