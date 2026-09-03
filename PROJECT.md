@@ -86,3 +86,7 @@
   入参形状未实测（真机核验项，归验收前单点核验）。state 表进程内存（单进程够用，注释有升级路径）。
 - §12.5 定死：oauth_no_alias/oauth_state_expired 专码（M5 需由 400 临时码改 409 专码，攒至其实测后一并）；
   DELETE auth-files=真机核验项 R1（核验前不放行）；M7 两偏离据实入文。出题人批次至 10 项（+㉚㉛㉝）。
+- M3 交付 @ph-m3：验收 80红/273绿/3skip（crud 104/104、native 10/10、selftest 12/12），unit 447 全绿。
+  activate 5 红=桩 disabled 语义（批次㉒触发条件已齐）。
+  **环境事故**：Clash TUN fake-IP(198.18.x)使 SSRF 把一切域名判内网→开 TUN 机器加不了任何 provider，
+  测试用进程内 nofakedns 插件抵消（未改仓库）。待 planner 裁决 §3.3 fake-IP 段策略。
