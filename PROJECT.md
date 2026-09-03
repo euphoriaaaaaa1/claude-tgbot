@@ -100,3 +100,6 @@
 | BUG-18 | M5 非对象 JSON 体→500（body.get 惯用法，§0.1 应 400；M3/M7 同法需排查） | 修复中 | test-m5 / dev-m5 | |
 - §12.7：state 成功消费即作废（二次 409）；activatable=合法且有 alias（新增 not_activatable_reason）；
   非 dict 体→400 提为 §0.1 通则。集成批追加④：M3/M7 段收 body 端点按通则排查收口。
+| BUG-19 | M3 并发 activate 互清（40轮31轮双输双200，bot 全502）：B 段快照读改写无互斥 | 修复中 | test-m3 / dev-m3 | |
+| BUG-20 | M3 补偿失败可留 haiku 双启用，warnings 空、reconcile 早退不修（契约无表达码，待 §12.8） | 待契约 | test-m3 / planner→dev-m3 | |
+- P4 实锤批次㉒（桩 disabled 语义致 5 假红，prefix 镜像全绿）；新矛盾：§3.6 reconcile 断言 vs §3.0d 禁清 disabled，待裁。
