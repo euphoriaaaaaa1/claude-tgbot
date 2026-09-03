@@ -71,14 +71,17 @@ def test_上游4xx回显请求头时不得把原始响应体端出来(api, stub)
     assert "Bearer" not in text
 
 
-def test_cliproxy回未知模型时stage是routing(api, stub):
+@pytest.mark.parametrize("status", [400, 502])
+def test_未知模型按message文本判routing_与状态码无关(api, stub, status):
+    """㉓：真机回 400、[CPX] 写的是 502。按状态码归类会在上游一改版就把"配置缺失"误报成"上游报错"。"""
     p = _mk(api)
     _activate(api, p["id"])
     stub.messages_mode = "unknown_model"
+    stub.unknown_model_status = status
     code, body = api.post("/hub/api/provider/%s/test" % p["id"])
     assert code == 200
     assert body["ok"] is False
-    assert body["stage"] == "routing"
+    assert body["stage"] == "routing", "上游回 %d 时没判成 routing：%s" % (status, body)
 
 
 def test_未激活的cliproxy条目自测返回stage_disabled(api, stub):

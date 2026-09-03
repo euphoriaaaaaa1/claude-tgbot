@@ -595,3 +595,204 @@ def test_门户不得访问v7里不存在的块名(api, stub):
            if any(x in r["path"] for x in ("anthropic-compatibility", "gemini-compatibility",
                                            "anthropic-api-key"))]
     assert bad == [], "门户打了 v7 上不存在的管理端点：%s" % bad
+
+
+# ---------------- §3.3 / §12.6（修订 8）：SSRF 用例 T4–T7，fake-IP 例外 ----------------
+
+def _fake_resolver(monkeypatch, host, ips):
+    """只替换指定域名的解析结果，其余照旧 —— 不能整体劫持，否则连桩都连不上。"""
+    import socket
+    real_gai, real_ghn = socket.getaddrinfo, socket.gethostbyname
+
+    def gai(h, *a, **kw):
+        if h == host:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 0)) for ip in ips]
+        return real_gai(h, *a, **kw)
+
+    def ghn(h):
+        return ips[0] if h == host else real_ghn(h)
+
+    monkeypatch.setattr(socket, "getaddrinfo", gai)
+    monkeypatch.setattr(socket, "gethostbyname", ghn)
+
+
+def test_T4_fakeIP段的字面量仍必须拦(api):
+    """§12.6：例外只能开在第 2 层（DNS），第 1 层的字面量拦截一个都不许放。"""
+    code, body = _create(api, base_url="http://198.18.0.1/")
+    assert code == 400, "198.18.x.x 字面量被放行了 —— 例外滥用到了第 1 层"
+    assert body["error"] == "bad_base_url_private"
+
+
+def test_T5_解析到fakeIP的域名必须放行(api, monkeypatch):
+    """TUN 增强模式把所有域名解析成 198.18.x.x —— 不放行则产品在中国用户机器上不可用。"""
+    _fake_resolver(monkeypatch, "gw.example.com", ["198.18.42.7"])
+    code, body = _create(api, base_url="https://gw.example.com/v1")
+    assert code == 201, "解析结果是 fake-IP 噪声，应跳过第 2 层判定：%s" % body
+
+
+def test_T6_解析到真私有地址的域名仍要拦(api, monkeypatch):
+    """证明第 2 层没被整层删掉。"""
+    _fake_resolver(monkeypatch, "intra.example.com", ["10.0.0.5"])
+    code, body = _create(api, base_url="https://intra.example.com/v1")
+    assert code == 400
+    assert body["error"] == "bad_base_url_private"
+
+
+def test_混合口径_fakeIP加公网放行(api, monkeypatch):
+    """§12.6 追认口径：**逐条剔除** 198.18/15，剩下的照原规则判。"""
+    _fake_resolver(monkeypatch, "mix1.example.com", ["198.18.42.7", "8.8.8.8"])
+    code, body = _create(api, base_url="https://mix1.example.com/v1")
+    assert code == 201, "剔掉 fake-IP 后只剩公网地址(8.8.8.8)，应放行：%s" % body
+
+
+def test_混合口径_fakeIP加内网仍400(api, monkeypatch):
+    """原稿"全部落在 198.18/15 才作废"的字面口径已作废 —— 只 fake A 记录时它永远不成立。"""
+    _fake_resolver(monkeypatch, "mix2.example.com", ["198.18.42.7", "10.0.0.5"])
+    code, body = _create(api, base_url="https://mix2.example.com/v1")
+    assert code == 400, "剔掉 fake-IP 后还剩一个内网地址，必须拦"
+    assert body["error"] == "bad_base_url_private"
+
+
+def test_T7_逃生门下连真私有解析也放行(make_client, monkeypatch):
+    from conftest import _Api
+    _fake_resolver(monkeypatch, "intra2.example.com", ["10.0.0.5"])
+    a = _Api(make_client(HUB_ALLOW_PRIVATE_BASE_URL="1")[0])
+    code, body = a.post("/hub/api/provider",
+                        provider_payload(base_url="https://intra2.example.com/v1"))
+    assert code == 201, body
+
+
+def test_bad_base_url_private的文案要给出出路(api):
+    """§3.3：detail 不能只说"不允许"，必须写清逃生门怎么开。"""
+    code, body = _create(api, base_url="http://192.168.1.1/")
+    assert code == 400
+    assert "HUB_ALLOW_PRIVATE_BASE_URL" in str(body.get("detail", "")), \
+        "detail 没告诉用户内网自建网关该怎么办：%r" % body.get("detail")
+
+
+# ---------------- §3.2（修订 5/6/10）：active.alias 规则、version 来源、haiku_conflict ----------------
+
+HAIKU = "claude-3-5-haiku-20241022"
+
+
+def test_active_alias在none态也要回原值(api, settings_path):
+    """㉑：一条规则通吃 —— active.alias 恒等于 env.ANTHROPIC_MODEL 原值，与 kind 无关。
+
+    none 态尤其重要：页面文案「当前生效的是一个不在台账里的配置（alias: xxx）」只能取自这里。
+    """
+    write_settings(settings_path, _env(ANTHROPIC_BASE_URL="https://other.example.com",
+                                       ANTHROPIC_MODEL="某个手写的模型名"))
+    code, body = api.get("/hub/api/provider")
+    assert body["active"]["kind"] == "none"
+    assert body["active"]["alias"] == "某个手写的模型名", "none 态把 alias 吞掉了，用户无从判断在用什么"
+
+
+def test_active_alias在claude_native与unknown态是null(api, settings_path):
+    write_settings(settings_path, {"model": "sonnet"})
+    assert api.get("/hub/api/provider")[1]["active"]["alias"] is None
+    settings_path.write_text("{ 坏掉的", encoding="utf-8")
+    assert api.get("/hub/api/provider")[1]["active"]["alias"] is None
+
+
+def test_active_alias非字符串时按null处理(api, settings_path, stub):
+    write_settings(settings_path, _env(ANTHROPIC_BASE_URL="http://127.0.0.1:%d" % stub.port,
+                                       ANTHROPIC_MODEL=123))
+    code, body = api.get("/hub/api/provider")
+    assert code == 200
+    assert body["active"]["alias"] is None
+
+
+def test_version读的是本地版本文件不是cliproxy(api, stub):
+    """㉔：cliproxy 没有 version 端点。语义是"我们装了哪一版"。"""
+    from conftest import REPO_ROOT
+    f = REPO_ROOT / "configs" / "cliproxy.version"
+    want = f.read_text(encoding="utf-8").strip() if f.exists() else None
+    code, body = api.get("/hub/api/provider")
+    assert body["cliproxy"]["version"] == want
+    assert not [r for r in stub.requests if "version" in r["path"]], "跑去问 cliproxy 要版本了"
+
+
+def test_haiku双抢时列表给haiku_conflict警告(api, settings_path, stub):
+    """㊵：与 active.kind 正交的第六个 warning。判据 = active 条目的 haiku alias 下不带 prefix 的条目数 ≠ 1。"""
+    stub.seed_openai_block(name="a", alias=ALIAS)
+    stub.seed_openai_block(name="b", alias="claude-opus-4-1-20250805",
+                           base_url="https://gw.example.com/v1", upstream="glm-4.6")
+    write_settings(settings_path, _env(
+        ANTHROPIC_BASE_URL="http://127.0.0.1:%d" % stub.port, ANTHROPIC_MODEL=ALIAS))
+    code, body = api.get("/hub/api/provider")
+    assert code == 200
+    assert "haiku_conflict" in body["warnings"], \
+        "两条都在抢 haiku，后台摘要会在两家之间轮询，必须报出来"
+    assert body["active"]["kind"] == "cliproxy", "haiku_conflict 与 active.kind 正交，不该影响它"
+
+
+def test_haiku只有一个来源时没有haiku_conflict(api, settings_path, stub):
+    stub.seed_openai_block(alias=ALIAS)
+    write_settings(settings_path, _env(
+        ANTHROPIC_BASE_URL="http://127.0.0.1:%d" % stub.port, ANTHROPIC_MODEL=ALIAS))
+    code, body = api.get("/hub/api/provider")
+    assert "haiku_conflict" not in body.get("warnings", [])
+
+
+def test_用户手改停用的条目读侧也算disabled(api, stub, settings_path):
+    """§3.0d 读侧取或：prefix 非空 **or** 条目自身 disabled:true。
+
+    纯 prefix 语义会把用户手动停用的条目谎报为可用 —— 页面显示可切换、切过去却不通。
+    """
+    stub.seed_openai_block(alias=ALIAS, disabled=True, prefix="")
+    write_settings(settings_path, _env(
+        ANTHROPIC_BASE_URL="http://127.0.0.1:%d" % stub.port, ANTHROPIC_MODEL=ALIAS))
+    code, body = api.get("/hub/api/provider")
+    assert code == 200
+    assert "alias_disabled" in body["warnings"], "用户手改的 disabled:true 被无视了"
+
+
+def test_禁止调用management_config整包端点(api, stub):
+    """㉕ 红线：`GET /v0/management/config` 整包回明文 api-keys，一次都不许打。"""
+    assert _create(api)[0] == 201
+    assert api.get("/hub/api/provider")[0] == 200
+    bad = [r["path"] for r in stub.requests if r["path"].rstrip("/").endswith("/management/config")]
+    assert bad == [], "打了会整包吐明文 key 的端点：%s" % bad
+
+
+# ---------------- ⑳（修订 5）：alias_occupied 检查范围 = 主 alias ∪ haiku alias ----------------
+
+def test_主alias各不相同但haiku全默认_第二个起创建即停用(api, stub):
+    """§3.3 的必然后果，**不是 bug**：haiku 默认值人人相同，第 2/3 个一律 disabled。
+
+    放任 haiku 多条同时 enabled = 主模型走 A 家、后台摘要走 B 家，比串台更隐蔽。
+    """
+    p1 = _create(api, model_alias=ALIAS)[1]
+    p2 = _create(api, label="第二个", base_url="https://gw2.example.com/v1",
+                 upstream_model="glm-4.6", model_alias="claude-opus-4-1-20250805")[1]
+    p3 = _create(api, label="第三个", base_url="https://gw3.example.com/v1",
+                 upstream_model="qwen-max", model_alias="claude-haiku-4-5-20251001")[1]
+    assert p1["disabled"] is False, "第一个应该是可用的"
+    assert p2["disabled"] is True and p3["disabled"] is True, \
+        "主 alias 不冲突但 haiku 撞了，第 2/3 个必须创建即停用"
+
+
+def test_切换到第三个后前两个都被停用(api, stub):
+    """§3.3 用例原文：activate 第 3 个 → 1/2 变 disabled、第 3 个变 enabled，prefix 写两组。"""
+    p1 = _create(api, model_alias=ALIAS)[1]
+    p2 = _create(api, label="第二个", base_url="https://gw2.example.com/v1",
+                 upstream_model="glm-4.6", model_alias="claude-opus-4-1-20250805")[1]
+    p3 = _create(api, label="第三个", base_url="https://gw3.example.com/v1",
+                 upstream_model="qwen-max", model_alias="claude-haiku-4-5-20251001")[1]
+    assert api.post("/hub/api/provider/%s/activate" % p3["id"])[0] == 200
+    got = {p["id"]: p["disabled"] for p in api.get("/hub/api/provider")[1]["providers"]}
+    assert got[p3["id"]] is False
+    assert got[p1["id"]] is True and got[p2["id"]] is True
+    assert stub.aliases_enabled(HAIKU) == 1, "haiku alias 下应恰剩一个不带 prefix"
+
+
+def test_落选条目的prefix就是它自己的id(api, stub):
+    """§3.0d：落选 prefix = 该 provider 的 id（8 位 hex，稳定可读），当选清空。"""
+    p1 = _create(api, model_alias=ALIAS)[1]
+    p2 = _create(api, label="第二个", base_url="https://gw2.example.com/v1",
+                 upstream_model="glm-4.6", model_alias="claude-opus-4-1-20250805")[1]
+    assert api.post("/hub/api/provider/%s/activate" % p2["id"])[0] == 200
+    by_url = {b["base-url"]: b for b in stub.all_blocks}
+    assert by_url["https://gw2.example.com/v1"].get("prefix", "") == "", "当选条目不该带 prefix"
+    assert by_url["https://api.deepseek.com/v1"].get("prefix") == p1["id"], \
+        "落选条目的 prefix 应是它自己的 id，实得 %r" % by_url["https://api.deepseek.com/v1"].get("prefix")

@@ -147,6 +147,10 @@ def test_A6_A8_生成的config骨架字段齐全且host是回环(tmp_path, stub)
     assert re.search(r"request-log:\s*false", cfg)
     assert re.search(r"debug:\s*false", cfg), \
         "A8b：debug:true 会把半掩码上游 key（sk-9...7093）打进日志"
+    assert re.search(r"force-model-prefix:\s*true", cfg), \
+        "A8：alias 互斥依赖它（§3.0d）—— 关着的话带 prefix 的条目照样响应裸模型名"
+    m = re.search(r"secret-key:\s*(\S+)", cfg)
+    assert m and m.group(1).strip('"\''), "secret-key 必须非空"
 
 
 def test_A7_目录与文件权限(tmp_path, stub):
@@ -265,3 +269,22 @@ def test_A11b_仓库根不得出现cliproxy拉下来的static目录():
     """CWD 没钉住的直接症状：用户仓库根多出一个 static/management.html。"""
     stray = REPO_ROOT / "static" / "management.html"
     assert not stray.exists(), "仓库根出现了 cliproxy 的 static/management.html（CWD 没钉住）"
+
+
+def test_A5b_重跑不比对secret_key只看它仍非空(tmp_path, stub):
+    """㉙：cliproxy 启动会把明文 bcrypt 成 `$2a$...` 写回该键，字面比对必假红。
+
+    幂等断言的正确口径：重跑后该键**仍非空**，且 hub.env 里的明文没被改动。
+    """
+    r1, root = _run_bootstrap(tmp_path, stub)
+    assert r1.returncode == 0, r1.stderr[-600:]
+    cfg = root / "cliproxy" / "config.yaml"
+    cfg.write_text(re.sub(r"secret-key:\s*\S+", 'secret-key: "$2a$10$bcryptedbycliproxy"',
+                          cfg.read_text(encoding="utf-8")), encoding="utf-8")
+    env_before = (root / "hub.env").read_text(encoding="utf-8")
+    r2, _ = _run_bootstrap(tmp_path, stub)
+    assert r2.returncode == 0, r2.stderr[-400:]
+    m = re.search(r"secret-key:\s*(\S+)", cfg.read_text(encoding="utf-8"))
+    assert m and m.group(1).strip('"\''), "重跑后 secret-key 变空了"
+    assert (root / "hub.env").read_text(encoding="utf-8") == env_before, \
+        "重跑改动了 hub.env 里的明文管理密钥，客户端会认不上"
