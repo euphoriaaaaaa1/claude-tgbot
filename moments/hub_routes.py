@@ -374,8 +374,10 @@ def _reconcile():
         target = next((p for p in cands if not p["disabled"]), None) or (cands or [None])[0]
         if target is None:                # alias 在 cliproxy 里根本不存在 = active_unknown，
             return log("fixed=false", alias)   # 列表端点会提示"点一次切换即可修复"
-        client.set_alias_exclusive(alias, target["id"])
-        log("fixed=true", alias)
+        # 真写了才算 fixed=true：目标条目是被用户手改的 disabled: true 停用的话这里写不动它
+        # （§3.0d 禁止写 cliproxy 的 disabled 键），如实报 false，别把没修好说成修好了。
+        log("fixed=%s" % ("true" if client.set_alias_exclusive(alias, target["id"]) else "false"),
+            alias)
     except HubError as e:
         log("skipped reason=%s" % e.error)
     except Exception as e:                # 启动路径绝不因为自愈失败而起不来
