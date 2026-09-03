@@ -22,7 +22,6 @@ URL="$(python3 "$BS" get url)"
 WANT="$(python3 "$BS" get sha256)"
 CLIPROXY_DIR="$(python3 "$BS" get dir)"   # ~/.claude-tgbot/cliproxy
 BIN="$(python3 "$BS" get bin)"
-HUB_ENV="$(python3 "$BS" get env)"
 STAMP="$CLIPROXY_DIR/.installed-version"
 
 # [R4D] I6-3：下载源白名单。排障时最容易被人随手换成某个镜像，这里再挡一道
@@ -114,7 +113,8 @@ Description=claude-tgbot cliproxy (CLIProxyAPI $VER)
 Type=simple
 # 与 plist 的 WorkingDirectory 同义：不钉死就会往当时的 CWD 拉 2.7 MB static/
 WorkingDirectory=$CLIPROXY_DIR
-EnvironmentFile=-$HUB_ENV
+# 不给它注 hub.env：cliproxy 一个门户变量都不读，注进来只是把门户口令多摊一份到
+# 它的进程环境里（/proc/<pid>/environ）。它自己的 key 在 config.yaml（600）。
 ExecStart="$BIN" -config "$CLIPROXY_DIR/config.yaml"
 Restart=always
 RestartSec=10
