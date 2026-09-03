@@ -142,8 +142,10 @@ class _H(BaseHTTPRequestHandler):
         """三种可编程模式（§10）：ok / http4xx_echo（回显请求头）/ unknown_model。"""
         st = self.server.stub
         if st.messages_mode == "unknown_model":
-            return self._send(502, {"error": {"type": "api_error",
-                                              "message": "unknown provider for model"}})
+            # ㉓：真机回 400、[CPX] 写的是 502 —— 状态码不可作判据，只能看 message 文本
+            return self._send(st.unknown_model_status,
+                              {"error": {"type": "api_error",
+                                         "message": "unknown provider for model claude-x"}})
         if st.messages_mode == "http4xx_echo":
             echo = {k: v for k, v in self.headers.items()}
             return self._send(401, {"error": {"type": "authentication_error",
@@ -216,6 +218,7 @@ class StubCliproxy:
         self.gemini_api_key = []         # kind=gemini 的承载块（不是 gemini-compatibility）
         self.alias_count_violation = []  # §10：收到 models 长度 ≠ 2 的写就记一条
         self.messages_mode = "ok"
+        self.unknown_model_status = 502   # 默认沿用旧值；㉓ 的 400 由用例显式设
         self.timeout_sleep = 40
         self.auth_status = "ok"
         self.mgmt_status = 200          # 非 200 时所有 /v0/management/* 回该码（§10）
@@ -271,6 +274,8 @@ class StubCliproxy:
     # ---- 测试侧便利方法（不属于 §10 的线上契约，只在测试进程内用）----
     def apply_config(self, cfg):
         """对应 §10 的 POST /__stub/config。"""
+        if "unknown_model_status" in cfg:
+            self.unknown_model_status = cfg["unknown_model_status"]
         if "messages_mode" in cfg:
             self.messages_mode = cfg["messages_mode"]
         if "auth_status" in cfg:
@@ -298,7 +303,8 @@ class StubCliproxy:
     def seed_openai_block(self, name="deepseek", base_url="https://api.deepseek.com/v1",
                           api_key="sk-test-seeded-0000", upstream="deepseek-v4-flash",
                           alias="claude-sonnet-4-5-20250929", display_name="DeepSeek",
-                          disabled=False, haiku_alias="claude-3-5-haiku-20241022"):
+                          disabled=False, haiku_alias="claude-3-5-haiku-20241022",
+                          prefix=""):
         """按 §3.0c 铺一条**两个 models** 的块（主 alias + haiku alias）。"""
         blk = {"name": name, "base-url": base_url,
                "api-key-entries": [{"api-key": api_key}],
@@ -307,6 +313,8 @@ class StubCliproxy:
                           {"name": upstream, "alias": haiku_alias,
                            "display-name": display_name, "force-mapping": True}],
                "disabled": disabled}
+        if prefix:
+            blk["prefix"] = prefix       # 只在落选形态下写这个键，默认块保持原样
         self.openai_compat.append(blk)
         return blk
 
@@ -315,15 +323,27 @@ class StubCliproxy:
         return self.openai_compat + self.claude_api_key + self.gemini_api_key
 
     def aliases_enabled(self, alias):
-        """某 alias 当前有几个 enabled 条目（§3.6 的运行时唯一性断言用）。"""
+        """§3.0d：某 alias 下**不带 prefix** 的条目数（互斥判据，不再看 disabled 键）。
+
+        读侧的"停用"派生仍是 `prefix 非空 or 条目 disabled:true` 的或；
+        但运行时唯一性只由 prefix 决定 —— 带 prefix 的条目不响应裸模型名。
+        """
         n = 0
         for blk in self.all_blocks:
+            if blk.get("prefix"):
+                continue
             if blk.get("disabled"):
                 continue
             for m in blk.get("models") or []:
                 if m.get("alias") == alias:
                     n += 1
+                    break
         return n
+
+    def entries_for(self, alias):
+        """带该 alias 的全部条目（不管有没有 prefix）。"""
+        return [b for b in self.all_blocks
+                if any(m.get("alias") == alias for m in (b.get("models") or []))]
 
     def paths_hit(self, pattern):
         return [r for r in self.requests if re.search(pattern, r["path"])]

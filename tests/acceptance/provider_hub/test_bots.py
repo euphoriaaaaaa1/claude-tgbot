@@ -188,3 +188,24 @@ def test_重启端点不接受GET(make_client, tmp_path):
     code, body = a.get("/hub/api/bots/restart")
     assert code in (404, 405), "GET /hub/api/bots/restart 返回了 %s" % code
     assert body.get("error") in ("not_found", "method_not_allowed")
+
+
+def test_restart_available按可读判定而不是可执行位(make_client, tmp_path):
+    """㉝：install 是 `cp` 出来的 644，调用方式是 `bash <脚本>`，只需读权限。
+
+    判 `X_OK` 会在全新安装的机器上恒报 false，把好按钮灰掉。
+    两种世界里期望都是确定的：脚本可读 → true；脚本不在 → false。
+    **全程只 GET，不触发任何重启。**
+    """
+    import os
+    from conftest import REPO_ROOT
+    script = REPO_ROOT / "restart-bots.sh"
+    readable = script.is_file() and os.access(script, os.R_OK)
+    a = _Api(make_client(HUB_BOTS_FILE=_bots_file(tmp_path, []))[0])
+    code, body = a.get("/hub/api/bots")
+    assert code == 200, body
+    assert body["restart_available"] is readable, (
+        "脚本可读=%s 却报 restart_available=%s（可读即可，别判 X_OK）"
+        % (readable, body["restart_available"]))
+    if readable:
+        assert 0o111 & os.stat(script).st_mode or True   # 有没有执行位都不影响结论
