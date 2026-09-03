@@ -70,3 +70,5 @@
 | BUG-14 | M4 方括号内非法 IPv6 字面量当域名放行（[gggg::1] 等应 400；仅脏数据非 SSRF） | 已修复 | test-m4-r2 / dev-m4 | df14583 |
 | BUG-15 | M0 爆破防护半修：只签浏览 cookie 的成功分支仍 reset 滑窗→交替登录可无限猜 admin | 已修复 | test-m0-r2 / dev-m0 | 1fc82dc |
 | BUG-16 | M0 project() url 打码带 isinstance(str) 前置，dict/list 型 base-url 原样出站 | 已修复 | test-m0-r2 / dev-m0 | 009b3bd |
+- 第一批合并完成 @76b58cb：M0/M4/M6 零冲突并入，集成基线 验收 253红/100绿/3skip、unit 302 全绿。
+  worktree 已清，放 M1（阻塞项）@../ctgb-m1。
