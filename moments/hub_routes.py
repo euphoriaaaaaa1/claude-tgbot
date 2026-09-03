@@ -230,13 +230,22 @@ def _account_view(f):
     整条带出去就是把订阅凭证送到浏览器。邮箱只以打码形态出现，URL 段用 hash。
     """
     email, aliases = f.get("email"), _account_aliases(f)
+    # §4.1：activatable 含 activate 的**全部前置检查** —— 页面给得出的可点入口必须点了会成，
+    # 否则只是把失败从"按钮置灰"推迟到"点了报错"。两个理由分开报，页面给不同提示。
+    if f.get("provider") not in OAUTH_CALLBACK_PORTS:
+        # 用户自己用命令行登过的其它渠道：原样列出但不给切换入口（§10：隐藏会让人重复授权）
+        reason = "unsupported_provider"
+    elif not aliases:
+        reason = "no_alias"                     # 切过去 ANTHROPIC_MODEL 无值可写（§4.6）
+    else:
+        reason = None
     return {"provider": f.get("provider"),
             "email_masked": _mask_email(email),
             "email_hash": _email_hash(email),
             "status": "disabled" if f.get("disabled") else "active",
             "alias": aliases[0] if aliases else None,
-            # 用户自己用命令行登过的其它渠道原样列出，但不给切换入口（§10：隐藏会让人重复授权）
-            "activatable": f.get("provider") in OAUTH_CALLBACK_PORTS}
+            "activatable": reason is None,
+            "not_activatable_reason": reason}
 
 
 def _auth_files(client):
