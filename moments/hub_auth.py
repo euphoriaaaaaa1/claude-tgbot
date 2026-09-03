@@ -15,6 +15,8 @@ import hashlib
 import hmac
 import ipaddress
 import os
+import posixpath
+import re
 import secrets
 import threading
 import time
@@ -182,6 +184,17 @@ def _deny(error_code: str):
     return resp
 
 
+def is_admin_path(path: str) -> bool:
+    """管理锁的作用面判定：先归一化再比。
+
+    `/./hub/api/x`、`/x/../hub`、`/HUB` 今天靠"路由匹配不上回 404"兜着，
+    前置反代（nginx/CF）一做归一化就变成真绕过 —— 判定不能依赖路由表兜底。
+    尾界要卡死：`/hubx` 不是管理面，别误锁。
+    """
+    p = posixpath.normpath(re.sub(r"^/+", "/", path or "/")).lower()
+    return p == "/hub" or p.startswith("/hub/")
+
+
 def _eq(supplied, expected) -> bool:
     return hmac.compare_digest((supplied or "").encode("utf-8"), (expected or "").encode("utf-8"))
 
@@ -198,7 +211,7 @@ def install(app):
         # 只设 HUB_ADMIN_PASSWORD 没设 HUB_ACCESS_PASSWORD：用户显然想锁管理面。
         # 按 §1.0 规则 3（两个 cookie 缺一不可）这就是个**拿不到 hub_session** 的配置，
         # 管理面只能关死，绝不能因为"门关闭"就把 /hub 裸奔出去。
-        admin_scope = bool(admin_pw) and path.startswith("/hub")
+        admin_scope = bool(admin_pw) and is_admin_path(path)
         if not gate_open() and not admin_scope:
             return None                      # 门关闭：行为与改造前完全一致
         if path in PASSLIST:                 # 精确相等，不是前缀

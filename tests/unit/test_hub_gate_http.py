@@ -111,3 +111,35 @@ def test_只设admin口令时启动打WARN不拒绝启动(monkeypatch):
     assert A.check_startup("127.0.0.1", out=out, err=err) is None
     assert any(l.startswith("WARN:") for l in (out.getvalue() + err.getvalue()).splitlines())
     assert ADMIN not in out.getvalue() + err.getvalue()
+
+
+@pytest.mark.parametrize("path", ["/hub", "/hub/", "/hub/api/provider", "/./hub",
+                                  "/x/../hub/api/provider", "/HUB", "/Hub/API/x"])
+def test_管理锁的路径变体一律锁住(app_client, path):
+    """靠路由 404 兜住不算防住：前置反代一归一化就是真绕过。"""
+    c = app_client(PW, ADMIN)
+    _login(c, PW)                      # 只有全站 cookie
+    r = c.get(path, headers=FETCH)
+    assert r.status_code == 401 and r.get_json()["error"] == "admin_unauthorized", path
+
+
+def test_尾界_hubx不是管理面(app_client):
+    """§1.0：管理锁只管 `/hub` 与 `/hub/*`。/hubx 是别的路由，不该被误锁。"""
+    c = app_client(PW, ADMIN)
+    _login(c, PW)
+    r = c.get("/hubx", headers=FETCH)
+    assert r.status_code == 200, "/hubx 被管理锁误伤"
+
+
+def test_归一化不放宽放行清单(app_client):
+    """反向：放行清单仍是精确相等，/./login 不得被当成 /login 放行（fail-closed）。"""
+    c = app_client(PW, ADMIN)
+    assert c.get("/./login", headers=FETCH).status_code == 401
+
+
+def test_管理面判定的纯函数边界():
+    """`//hub` 只能在这一层验：werkzeug 的 test client 会把它当协议相对 URL（host=hub）。"""
+    for p in ("/hub", "/hub/", "//hub", "///hub/api", "/./hub", "/x/../hub", "/HUB", "/hub/api/x"):
+        assert A.is_admin_path(p), p
+    for p in ("/", "/hubx", "/hub-secret", "/styles", "/api/moments", "/hub/../x", ""):
+        assert not A.is_admin_path(p), p
