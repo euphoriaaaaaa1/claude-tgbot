@@ -109,7 +109,15 @@ def act(settings, providers=(), port=PORT):
 
 def test_四键全缺是claude_native():
     a, w = act({"model": "sonnet"})
-    assert (a["kind"], a["id"], w) == ("claude_native", None, [])
+    assert (a["kind"], a["id"], a["alias"], w) == ("claude_native", None, None, [])
+
+
+def test_alias恒取ANTHROPIC_MODEL原值_none态也回():
+    """页面要显示"现在钉在哪个模型名上"，判不出来源不等于读不出名字。"""
+    s = {"env": {"ANTHROPIC_BASE_URL": "https://other.example.com",
+                 "ANTHROPIC_MODEL": "gpt-5-turbo"}}
+    a, w = act(s, [_prov()])
+    assert (a["kind"], a["id"], a["alias"]) == ("none", None, "gpt-5-turbo")
 
 
 def test_不可解析是unknown并给warning():
@@ -147,7 +155,7 @@ def test_用户手写的第三方直连是none():
     s = {"env": {"ANTHROPIC_BASE_URL": "https://other.example.com",
                  "ANTHROPIC_MODEL": ALIAS}}
     a, w = act(s, [_prov()])
-    assert (a["kind"], a["id"], w) == ("none", None, [])
+    assert (a["kind"], a["id"], a["alias"], w) == ("none", None, ALIAS, [])
 
 
 @pytest.mark.parametrize("base", ["http://localhost:8317", "http://127.0.0.1:8317/",

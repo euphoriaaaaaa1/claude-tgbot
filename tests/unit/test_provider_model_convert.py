@@ -73,9 +73,33 @@ def test_claude与gemini块的key是标量字段(kind):
     assert "name" not in e                       # 这两个块没有 name 字段（config.example.yaml）
 
 
-def test_新建即disabled的开关如实落地():
-    assert to_block_entry(norm(), disabled=True)["disabled"] is True
-    assert to_block_entry(norm())["disabled"] is False
+@pytest.mark.parametrize("kind", ["openai", "anthropic", "gemini"])
+def test_落选条目靠prefix停用_当选条目prefix为空(kind):
+    """§3.0d：三块统一走 prefix，落选值 = 自己的 id。"""
+    p = norm(kind=kind)
+    assert to_block_entry(p, disabled=True)["prefix"] == provider_id(p)
+    assert to_block_entry(p)["prefix"] == ""
+
+
+@pytest.mark.parametrize("kind", ["openai", "anthropic", "gemini"])
+def test_绝不往cliproxy写disabled键(kind):
+    """disabled 只在 openai-compatibility 有，另两块会静默忽略 → 互斥失效、请求在两后端轮询。"""
+    for d in (True, False):
+        assert "disabled" not in to_block_entry(norm(kind=kind), disabled=d)
+
+
+def test_带prefix的条目读回来就是disabled():
+    e = to_block_entry(norm(), disabled=True)
+    assert from_block_entry("openai", e)["disabled"] is True
+    assert from_block_entry("openai", to_block_entry(norm()))["disabled"] is False
+
+
+def test_手写条目的原生disabled照样认():
+    """用户自己在 openai-compatibility 里写了 disabled:true —— cliproxy 真的不路由它，
+    报成 enabled 会让 §3.2 的 active 判定说谎。"""
+    e = to_block_entry(norm())
+    e["disabled"] = True
+    assert from_block_entry("openai", e)["disabled"] is True
 
 
 @pytest.mark.parametrize("kind", ["openai", "anthropic", "gemini"])

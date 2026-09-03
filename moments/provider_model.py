@@ -61,6 +61,19 @@ def _text(v):
     return v.strip() if isinstance(v, str) else ""
 
 
+def _s(v):
+    """把手写 config.yaml 里的非字符串标量降级成字符串（YAML 不加引号的 key/端口就是 int）。
+
+    §3.2 铁律是"列表端点恒 200"，所以读侧一个 TypeError 都不许冒到路由层。
+    dict/list 当成没填 —— str() 出来是垃圾，不如空。
+    """
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return str(v)
+    return ""
+
+
 def _bad_alias(v):
     """alias 规则（§3.3）：非空、不含 `/`、不含空白。haiku_alias 用完全相同的规则。"""
     return (not v) or ("/" in v) or any(c.isspace() for c in v)
@@ -211,6 +224,7 @@ def to_block_entry(p, disabled=False):
 
     §3.0c：models 必须**两条**，name 都是 upstream_model，alias 分别是主名与 haiku 名，
     两条都 force-mapping —— 少一条，claude CLI 的后台摘要请求就 502。
+    `disabled=True` 表示"落选"，按 §3.0d 落成 prefix（不是 cliproxy 的 disabled 键）。
     """
     spec = KIND_SPEC[p["kind"]]
     entry = {}
@@ -226,7 +240,10 @@ def to_block_entry(p, disabled=False):
     entry["models"] = [{"name": p["upstream_model"], "alias": alias,
                         "display-name": p["label"], "force-mapping": True}
                        for alias in (p["model_alias"], p["haiku_alias"])]
-    entry["disabled"] = bool(disabled)
+    # §3.0d：互斥靠 per-entry prefix，三块统一。落选 = prefix 设成自己的 id
+    # （配全局 force-model-prefix:true，裸官方名就不会命中它）；当选 = 空串。
+    # 禁止再写 cliproxy 的 disabled 键：它只在 openai-compatibility 有，另两块会静默忽略。
+    entry["prefix"] = provider_id(p) if disabled else ""
     return entry
 
 
@@ -248,7 +265,10 @@ def from_block_entry(kind, entry, active=False):
             "model_alias": alias,
             "haiku_alias": (models[1].get("alias") if len(models) > 1 else None),
             "key_masked": mask_key(entry_api_key(kind, entry)),
-            "disabled": bool(entry.get("disabled")),
+            # §3.0d：disabled 的语义 = "该条目当前带 prefix"。仍兼读用户手写的原生
+            # disabled（openai-compatibility 独有）—— 那种条目 cliproxy 真的不路由，
+            # 报成 enabled 会让 active 判定说谎。写只写 prefix，读两个都认。
+            "disabled": bool(_s(entry.get("prefix"))) or bool(entry.get("disabled")),
             "route": ROUTE, "active": bool(active)}
 
 
@@ -257,8 +277,8 @@ def alias_occupied(providers, aliases, exclude_id=None):
 
     唯一性只在运行时层保证（[RA] F2 裁决）：台账层允许重名，S1/S2 的场景本来就是
     多个来源争同一个官方 alias，切到谁才 enable 谁。
-    检查范围由调用方给：只传主 alias = 只保证主模型路由确定；连 haiku_alias 一起传
-    = 后台摘要请求的路由也确定（默认 haiku 名人人相同，等于同一时刻只许一个 enabled）。
+    §3.0c 定案：检查范围 = **主 alias ∪ haiku alias 并集**，任一被占即新建为 disabled。
+    因 haiku 默认值人人相同，**第二个起的 provider 必然创建即停用**，这是预期行为。
     """
     if aliases is None:
         aliases = []
@@ -350,12 +370,14 @@ def resolve_active(settings, port, providers):
     if settings is None:
         return {"kind": "unknown", "id": None, "alias": None}, ["settings_unparsable"]
     env = settings.get("env") or {}
+    # alias 恒取 ANTHROPIC_MODEL 原值（键缺失才 None），none/direct 态也回原值——
+    # 页面要能显示"现在到底钉在哪个模型名上"，判不出来源不等于读不出名字。
+    alias = env.get("ANTHROPIC_MODEL")
     if not any(k in env for k in ANTHROPIC_ENV_KEYS):
-        return {"kind": "claude_native", "id": None, "alias": None}, []
-    alias = env.get("ANTHROPIC_MODEL") or None
+        return {"kind": "claude_native", "id": None, "alias": alias}, []
     if not _points_at_cliproxy(env.get("ANTHROPIC_BASE_URL"), port):
         # 用户手写的第三方直连，匹配不上任何 provider（route:"direct" 当前不可达，§3.0b）
-        return {"kind": "none", "id": None, "alias": None}, []
+        return {"kind": "none", "id": None, "alias": alias}, []
     hit = [p for p in providers if p.get("model_alias") == alias]
     if not hit:
         return {"kind": "cliproxy", "id": None, "alias": alias}, ["active_unknown"]
