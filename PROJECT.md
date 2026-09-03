@@ -93,3 +93,6 @@
 - §12.6 fake-IP 裁决=方案A（字面量恒拦/198.18.0.0/15 解析判作废）。**合并后集成批**待办：
   ①provider_model 实现两层判定（T4–T6 用例随批次）②web.py:454 _BOT_PORTS 收拢到 bots_client
   ③M5 专码 400→409 两处（oauth_no_alias/oauth_state_expired）。
+- M7 实测零缺陷 ready-to-merge（探针 74 全绿：注入 32/并发/撕裂/10MB tail/探活上限）。两上限告知不改：
+  tail 全量缓冲 100MB→+310MB RSS（重启脚本自吐才触发）；探活 ≥16 卡死 bot 时队尾误报 offline（本仓 1 bot）。
+  跑法注意：tests/unit 与 acceptance/provider_hub 两份顶层 conftest 重名，同一次 pytest 收集会 ImportError，须分开跑（验收阶段照此）。
