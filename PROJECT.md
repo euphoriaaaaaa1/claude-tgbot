@@ -73,3 +73,7 @@
 - 第一批合并完成 @76b58cb：M0/M4/M6 零冲突并入，集成基线 验收 253红/100绿/3skip、unit 302 全绿。
   worktree 已清，放 M1（阻塞项）@../ctgb-m1。
 - M1 骨架并入 @merge（验收净+23 绿、页面组 15/15；其行为全被锁定验收覆盖故免独立实测轮）。放 M2 @../ctgb-m2。
+- M2 并入：V1–V4 真机 9/9 过（prefix 互斥实证），unit 390 全绿零回归。真机五发现已注释落字
+  （桩/真机形状差 unwrap_list 兼容、未知模型 400 非 502、healthz 无版本、GET /v0/management/config 回明文 key 禁调、
+  secret-key 启动即 bcrypt 化）。两偏离备案：set_alias_exclusive 整条替换语义、COMPAT 缺失取 1。
+  放最后三线：M3/M5/M7 @../ctgb-{m3,m5,m7}。
