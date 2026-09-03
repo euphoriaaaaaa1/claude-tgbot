@@ -35,8 +35,11 @@
 - 04 开发启动 @eddfc4c：3 条 worktree 并行（上限3，压掉方案里的4）——
   [测] M0 鉴权门+骨架  dev-m0 交付 @538470f（验收 270红/83绿），模块实测中
   [测] M4 纯函数层     dev-m4 交付 @e2b4790（单测 180 绿），模块实测中；4 契约疑问已发 planner
-  [ ] M6 安装与常驻   负责 dev-m6@feature/ph-m6（../ctgb-m6）
+  [测] M6 安装与常驻   dev-m6 交付 @608b452（install 组 24/24 绿，真包端到端通），模块实测中
   串行队列：M1 空壳骨架（M0 合并后）→ M2 客户端 → M3/M5/M7 → M8。桩已随测试锁定交付，M2 起只读复用。
 - M0→M1 交接备忘：feed/styles 各补一行 href="/hub"（归 M1）；/hub/healthz 已在 hub_auth.install() 注册，M1 勿重复。
   M0 自主裁决待 planner 备案：404/405 JSON 化范围含 /api/*。.gitignore 待补 state.db*（合并时主会话处理）。
   基线数字注意：test_startup_gate 起真子进程有 ±5 抖动（两方独立观测到），验收阶段以干净环境连跑两次为准。
+- M6 备忘：A12/C1（门户 plist 自动注册）因需动白名单外的 moments-web.plist.tmpl 与 run_moments_web.sh
+  （后者写死 cd $HOME/claudebotlife 是既有 bug）未做——归 M8/合并后主线。白名单外增补 run-cliproxy.ps1
+  （B4 硬断言依据）与 .gitignore 两行，接受。顺手修：bash 变量紧跟中文标点在 C locale 吃字节的真 bug。
