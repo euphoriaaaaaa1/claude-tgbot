@@ -70,14 +70,20 @@ def project(block, fields=SAFE_FIELDS, model_fields=MODEL_SAFE_FIELDS) -> dict:
         if k not in block:
             continue
         v = block[k]
-        if isinstance(v, str) and "@" in v and k.endswith("url"):
-            out[k] = _URL_USERINFO_RE.sub(r"\1****@", v)
-        elif k == "models":
+        if k == "models":
             out[k] = [project(m, model_fields, model_fields) for m in v] if isinstance(v, list) else []
         elif is_secret_field(k):
             out[k] = mask(v)
-        else:
+        elif isinstance(v, str):
+            out[k] = _URL_USERINFO_RE.sub(r"\1****@", v)
+        elif isinstance(v, (bool, int, float)) or v is None:
             out[k] = v
+        elif k == "excluded-models" and isinstance(v, list):
+            out[k] = [x for x in v if isinstance(x, str)]
+        else:
+            # 白名单字段拿到意料外的类型（dict/list/自定义对象）：绝不原样透传 ——
+            # 上游把凭据塞进 {"base-url": {...}} 就能整包漏出去。
+            out[k] = "<invalid>"
     return out
 
 
