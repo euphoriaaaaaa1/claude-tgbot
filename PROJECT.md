@@ -52,3 +52,10 @@
 | BUG-01 | config 骨架缺 force-model-prefix（§3.0d 后加键，缺则切换静默失效） | 修复中 | test-m6 / dev-m6 | |
 | BUG-02 | install.sh ⑥体检：无常驻单元走 else 仍报"就绪"，grep 只匹配目录串 | 修复中 | test-m6 / dev-m6 | |
 | BUG-03 | Linux unit 用 EnvironmentFile 把含口令的 hub.env 注进 cliproxy 进程 | 修复中 | test-m6 / dev-m6 | |
+| BUG-04 | M4 from_block_entry 数字型字段 TypeError 崩（mask_key/derive_id） | 修复中 | test-m4 / dev-m4 | |
+| BUG-05 | M4 不配对方括号 URL：urlsplit 在 try 外 → 500 而非 400 bad_base_url | 修复中 | test-m4 / dev-m4 | |
+| BUG-06 | M4 非 UTF-8 settings 裸 UnicodeDecodeError（只 catch OSError） | 修复中 | test-m4 / dev-m4 | |
+| BUG-07 | M4 孤代理字符落盘裸 UnicodeEncodeError，绕过 HubError 补偿契约 | 修复中 | test-m4 / dev-m4 | |
+| BUG-08 | M4 id 派生分隔符可注入：不同四元组同 id f9b581f6 | 修复中 | test-m4 / dev-m4 | |
+| 口径 | §3.0d：disabled→prefix、active.alias 回 env 原值（裁决后变更） | 修复中 | planner / dev-m4 | |
+| 文档 | CGNAT 段/零宽 RTL/BOM 自愈/软链语义/"归一化"名不副实 → 待 planner 补文 | 待处理 | test-m4 / planner | |
