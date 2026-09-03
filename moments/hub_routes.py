@@ -460,36 +460,382 @@ hub_bp.record_once(lambda _state: _reconcile())
 # 回调端口取本模块顶部的 OAUTH_CALLBACK_PORTS，别再写一张表。
 # §4.1 恒 200：读不出来时 accounts=[] + warnings 非空，页面才打得开。
 # ======================================================================
+# 段内 import：段界就是并行分工线（见文件顶注），各段各带各的依赖，
+# 谁也不用改文件顶部那几行 —— 并行 worktree 合并时零冲突。
+import functools                                              # noqa: E402
+import hashlib                                                # noqa: E402
+import threading                                              # noqa: E402
+import time                                                   # noqa: E402
+from urllib.parse import parse_qs, quote, urlsplit            # noqa: E402
+
+from flask import current_app, request                        # noqa: E402
+
+from moments import cliproxy_client, redact, settings_io      # noqa: E402
+from moments.provider_model import HubError                   # noqa: E402
+
+#: 本进程发出去的授权会话：state -> (provider, 发出时刻)。5 分钟窗口一过就当没发过 ——
+#: §4.4 的「未知 / 已过期」本来就是同一个态（都得让用户重开一次授权）。
+#: ponytail: 进程内内存，门户是单进程 Flask 够用；真上多 worker 得挪到共享存储。
+_OAUTH_SESSIONS = {}
+
+_STATUS_TEXT = {"ok": "授权已完成", "wait": "还在等授权完成…", "error": "授权失败，请重新开始"}
+
+#: §4.3：超窗、失配、已消费三种情况用户看到同一句话 —— 动作都是"重走一次 start"。
+_STATE_EXPIRED_TEXT = "授权会话已过期或已被新的登录取代，请重新点击开始登录"
+
+#: §4.6：detail 必须指出修复路径，否则用户拿到 409 完全无从下手。
+_NO_ALIAS_TEXT = ("该账户尚未配置模型映射，请在 cliproxy 的 oauth-model-alias（按渠道）"
+                  "或该账户 auth JSON 的 model_aliases 里加一条")
+
+
+def _json_errors(fn):
+    """HubError -> §0.1 的 ``{"error","detail"}`` + 状态码。
+
+    M3/M7 落地时如果也要，提到文件顶部共用即可（现在提上去只会跟并行分支抢同一行）。
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except HubError as e:
+            return jsonify({"error": e.error, "detail": e.detail}), e.status
+    return wrapper
+
+
+def _json_body():
+    """§0.1 通则：请求体不是 JSON 对象一律 ``400 bad_body``（BUG-18）。
+
+    ``get_json(silent=True)`` 对**合法但顶层是数组/字符串/数字/布尔**的体会原样返回，
+    再 ``body.get()`` 就是 AttributeError → 500，把用户的输入错误说成门户坏了。
+    空体 / Content-Type 不对回 ``None`` → 按"体缺失"当空对象，
+    交给各端点自己的必填校验去报更准的码（如 ``bad_provider``）。
+    """
+    body = request.get_json(silent=True)
+    if body is None:
+        return {}
+    if not isinstance(body, dict):
+        raise HubError(400, "bad_body", "请求体必须是一个 JSON 对象")
+    return body
+
+
+def _provider_or_400(raw):
+    """§4：枚举只有 codex / antigravity。anthropic 被显式移除（Claude 走 §5 原生订阅）。"""
+    if isinstance(raw, str) and raw in OAUTH_CALLBACK_PORTS:
+        return raw
+    raise HubError(400, "bad_provider", "只支持 ChatGPT（codex）与 Google（antigravity）")
+
+
+def _remember_state(state, provider):
+    now = time.monotonic()
+    for s, (_p, t) in list(_OAUTH_SESSIONS.items()):    # 快照迭代：并发轮询时不会炸
+        if now - t > OAUTH_WAIT_SECONDS:
+            _OAUTH_SESSIONS.pop(s, None)
+    _OAUTH_SESSIONS[state] = (provider, now)
+
+
+def _state_alive(state, provider=None):
+    """state 是不是本进程 5 分钟内发出去的（给了 provider 就连渠道一起对）。"""
+    got = _OAUTH_SESSIONS.get(state)
+    if not got or time.monotonic() - got[1] > OAUTH_WAIT_SECONDS:
+        return False
+    return provider is None or got[0] == provider
+
+
+def _consume_state(state, provider):
+    """§4.3 的"校验 + 用过即焚"，**必须是一步**：分两步做的话，一串 state 的并发重放
+    能在删除落地之前同时穿过检查，全都被转发给 cliproxy —— ㊱ 要防的就是这个放大器。
+
+    ``dict.pop`` 在 GIL 下是原子的，所以"摘牌"这一下天然只有一个请求拿得到。
+    返回摘下来的记录，供转发失败时挂回去（§4.3：只有 200 才作废）。
+    失配 / 超窗 / 已被消费三种情况同码同文案 —— 用户的动作都是重走一次 start。
+    """
+    got = _OAUTH_SESSIONS.pop(state, None)
+    if (got is None or got[0] != provider
+            or time.monotonic() - got[1] > OAUTH_WAIT_SECONDS):
+        raise HubError(409, "oauth_state_expired", _STATE_EXPIRED_TEXT)
+    return got
+
+
+def _mask_email(email):
+    """§4.1：本地部分只留首字符（与 key_masked 同思路）。"""
+    local, at, domain = (email if isinstance(email, str) else "").partition("@")
+    return (local[:1] or "") + "****" + at + domain
+
+
+def _email_hash(email):
+    """§4.5/§4.6 的 URL 段 = ``sha1(email)[:8]``：完整邮箱不进 URL（[SEC] 2.1 坑 1）。"""
+    raw = email if isinstance(email, str) else ""
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+
+
+def _account_aliases(f):
+    """该账户登记的官方 alias（键序 = §10 里 model_aliases 的插入序，第一个是主 alias）。"""
+    m = f.get("model_aliases")
+    return [k for k in m if isinstance(k, str) and k] if isinstance(m, dict) else []
+
+
+def _account_view(f):
+    """§10 的 ``files[]`` 条目 → §4.1 的 ``accounts[]`` 对象。
+
+    **只投影这六个字段**（§0.2 第一层）：auth-file 里还躺着 OAuth 令牌之类，
+    整条带出去就是把订阅凭证送到浏览器。邮箱只以打码形态出现，URL 段用 hash。
+    """
+    email, aliases = f.get("email"), _account_aliases(f)
+    # §4.1：activatable 含 activate 的**全部前置检查** —— 页面给得出的可点入口必须点了会成，
+    # 否则只是把失败从"按钮置灰"推迟到"点了报错"。两个理由分开报，页面给不同提示。
+    if f.get("provider") not in OAUTH_CALLBACK_PORTS:
+        # 用户自己用命令行登过的其它渠道：原样列出但不给切换入口（§10：隐藏会让人重复授权）
+        reason = "unsupported_provider"
+    elif not aliases:
+        reason = "no_alias"                     # 切过去 ANTHROPIC_MODEL 无值可写（§4.6）
+    else:
+        reason = None
+    return {"provider": f.get("provider"),
+            "email_masked": _mask_email(email),
+            "email_hash": _email_hash(email),
+            "status": "disabled" if f.get("disabled") else "active",
+            "alias": aliases[0] if aliases else None,
+            "activatable": reason is None,
+            "not_activatable_reason": reason}
+
+
+def _auth_files(client):
+    """读 OAuth 账户列表。真机回 ``{"files":[...]}``（键名≠路径段，M2 实测），桩同形。"""
+    got = client.mgmt_get("auth-files")
+    return [f for f in cliproxy_client.unwrap_list(got, "files", "auth-files")
+            if isinstance(f, dict)]
+
+
+def _find_account(files, provider, email_hash):
+    for f in files:
+        if f.get("provider") == provider and _email_hash(f.get("email")) == email_hash:
+            return f
+    raise HubError(404, "not_found", "没有这个 OAuth 账户")
 
 
 @hub_bp.get("/hub/api/oauth/accounts")
 def oauth_accounts():
-    return _todo()
+    """§4.1：**恒 200**（页面要能开）。三种故障态一律 accounts=[] + warnings 非空，
+    与「一个都没登过」（warnings 是空数组）严格可区分。"""
+    try:
+        files = _auth_files(cliproxy_client.from_env())
+    except HubError as e:
+        warn = (e.error if e.error in ("cliproxy_unconfigured", "cliproxy_down")
+                else "cliproxy_error")      # 管理 API 非 2xx：§7 规定只作为 warning 出现
+        return jsonify({"accounts": [], "warnings": [warn]})
+    return jsonify({"accounts": [_account_view(f) for f in files], "warnings": []})
 
 
 @hub_bp.post("/hub/api/oauth/start")
+@_json_errors
 def oauth_start():
-    return _todo()
+    body = _json_body()
+    provider = _provider_or_400(body.get("provider"))
+    client = cliproxy_client.from_env()          # 没配 → 503 cliproxy_unconfigured（§0.3）
+    data = client.mgmt_get("%s-auth-url" % provider)
+    data = data if isinstance(data, dict) else {}
+    url, state = data.get("url"), data.get("state")
+    # 这个 url 会被页面渲染成可点链接，非 http(s) 一律不接（本机 cliproxy 被替换掉时的兜底）。
+    if not (isinstance(url, str) and url.startswith(("http://", "https://"))
+            and isinstance(state, str) and state):
+        raise HubError(502, "cliproxy_reject", "cliproxy 没给出可用的授权链接")
+    _remember_state(state, provider)
+    return jsonify({"url": url, "state": state,
+                    "callback_port": OAUTH_CALLBACK_PORTS[provider],
+                    "expires_in": OAUTH_WAIT_SECONDS})
+
+
+def _split_callback(raw):
+    """§4.3 形式一：把粘回来的整串回调 URL 拆成 ``(code, state)``。
+
+    只认**绝对 http(s) URL**：``localhost:1455/...``、``/callback?...``、``javascript:``
+    这些都不是用户从地址栏整串复制出来的东西（§4.7 引导的就是"整串"）。
+    """
+    parts = urlsplit(raw) if isinstance(raw, str) else None
+    if parts is None or parts.scheme not in ("http", "https") or not parts.netloc:
+        raise HubError(400, "bad_redirect_url",
+                       "请把浏览器地址栏里以 http:// 开头的**整串**地址粘进来")
+    q = parse_qs(parts.query)
+    code = (q.get("code") or [""])[0]
+    if not code:
+        # URL 形状对但没有 code：多半是粘了授权页而不是回调页。早说清楚，
+        # 比原样送给 cliproxy 换回一个 502 好懂得多。
+        raise HubError(400, "bad_redirect_url", "这串地址里没有 code 参数，粘错页面了？")
+    return code, (q.get("state") or [""])[0]
 
 
 @hub_bp.post("/hub/api/oauth/submit")
+@_json_errors
 def oauth_submit():
-    return _todo()
+    body = _json_body()
+    provider = _provider_or_400(body.get("provider"))
+    if "redirect_url" in body:                            # 形式一：整串回调 URL
+        redirect_url = body["redirect_url"]
+        code, state = _split_callback(redirect_url)
+    elif body.get("code"):                                # 形式二：code + state
+        redirect_url, code, state = None, str(body["code"]), body.get("state")
+        if not isinstance(state, str) or not state:
+            raise HubError(400, "bad_body", "code 形式必须同时带 state")
+    else:
+        raise HubError(400, "bad_body", "请给 redirect_url，或 code + state")
+    # state 只在**给了**的时候校验：各家回调不一定带 state，没带的那层由 cliproxy 自己兜。
+    ticket = _consume_state(state, provider) if state else None
+    try:
+        client = cliproxy_client.from_env()
+        payload = {"provider": provider, "code": code, "state": state}
+        if redirect_url:        # 两种字段都送：真机认哪个由 cliproxy 定，桩两种都认
+            payload["redirect_url"] = redirect_url
+        client.mgmt_post("oauth-callback", payload)
+    except HubError:
+        if ticket is not None:  # §4.3：只有 200 才作废，失败时挂回去让用户能重试
+            _OAUTH_SESSIONS[state] = ticket
+        raise
+    return jsonify({"ok": True})               # §4.3：只表示已提交，不代表已落盘
 
 
 @hub_bp.get("/hub/api/oauth/status")
+@_json_errors
 def oauth_status():
-    return _todo()
+    state = (request.args.get("state") or "").strip()
+    if not state:
+        raise HubError(400, "bad_body", "缺 state")
+    client = cliproxy_client.from_env()
+    # 先问 cliproxy、再判本地会话：cliproxy 没跑时哪怕 state 是瞎编的也得回 503，
+    # 否则页面会把「依赖挂了」显示成「会话过期」，用户只会一遍遍重开授权（§4.4 用例）。
+    data = client.mgmt_get("get-auth-status?state=%s" % quote(state, safe=""))
+    if not _state_alive(state):
+        # §4.4 [R4D] I1-9：它是流程状态不是资源，**200 不是 404** —— 页面轮询不该被打断。
+        return jsonify({"status": "error", "detail": "授权会话不存在或已过期，请重新开始"})
+    data = data if isinstance(data, dict) else {}
+    raw = data.get("status")
+    # 认不出的上游态一律当"还在等"：页面有 5 分钟倒计时兜底，不会无限转圈；
+    # 反过来把未知当 error 会在上游改字面量时误报"授权失败"。
+    status = raw if raw in ("ok", "wait", "error") else "wait"
+    detail = next((data[k] for k in ("detail", "message")
+                   if isinstance(data.get(k), str) and data[k]), "")
+    return jsonify({"status": status,
+                    "detail": redact.scrub_text(detail)[:200] if detail else _STATUS_TEXT[status]})
+
+
+def _is_active(port, aliases):
+    """这些 alias 里有没有正被 settings.json 钉住的（§4.5 ``delete_active`` 的判据）。
+
+    只判到「settings 指着本机 cliproxy 且 ANTHROPIC_MODEL 是它登记的 alias」这一层：
+    同一个 alias 也可能同时挂着第三方 provider 条目，最终谁接管由 §3.0d 的 prefix 决定，
+    读侧看不出来。宁可多拦一次删除，也别把用户正在用的账户删掉。
+    settings 读不出/写坏了 → 证明不了它 active，按 §4.5 照常放行（该端点没有 unparsable 态）。
+    """
+    if not aliases:
+        return False
+    try:
+        settings = provider_model.parse_settings(
+            settings_io.read_text(provider_model.settings_path()))
+    except HubError:
+        return False
+    act, _warnings = provider_model.resolve_active(settings, port, [])
+    return act["kind"] == "cliproxy" and act["alias"] in aliases
 
 
 @hub_bp.delete("/hub/api/oauth/accounts/<provider>/<email_hash>")
+@_json_errors
 def oauth_account_delete(provider, email_hash):
-    return _todo()
+    client = cliproxy_client.from_env()
+    acc = _find_account(_auth_files(client), provider, email_hash)
+    if _is_active(client.port, _account_aliases(acc)):
+        raise HubError(409, "delete_active", "这是当前生效的账户，先切到别的来源再删")
+    # 用 name（auth-dir 里的文件名）定位，走请求体不走 URL —— 邮箱不进任何 URL。
+    client.mgmt_delete("auth-files", {"name": acc.get("name")})
+    return jsonify({"ok": True})
+
+
+def _claim_aliases(client, aliases, undo):
+    """§3.6 B1 的 OAuth 版：让这些 alias 下的第三方 provider 条目全部让位。
+
+    手段与 §3.0d 一致 —— 落选条目 ``prefix`` = 它自己的 id，裸官方名才只命中我们要的那边。
+    改过谁**原地追加**进 ``undo``（中途抛错时调用方照样拿得到已改的那部分，能补偿）。
+    ponytail: 同渠道的其它 OAuth 账户一律不动 —— 多账户共用一个 alias 是配额池不是冲突，
+    禁掉它们等于把用户刚登的号白登了。
+    """
+    for e in client.entries():
+        own = {a for a in (e.view.get("model_alias"), e.view.get("haiku_alias")) if a}
+        if not own & aliases:
+            continue
+        old = e.raw.get("prefix")
+        old = old if isinstance(old, str) else ""
+        if old == e.view["id"]:
+            continue                    # 已经让过位：不重复写（幂等重跑零写入）
+        client.replace_entry(e.kind, e.index, dict(e.raw, prefix=e.view["id"]))
+        undo.append({"kind": e.kind, "index": e.index, "prefix": old})
+
+
+def _compensate(client, undo):
+    """§3.6 的补偿：prefix 原样写回、被我们启用的账户再禁回去。补偿本身失败 = 不一致态。"""
+    try:
+        client.restore_prefixes([r for r in undo if "kind" in r])
+        for r in undo:
+            if "account" in r:
+                client.mgmt_patch("auth-files/status",
+                                  {"name": r["account"], "disabled": True})
+    except HubError:
+        raise HubError(500, "activate_partial",
+                       "cliproxy 已改、settings.json 未改，请重试或手动检查")
+
+
+def _activate_lock():
+    """§12.8 ㊴：三个写 settings.json 的入口（§3.6 / §4.6 / §5）共用的一把非阻塞锁。
+
+    键名与对象都定死在 ``app.extensions["hub_activate"]``（与 §6.2 重启锁同款作用域）：
+    第 2 段的模块级辅助落地后，同键 ``setdefault`` 拿到的就是同一把锁，天然合一。
+    ``dict.setdefault`` 在 GIL 下原子，两个并发请求不会各造一把。
+    """
+    return current_app.extensions.setdefault("hub_activate", threading.Lock())
 
 
 @hub_bp.post("/hub/api/oauth/accounts/<provider>/<email_hash>/activate")
+@_json_errors
 def oauth_account_activate(provider, email_hash):
-    return _todo()
+    """§4.6 = §3.6 的 cliproxy 形态，阶段顺序照抄：A0 抢锁 / A 只读 / B 可补偿 / C 不可回退。"""
+    # A0：拿不到就 409，**不排队**（§12.8 ㊴）—— 切换是秒级人工操作，排队只会把
+    # "两个标签页各点一次"变成"看起来都成了、实际后一次覆盖前一次"。
+    lock = _activate_lock()
+    if not lock.acquire(blocking=False):
+        raise HubError(409, "activate_busy", "另一个切换正在进行，请稍后再试")
+    try:
+        return _activate_locked(provider, email_hash)
+    finally:
+        lock.release()
+
+
+def _activate_locked(provider, email_hash):
+    client = cliproxy_client.from_env()
+    acc = _find_account(_auth_files(client), provider, email_hash)           # A1
+    # 列表给的是 activatable:false，接口就不能背着页面把它切了 —— 用户自己用命令行登过的
+    # 其它渠道（典型是 anthropic）只许看与删，切 Claude 订阅走 §5 的原生端点。
+    _provider_or_400(provider)
+    aliases = _account_aliases(acc)
+    if not aliases:
+        # §4.6 专码：请求体是空对象，用户没传错任何东西 —— 是账户还没被映射到官方模型名
+        # 这个**状态**问题（切过去 ANTHROPIC_MODEL 无值可写），归 409 不归 400。
+        raise HubError(409, "oauth_no_alias", _NO_ALIAS_TEXT)
+    path = provider_model.settings_path()
+    settings = provider_model.parse_settings(settings_io.read_text(path))    # A2
+    if not settings_io.dir_writable(path):                                   # A3
+        raise HubError(500, "settings_write_failed", "settings.json 所在目录不可写")
+    client.healthz()                                                         # A4
+    undo = []
+    try:
+        _claim_aliases(client, set(aliases), undo)                           # B1
+        if acc.get("disabled"):                                              # B2
+            client.mgmt_patch("auth-files/status",
+                              {"name": acc.get("name"), "disabled": False})
+            undo.append({"account": acc.get("name")})
+        settings_io.write_json_atomic(                                       # C
+            path, provider_model.apply_cliproxy_env(settings, client.port,
+                                                    client.api_key, aliases[0]))
+    except HubError:
+        _compensate(client, undo)       # 补偿再失败会抛 500 activate_partial 顶掉原错
+        raise
+    return jsonify({"ok": True, "active_kind": "cliproxy"})
 
 
 # ======================================================================

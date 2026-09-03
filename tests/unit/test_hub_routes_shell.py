@@ -20,12 +20,8 @@ TEMPLATES = Path(__file__).resolve().parents[2] / "moments" / "templates"
 # 第 2 段（provider CRUD / activate / claude-native / 自测）已由 M3 填完，
 # 用例挪到 tests/unit/test_hub_routes_provider.py，故不在此清单里。
 SHELL_ENDPOINTS = [
-    ("GET", "/hub/api/oauth/accounts"),
-    ("POST", "/hub/api/oauth/start"),
-    ("POST", "/hub/api/oauth/submit"),
-    ("GET", "/hub/api/oauth/status?state=x"),
-    ("DELETE", "/hub/api/oauth/accounts/codex/3f9a2c1b"),
-    ("POST", "/hub/api/oauth/accounts/codex/3f9a2c1b/activate"),
+    # 三段（provider/OAuth/bots）均已实现，空壳清单归空；各段契约见
+    # test_hub_routes_provider.py / test_hub_oauth.py / test_bots_client.py
     ("GET", "/hub/api/bots"),
     ("POST", "/hub/api/bots/restart"),
     ("GET", "/hub/api/bots/restart/deadbeef"),
