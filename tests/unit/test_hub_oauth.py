@@ -337,13 +337,14 @@ def test_status带state去问cliproxy且做了转义(api, env):
 
 # ---------------- §4.1 accounts ----------------
 
-def test_账户列表六个字段如实产出(api, env):
+def test_账户列表七个字段如实产出(api, env):
     env.seed_auth_file(provider="codex", email=EMAIL)
     code, body = api.get("/hub/api/oauth/accounts")
     assert code == 200, body
     assert body["accounts"] == [{"provider": "codex", "email_masked": "a****@example.com",
                                  "email_hash": env.email_hash(EMAIL), "status": "active",
-                                 "alias": ALIAS, "activatable": True}]
+                                 "alias": ALIAS, "activatable": True,
+                                 "not_activatable_reason": None}]
     assert body["warnings"] == []
 
 
@@ -362,14 +363,18 @@ def test_命令行登过的其它渠道原样列出但不给切换入口(api, en
     env.seed_auth_file(provider="anthropic", email="carol@example.com")
     acc = api.get("/hub/api/oauth/accounts")[1]["accounts"][0]
     assert (acc["provider"], acc["activatable"]) == ("anthropic", False)
+    assert acc["not_activatable_reason"] == "unsupported_provider"
 
 
-def test_没登记别名的账户alias是None(api, env):
+def test_没登记别名的账户alias是None且不给切换入口(api, env):
+    """§4.1 ㊲：activatable 必须含 activate 的前置检查，否则页面给一个点了必 409 的按钮。"""
     env.seed_auth_file(email=EMAIL, alias=None)
-    assert api.get("/hub/api/oauth/accounts")[1]["accounts"][0]["alias"] is None
+    acc = api.get("/hub/api/oauth/accounts")[1]["accounts"][0]
+    assert acc["alias"] is None and acc["activatable"] is False
+    assert acc["not_activatable_reason"] == "no_alias"
 
 
-def test_列表只投影六个字段_令牌之类不出站(api, env):
+def test_列表只投影安全字段_令牌之类不出站(api, env):
     """§0.2 第一层：auth-file 里还躺着 OAuth 凭证，整条带出去就是把订阅送到浏览器。"""
     f = env.seed_auth_file(email=EMAIL)
     f["refresh_token"] = "sk-test-refresh-000000000000"
@@ -377,8 +382,8 @@ def test_列表只投影六个字段_令牌之类不出站(api, env):
     code, body = api.get("/hub/api/oauth/accounts")
     dumped = json.dumps(body, ensure_ascii=False)
     assert "refresh" not in dumped and "ya29" not in dumped and "sk-test-refresh" not in dumped
-    assert set(body["accounts"][0]) == {"provider", "email_masked", "email_hash",
-                                        "status", "alias", "activatable"}
+    assert set(body["accounts"][0]) == {"provider", "email_masked", "email_hash", "status",
+                                        "alias", "activatable", "not_activatable_reason"}
 
 
 def test_完整邮箱既不出站也不进URL段(api, env):
@@ -710,3 +715,17 @@ def test_没带state的提交不影响别的会话(api, env):
     st = _start(api)
     assert api.post("/hub/api/oauth/submit", {"provider": "codex", "redirect_url": CB})[0] == 200
     assert st in hub_routes._OAUTH_SESSIONS, "没带 state 的提交把别人的会话清了"
+
+
+def test_列表里activatable为true的账户点了一定切得成(api, env, settings_file):
+    """㊲ 的唯一意义：可点入口保证点了会成。拿列表结果直接驱动 activate。"""
+    env.seed_auth_file(email=EMAIL, alias=ALIAS)
+    env.seed_auth_file(provider="anthropic", email="carol@example.com")
+    env.seed_auth_file(email="bob@example.com", alias=None)
+    accounts = api.get("/hub/api/oauth/accounts")[1]["accounts"]
+    ok = [a for a in accounts if a["activatable"]]
+    assert len(ok) == 1 and ok[0]["email_hash"] == env.email_hash(EMAIL)
+    for a in accounts:
+        code, _b = api.post("/hub/api/oauth/accounts/%s/%s/activate"
+                            % (a["provider"], a["email_hash"]))
+        assert (code == 200) is a["activatable"], (a, code)
