@@ -190,12 +190,17 @@ def resolve_host(host):
 
 
 def derive_id(block, base_url, upstream_model, model_alias):
-    """§3.1：id 是派生的不是存储的 —— sha1(block|base_url|upstream_model|alias)[:8]。
+    r"""§3.1：id 是派生的不是存储的 —— sha1(block|base_url|upstream_model|alias)[:8]。
 
     不含 haiku_alias（改 haiku 名不换 id）、不含 label（改显示名不换 id）。
+
+    字段自身可能含 `|`（base_url 的 path 与 upstream_model 都没有字符集限制），
+    直接 join 会错位：不同四元组拼出同一串 → 同一个 id → PATCH/DELETE 打到别人身上。
+    所以先转义 `\` 与 `|` 再拼。**不含这两个字符的字段（现实里的全部条目）id 不变。**
     """
-    raw = "|".join([block, base_url, upstream_model, model_alias])
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+    parts = [f.replace("\\", "\\\\").replace("|", "\\|")
+             for f in (block, base_url, upstream_model, model_alias)]
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:8]
 
 
 def provider_id(p):

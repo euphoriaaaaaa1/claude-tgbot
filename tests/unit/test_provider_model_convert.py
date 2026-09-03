@@ -212,3 +212,28 @@ def test_数字key照样被脱敏成末四位():
                                          "models": [{"name": "m", "alias": "x"}]})
     assert out["key_masked"] == "****7890"
     assert "1234567890" not in out["key_masked"]
+
+
+# ---------------- BUG-08：分隔符注入 ----------------
+
+def test_字段里带竖线的两条provider不得撞id():
+    """错位拼接后哈希输入相同 → 同一个 id → §3.4 PATCH / §3.5 DELETE 打到另一条上。"""
+    a = norm(base_url="https://api.test/v1|x", upstream_model="m")
+    b = norm(base_url="https://api.test/v1", upstream_model="x|m")
+    assert provider_id(a) != provider_id(b)
+    c = norm(upstream_model="m|al", model_alias="x")
+    d = norm(upstream_model="m", model_alias="al|x")
+    assert provider_id(c) != provider_id(d)
+
+
+def test_反斜杠也不能制造错位():
+    a = norm(upstream_model="m\\", model_alias="|x")
+    b = norm(upstream_model="m", model_alias="x")
+    assert provider_id(a) != provider_id(b)
+
+
+def test_不含竖线反斜杠的id与文档写法逐字节一致():
+    """转义只在含 | 或 \\ 时改变哈希输入 —— 现实中的条目 id 全部保持不变。"""
+    want = hashlib.sha1(("openai-compatibility|https://api.deepseek.com/v1|"
+                         "deepseek-v4-flash|" + ALIAS).encode("utf-8")).hexdigest()[:8]
+    assert provider_id(norm()) == want
