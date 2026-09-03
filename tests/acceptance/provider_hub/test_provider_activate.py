@@ -191,50 +191,20 @@ def test_写settings用的临时文件不是可预测的固定名(api, settings_
     assert not any(s.endswith("settings.json.hubtmp") for s in seen)
 
 
-# ---------------- §3.0b / §3.6 anthropic-direct 形态 ----------------
+# ⑩（修订 4）：`anthropic-direct` 永不启用（S0-B 已实证 claude-api-key 能承载第三方端点），
+# 原先 3 条 direct activate 用例删除。改为一条恒真断言：anthropic 条目也走 cliproxy 路由。
 
-def _direct_api(make_client):
-    from conftest import _Api
-    c, _ = make_client(CLIPROXY_ANTHROPIC_COMPAT="0")
-    return _Api(c)
-
-
-def _mk_anthropic(a):
-    """§3.0 修订 3：anthropic **恒可建**，S0-B 只改 route，不改能不能建。"""
-    code, body = a.post("/hub/api/provider", provider_payload(
+def test_anthropic条目也按cliproxy形态写settings(api, stub, settings_path):
+    """§3.1 修订 4：route 恒 "cliproxy"，所以 BASE_URL 指本机 8317 而不是用户端点。"""
+    code, p = api.post("/hub/api/provider", provider_payload(
         kind="anthropic", label="第三方 Anthropic 网关",
         base_url="https://gw.example.com", upstream_model="glm-4.6"))
-    assert code == 201, "anthropic 恒可建（§3.0 表 + §3.3 校验表），实得 %s %s" % (code, body)
-    return body
-
-
-def test_兼容标志为0时anthropic条目的route是direct(make_client):
-    a = _direct_api(make_client)
-    p = _mk_anthropic(a)
-    assert p["route"] == "direct"
-
-
-def test_direct形态在cliproxy挂掉时也能切换成功(make_client, settings_path, stub):
-    """§3.6 用例原文：置 COMPAT=0、停掉桩，activate 仍 200 且 BASE_URL 是用户填的端点。"""
-    a = _direct_api(make_client)
-    p = _mk_anthropic(a)
-    stub.set_down(True)
-    code, body = a.post("/hub/api/provider/%s/activate" % p["id"])
-    assert code == 200, body
+    assert code == 201, p
+    assert p["route"] == "cliproxy"
+    assert api.post("/hub/api/provider/%s/activate" % p["id"])[0] == 200
     env = read_settings(settings_path)["env"]
-    assert env["ANTHROPIC_BASE_URL"] == "https://gw.example.com"
-    assert env["ANTHROPIC_MODEL"] == "glm-4.6", "direct 形态填第三方模型名，不是官方 alias"
-    assert env["ANTHROPIC_AUTH_TOKEN"] and "ANTHROPIC_API_KEY" not in env
-
-
-def test_direct形态切换全程不碰8317(make_client, stub):
-    """反向用例：不经 cliproxy 就不该有任何到桩的请求。"""
-    a = _direct_api(make_client)
-    p = _mk_anthropic(a)
-    n = len(stub.requests)
-    assert a.post("/hub/api/provider/%s/activate" % p["id"])[0] == 200
-    assert len(stub.requests) == n, "direct 形态 activate 期间打了 cliproxy：%s" % \
-        [r["path"] for r in stub.requests[n:]]
+    assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:%d" % stub.port
+    assert env["ANTHROPIC_MODEL"] == p["model_alias"], "走 cliproxy 就该填官方 alias"
 
 
 def test_启动reconcile把0个enabled的alias自愈(make_client, settings_path, stub):
@@ -311,3 +281,44 @@ def test_故障排除后重放同一次activate收敛为200(api, stub, settings_
     assert code == 200, "重放没收敛：%s %s" % (code, body)
     assert stub.aliases_enabled(ALIAS) == 1
     assert read_settings(settings_path)["env"]["ANTHROPIC_MODEL"] == ALIAS
+
+
+# ---------------- §3.0c / §3.6 B 阶段（修订 4）：两组 alias 各跑一次互斥 ----------------
+
+HAIKU = "claude-3-5-haiku-20241022"
+
+
+def test_activate对主alias与haiku_alias各做一次互斥(api, stub):
+    """§3.0c 必须存在的用例：少跑一组 = haiku 请求打到别的后端或 502。
+
+    两个 provider 的默认 haiku 名相同，所以切换后两个 alias 都必须只剩一个 enabled。
+    """
+    a = _mk(api)
+    assert api.post("/hub/api/provider/%s/activate" % a["id"])[0] == 200
+    b = _mk(api, label="备用网关", base_url="https://gw.example.com/v1",
+            upstream_model="glm-4.6")
+    assert api.post("/hub/api/provider/%s/activate" % b["id"])[0] == 200
+    assert stub.aliases_enabled(ALIAS) == 1, "主 alias 没做互斥"
+    assert stub.aliases_enabled(HAIKU) == 1, \
+        "haiku alias 没做互斥（B 阶段只跑了一组）——后台摘要请求会打到旧后端"
+
+
+def test_切换后生效的两条alias属于同一个provider(api, stub):
+    """互斥做了但做错对象也不行：两个 alias 必须落在同一条 enabled 条目上。"""
+    a = _mk(api)
+    api.post("/hub/api/provider/%s/activate" % a["id"])
+    b = _mk(api, label="备用网关", base_url="https://gw.example.com/v1",
+            upstream_model="glm-4.6")
+    assert api.post("/hub/api/provider/%s/activate" % b["id"])[0] == 200
+    live = [blk for blk in stub.all_blocks if not blk.get("disabled")]
+    assert len(live) == 1, "应恰有一条 enabled 条目，实得 %d" % len(live)
+    assert {m["alias"] for m in live[0]["models"]} == {ALIAS, HAIKU}
+    assert live[0]["base-url"] == "https://gw.example.com/v1"
+
+
+def test_activate过程不产生alias数违规(api, stub):
+    """§10 记账：B 阶段的每次写回去的条目仍必须是两条 models。"""
+    p = _mk(api)
+    assert api.post("/hub/api/provider/%s/activate" % p["id"])[0] == 200
+    assert stub.alias_count_violation == [], \
+        "activate 把条目写成了非两条 models：%s" % stub.alias_count_violation

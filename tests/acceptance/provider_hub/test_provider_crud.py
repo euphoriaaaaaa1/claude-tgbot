@@ -19,7 +19,7 @@ def test_新增第三方provider成功返回201与完整对象(api):
     assert body["label"] == "DeepSeek"
     assert body["kind"] == "openai"
     assert body["base_url"] == "https://api.deepseek.com/v1"
-    assert body["upstream_model"] == "deepseek-chat"
+    assert body["upstream_model"] == "deepseek-v4-flash"   # ⑰：deepseek-chat 已下线
     assert body["model_alias"] == ALIAS
     assert body["route"] == "cliproxy"
     assert body["active"] is False
@@ -409,20 +409,23 @@ def test_anthropic恒可建_兼容为真时route是cliproxy(make_client):
     assert body["route"] == "cliproxy"
 
 
-def test_anthropic恒可建_兼容为假时route是direct(make_client):
-    from conftest import _Api
-    a = _Api(make_client(CLIPROXY_ANTHROPIC_COMPAT="0")[0])
-    code, body = a.post("/hub/api/provider", provider_payload(
-        kind="anthropic", base_url="https://gw.example.com", upstream_model="glm-4.6"))
-    assert code == 201, body
-    assert body["route"] == "direct"
+def test_route恒为cliproxy_direct分支当前不可达(api):
+    """⑩ 修订 4：install 直接写 CLIPROXY_ANTHROPIC_COMPAT=1，探测已删。
+
+    `route` 与 direct 分支作为回归接缝保留，但任何 kind 建出来都必须是 cliproxy。
+    """
+    for kind in ("openai", "anthropic"):
+        code, body = _create(api, kind=kind, label="网关 %s" % kind,
+                             base_url="https://gw-%s.example.com/v1" % kind,
+                             upstream_model="m-%s" % kind)
+        assert code == 201, body
+        assert body["route"] == "cliproxy", "kind=%s 的 route 不该是 %s" % (kind, body["route"])
 
 
-@pytest.mark.parametrize("flag,expect", [("1", True), ("0", False)])
-def test_anthropic_compat标志如实布尔化(make_client, flag, expect):
-    from conftest import _Api
-    code, body = _Api(make_client(CLIPROXY_ANTHROPIC_COMPAT=flag)[0]).get("/hub/api/provider")
-    assert body["cliproxy"]["anthropic_compat"] is expect
+def test_anthropic_compat恒为真(api):
+    code, body = api.get("/hub/api/provider")
+    assert body["cliproxy"]["anthropic_compat"] is True, \
+        "S0-B 已通过，该标志恒为 1（探测逻辑已删）"
 
 
 def test_supported_kinds在cliproxy没跑时仍如实返回(api, stub):
@@ -466,3 +469,129 @@ def test_写端点遇管理API_4xx与5xx一视同仁都是502(api, stub, status)
     assert body["error"] == "cliproxy_reject"
     assert str(status) in str(body.get("detail", "")), "detail 必须含上游状态码"
     assert stub.mgmt_key not in str(body)
+
+
+# ---------------- §3.0c（修订 4）：每个 provider 必须注册两条 alias ----------------
+
+DEFAULT_HAIKU = "claude-3-5-haiku-20241022"
+
+
+def _entry(stub, alias=ALIAS):
+    """从三个承载块里找出含该主 alias 的那一条。"""
+    hit = [b for b in stub.all_blocks
+           if any(m.get("alias") == alias for m in (b.get("models") or []))]
+    assert hit, "cliproxy 里没有主 alias 为 %s 的条目：%s" % (alias, stub.all_blocks)
+    return hit[0]
+
+
+def test_不传haiku_alias时服务端填默认值(api):
+    """§3.0c：省略合法，默认 claude-3-5-haiku-20241022。"""
+    code, body = _create(api)
+    assert code == 201, body
+    assert body["haiku_alias"] == DEFAULT_HAIKU
+
+
+def test_落地的models必须是两条且name相同(api, stub):
+    """§3.0c 必须存在的用例：长度为 2、两条 name 相同、alias 分别是主名与 haiku 名。
+
+    少注册一条 = claude CLI 的后台摘要请求打到别的后端或直接 502。
+    """
+    code, body = _create(api)
+    assert code == 201, body
+    models = _entry(stub)["models"]
+    assert len(models) == 2, "models 长度是 %d，haiku 请求会 502（§3.0c）" % len(models)
+    assert models[0]["name"] == models[1]["name"] == "deepseek-v4-flash"
+    assert {m["alias"] for m in models} == {ALIAS, DEFAULT_HAIKU}
+    assert all(m.get("force-mapping") is True for m in models), "两条都要 force-mapping"
+
+
+def test_桩没记到alias数违规(api, stub):
+    """§10 修订 4 的记账开关：写进 cliproxy 的每个条目 models 都必须恰好 2 条。"""
+    assert _create(api)[0] == 201
+    assert stub.alias_count_violation == [], \
+        "桩记到了 models 长度不等于 2 的写：%s" % stub.alias_count_violation
+
+
+def test_自定义haiku_alias被如实采用(api, stub):
+    code, body = _create(api, haiku_alias="claude-3-5-haiku-latest")
+    assert code == 201, body
+    assert body["haiku_alias"] == "claude-3-5-haiku-latest"
+    assert {m["alias"] for m in _entry(stub)["models"]} == {ALIAS, "claude-3-5-haiku-latest"}
+
+
+@pytest.mark.parametrize("bad", ["", "a/b", "has space", "\t", "   "])
+def test_haiku_alias非法返回400_bad_haiku_alias(api, bad):
+    """§3.3：传了但不合法 → 400（校验规则与 model_alias 完全相同）。"""
+    code, body = _create(api, haiku_alias=bad)
+    assert code == 400, "haiku_alias=%r 被接受了" % bad
+    assert body["error"] == "bad_haiku_alias"
+
+
+def test_haiku_alias等于主alias返回400(api):
+    """§3.0c：同一条目里两条 model 撞名，cliproxy 里会是两条一模一样的映射。"""
+    code, body = _create(api, haiku_alias=ALIAS)
+    assert code == 400
+    assert body["error"] == "bad_haiku_alias"
+
+
+def test_改haiku_alias不换id(api):
+    """§3.0c：id 派生四元组不含 haiku_alias。"""
+    code, created = _create(api)
+    code, body = api.patch("/hub/api/provider/%s" % created["id"],
+                           {"haiku_alias": "claude-3-5-haiku-latest"})
+    assert code == 200, body
+    assert body["id"] == created["id"], "改 haiku 名不该换 id"
+    assert body["haiku_alias"] == "claude-3-5-haiku-latest"
+
+
+def test_haiku_alias与别的provider重复是合法的(api):
+    """默认值人人相同，若对 haiku 也做全局唯一校验，第二个 provider 就永远建不出来。"""
+    assert _create(api)[0] == 201
+    code, body = _create(api, label="第二个", base_url="https://gw.example.com/v1",
+                         upstream_model="glm-4.6")
+    assert code == 201, body
+    assert body["haiku_alias"] == DEFAULT_HAIKU
+
+
+# ---------------- ⑨（修订 4）：三个 kind 的 v7 承载块 ----------------
+
+def test_openai条目落在openai_compatibility块(api, stub):
+    assert _create(api)[0] == 201
+    assert len(stub.openai_compat) == 1
+    assert stub.claude_api_key == [] and stub.gemini_api_key == []
+
+
+def test_anthropic条目落在claude_api_key块而不是anthropic_compatibility(api, stub):
+    """§10：`anthropic-compatibility` 在 v7 不存在，桩对它回 404。
+
+    门户若映射到错块名，这条会以 502 cliproxy_reject 失败 —— 这正是要测出来的 bug。
+    """
+    code, body = _create(api, kind="anthropic", base_url="https://gw.example.com",
+                         upstream_model="glm-4.6")
+    assert code == 201, "映射到了不存在的块名？实得 %s %s" % (code, body)
+    assert len(stub.claude_api_key) == 1
+    assert stub.openai_compat == [] and stub.gemini_api_key == []
+
+
+def test_gemini条目落在gemini_api_key块(api, stub):
+    kinds = api.get("/hub/api/provider")[1]["cliproxy"]["supported_kinds"]
+    code, body = _create(api, kind="gemini", label="Gemini 兼容",
+                         base_url="https://gw.example.com/v1", upstream_model="gemini-2.5-pro")
+    if "gemini" not in kinds:
+        assert code == 400 and body["error"] == "bad_kind"
+        return
+    assert code == 201, body
+    assert len(stub.gemini_api_key) == 1
+    assert stub.openai_compat == [] and stub.claude_api_key == []
+
+
+def test_门户不得访问v7里不存在的块名(api, stub):
+    """反向用例：三个已知不存在的路径，一次都不该被打到。"""
+    assert _create(api)[0] == 201
+    assert _create(api, kind="anthropic", base_url="https://gw.example.com",
+                   upstream_model="glm-4.6")[0] == 201, "前置条件不成立，断言会空转"
+    assert api.get("/hub/api/provider")[0] == 200
+    bad = [r["path"] for r in stub.requests
+           if any(x in r["path"] for x in ("anthropic-compatibility", "gemini-compatibility",
+                                           "anthropic-api-key"))]
+    assert bad == [], "门户打了 v7 上不存在的管理端点：%s" % bad
