@@ -35,7 +35,7 @@
 - 04 开发启动 @eddfc4c：3 条 worktree 并行（上限3，压掉方案里的4）——
   [测] M0 鉴权门+骨架  dev-m0 交付 @538470f（验收 270红/83绿），模块实测中
   [测] M4 纯函数层     dev-m4 交付 @e2b4790（单测 180 绿），模块实测中；4 契约疑问已发 planner
-  [测] M6 安装与常驻   dev-m6 交付 @608b452（install 组 24/24 绿，真包端到端通），模块实测中
+  [✓] M6 安装与常驻   ready-to-merge @20093e8（轮2三修复硬验全过+BUG-12 单测钉住；unit 34 绿/探针 56 绿）
   串行队列：M1 空壳骨架（M0 合并后）→ M2 客户端 → M3/M5/M7 → M8。桩已随测试锁定交付，M2 起只读复用。
 - M0→M1 交接备忘：feed/styles 各补一行 href="/hub"（归 M1）；/hub/healthz 已在 hub_auth.install() 注册，M1 勿重复。
   M0 自主裁决待 planner 备案：404/405 JSON 化范围含 /api/*。.gitignore 待补 state.db*（合并时主会话处理）。
@@ -65,4 +65,4 @@
 | 备忘 | M0→M1 交接：cliproxy_client 异常消息勿携上游响应体（traceback 进日志）；#4 老路由抹敏更严格属向安全偏离→planner 备案 | 待处理 | test-m0 | |
 - 出题人待改批次（攒单，下次一并发→第三次落锁）：⑲ 桩 prefix 断言点、⑳ 连建多 provider 期望、㉑ active.alias 期望、
   ㉒ stub_cliproxy.aliases_enabled() 改读 prefix 语义；㉓ 验收 A8 补断言 force-model-prefix（复测发现该键修复前后验收同绿=测不到）。
-| BUG-12 | M6 install.sh ⑥ systemd 分支 grep 仍子串匹配（-qF→-qxF 一字修） | 修复中 | test-m6-r2 / dev-m6 | |
+| BUG-12 | M6 systemd 分支 grep 子串匹配 | 已修复 | test-m6-r2 / dev-m6 | 20093e8 |
