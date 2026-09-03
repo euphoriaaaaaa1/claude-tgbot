@@ -41,6 +41,17 @@ KIND_SPEC = {
 SUPPORTED_KINDS = tuple(KIND_SPEC)          # §3.2 由接口自报，实现不得散落硬编码
 LABEL_MAX = 40
 
+# §12.6 ㉟：Clash TUN 增强模式把**所有域名**解析成这一段的 fake-IP，而 Python 把它算
+# is_private=True —— 不排除掉，开着 TUN 的机器上一个 provider 都建不了（产品不可用）。
+# ponytail: 只硬编码这一个已知 fake-IP 池。别的代理栈可能用别的段（如 28.0.0.0/8），
+# 届时的升级路径是逃生门 HUB_ALLOW_PRIVATE_BASE_URL=1，不是把网段列表越堆越长。
+FAKE_IP_NET = ipaddress.ip_network("198.18.0.0/15")
+
+# §12.6：文案必须给出可执行出路，不能只说"不允许"。
+_PRIVATE_BASE_URL_TEXT = (
+    "该地址指向内网或本机，出于安全被拒绝。若你确实在内网自建网关，"
+    "请在 ~/.claude-tgbot/hub.env 加一行 HUB_ALLOW_PRIVATE_BASE_URL=1 后重启门户。")
+
 
 class HubError(Exception):
     """携带机读错误码与状态码的校验失败（§7 错误契约总表）。
@@ -142,14 +153,16 @@ def _as_ip(host):
         return None
 
 
-def _private_ip(ip):
-    """内网/回环/链路本地/保留/多播/未指定，任一为真即拒（§3.3 SSRF 收口）。
-
-    额外挡 IPv4-mapped（`::ffff:127.0.0.1` 的 is_loopback 是 False，直接放行等于留后门）。
-    """
+def _unmap(ip):
+    """IPv4-mapped IPv6 取回内层 v4：`::ffff:127.0.0.1` 的 is_loopback 是 False，
+    不解映射就等于给内网判定留后门。私有判定与 fake-IP 判定共用同一口径。"""
     mapped = getattr(ip, "ipv4_mapped", None)
-    if mapped is not None:
-        ip = mapped
+    return ip if mapped is None else mapped
+
+
+def _private_ip(ip):
+    """内网/回环/链路本地/保留/多播/未指定，任一为真即拒（§3.3 SSRF 收口）。"""
+    ip = _unmap(ip)
     return (ip.is_loopback or ip.is_private or ip.is_link_local
             or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
 
@@ -160,6 +173,9 @@ def _check_base_url(raw, allow_private=False, resolve=None):
     门户是公网 tunnel 可达的，base_url 由用户填、由 localhost 内侧发起请求，
     不拦就等于送一个内网探测器（可打 127.0.0.1:8317/v0/management/*、169.254.169.254）。
     域名只解析一次，承认挡不住 DNS rebinding，挡掉直接利用。
+
+    §12.6 两层，顺序固定：第 1 层 IP 字面量永远全拦（含 198.18.x.x 字面量）；
+    第 2 层域名的 DNS 判定里，fake-IP 段的解析结果不作数（见下方注释）。
     """
     url = _text(raw)
     if not url:
@@ -180,17 +196,27 @@ def _check_base_url(raw, allow_private=False, resolve=None):
         return url
     literal = _as_ip(host)
     if literal is not None:
+        # 第 1 层：IP 字面量永远全拦，**不受 fake-IP 例外影响** —— `http://198.18.0.1/`
+        # 照样 400。SSRF 真正要防的是攻击者在框里敲 `http://127.0.0.1:8317/v0/management/*`，
+        # 那是字面量。例外只许作用在第 2 层，滥用到这层就等于把整个判定拆了。
         ips = [literal]
-    else:                                   # 域名：解析一次做同样判断，解析不出就放行
+    else:                                   # 第 2 层：域名解析一次做同样判断，解析不出就放行
         ips = []
         for addr in (resolve or resolve_host)(host):
             try:
-                ips.append(ipaddress.ip_address(addr))
+                ip = ipaddress.ip_address(addr)
             except ValueError:
                 continue
+            if _unmap(ip) in FAKE_IP_NET:
+                # §12.6 ㉟：fake-IP 是代理栈凭空造的占位地址，与真实目的地无关。
+                # 据它判 = 据噪声判，产出的必然是假阳性。安全判定读不到有效输入时，
+                # 正确姿态是**不判**，而不是把噪声当证据判死 —— 所以丢掉这条解析结果。
+                # 全部解析结果都是 fake-IP → 列表空 → 放行（T5）；
+                # 混着真实内网地址 → 那条留着 → 仍然 400（T6 与混合用例）。
+                continue
+            ips.append(ip)
     if any(_private_ip(ip) for ip in ips):
-        raise HubError(400, "bad_base_url_private",
-                       "base_url 指向内网/回环地址；确需如此请设 HUB_ALLOW_PRIVATE_BASE_URL=1")
+        raise HubError(400, "bad_base_url_private", _PRIVATE_BASE_URL_TEXT)
     return url
 
 
