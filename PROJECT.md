@@ -64,4 +64,5 @@
 | BUG-11 | M0 管理锁 startswith 未归一化路径（今日被 404 兜住，反代下成真绕过） | 修复中 | test-m0 / dev-m0 | |
 | 备忘 | M0→M1 交接：cliproxy_client 异常消息勿携上游响应体（traceback 进日志）；#4 老路由抹敏更严格属向安全偏离→planner 备案 | 待处理 | test-m0 | |
 - 出题人待改批次（攒单，下次一并发→第三次落锁）：⑲ 桩 prefix 断言点、⑳ 连建多 provider 期望、㉑ active.alias 期望、
-  ㉒ stub_cliproxy.aliases_enabled() 改读 prefix 语义（§3.0d 禁写 disabled 键，否则 M3 后假红）。
+  ㉒ stub_cliproxy.aliases_enabled() 改读 prefix 语义；㉓ 验收 A8 补断言 force-model-prefix（复测发现该键修复前后验收同绿=测不到）。
+| BUG-12 | M6 install.sh ⑥ systemd 分支 grep 仍子串匹配（-qF→-qxF 一字修） | 修复中 | test-m6-r2 / dev-m6 | |
