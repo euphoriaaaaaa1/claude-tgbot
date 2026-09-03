@@ -16,8 +16,10 @@ from flask import Flask
 
 _ROOT = Path(__file__).resolve().parents[2]
 _STUB_DIR = _ROOT / "tests" / "acceptance" / "provider_hub"
+# 只 append 不 insert(0)：验收目录里也有个 conftest.py，插到最前会让同目录其它单测的
+# `from conftest import ...` 解析到验收那份（unit 与 acceptance 合跑时炸在收集期）。
 if str(_STUB_DIR) not in sys.path:
-    sys.path.insert(0, str(_STUB_DIR))
+    sys.path.append(str(_STUB_DIR))
 
 from stub_cliproxy import StubCliproxy            # noqa: E402
 from moments import hub_routes                    # noqa: E402
