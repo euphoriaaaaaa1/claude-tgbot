@@ -96,10 +96,11 @@
 - M7 实测零缺陷 ready-to-merge（探针 74 全绿：注入 32/并发/撕裂/10MB tail/探活上限）。两上限告知不改：
   tail 全量缓冲 100MB→+310MB RSS（重启脚本自吐才触发）；探活 ≥16 卡死 bot 时队尾误报 offline（本仓 1 bot）。
   跑法注意：tests/unit 与 acceptance/provider_hub 两份顶层 conftest 重名，同一次 pytest 收集会 ImportError，须分开跑（验收阶段照此）。
-| BUG-17 | M5 专码未同步：state 失配/无 alias 应 409 oauth_state_expired/oauth_no_alias（§12.5） | 修复中 | test-m5 / dev-m5 | |
-| BUG-18 | M5 非对象 JSON 体→500（body.get 惯用法，§0.1 应 400；M3/M7 同法需排查） | 修复中 | test-m5 / dev-m5 | |
+| BUG-17 | M5 专码未同步：state 失配/无 alias 应 409 oauth_state_expired/oauth_no_alias（§12.5） | 已修复 | test-m5 / dev-m5 | 10d63f5 |
+| BUG-18 | M5 非对象 JSON 体→500（body.get 惯用法，§0.1 应 400；M3/M7 同法需排查） | 已修复 | test-m5 / dev-m5 | 6eaf1c3 |
 - §12.7：state 成功消费即作废（二次 409）；activatable=合法且有 alias（新增 not_activatable_reason）；
   非 dict 体→400 提为 §0.1 通则。集成批追加④：M3/M7 段收 body 端点按通则排查收口。
 | BUG-19 | M3 并发 activate 互清（40轮31轮双输双200，bot 全502）：B 段快照读改写无互斥 | 修复中 | test-m3 / dev-m3 | |
 | BUG-20 | M3 补偿失败可留 haiku 双启用，warnings 空、reconcile 早退不修（契约无表达码，待 §12.8） | 待契约 | test-m3 / planner→dev-m3 | |
 - P4 实锤批次㉒（桩 disabled 语义致 5 假红，prefix 镜像全绿）；新矛盾：§3.6 reconcile 断言 vs §3.0d 禁清 disabled，待裁。
+- M5 ready-to-merge @fb5de94（四件套+㊱㊲+锁接入=7 commit；实测互斥对翻转即复验；unit 497/oauth 42）。
