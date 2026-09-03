@@ -155,3 +155,53 @@ def test_非UTF8_locale下也能跑完(repo, tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert "unbound variable" not in r.stderr
     assert (d / "cli-proxy-api").exists()
+
+
+# ── install.sh 的 ⑥ 体检分支（从真文件里抠出来跑，不复刻逻辑，免得改了这边漏那边）──
+
+def _run_section6(tmp_path, unit_rel=None, unit_text=""):
+    src = (ROOT / "install.sh").read_text(encoding="utf-8")
+    start = src.index("# ── ⑥ provider")
+    body = src[start:src.index("\nfi\n", start) + 4]
+    body = body.replace("elif bash scripts/install_cliproxy.sh; then", "elif true; then", 1)
+    home = tmp_path / "home"
+    (home / ".claude-tgbot" / "cliproxy").mkdir(parents=True, exist_ok=True)
+    if unit_rel:
+        (home / unit_rel).parent.mkdir(parents=True, exist_ok=True)
+        (home / unit_rel).write_text(
+            unit_text.replace("{DIR}", str(home / ".claude-tgbot" / "cliproxy")), encoding="utf-8")
+    stub = 'say(){ :; }\nok(){ echo "OK:$*"; }\ntodo(){ echo "TODO:$*"; }\nset -e\n'
+    r = subprocess.run(["bash", "-c", stub + body], cwd=str(ROOT), capture_output=True, text=True,
+                       env=dict(os.environ, HOME=str(home),
+                                CLAUDE_TGBOT_HOME=str(home / ".claude-tgbot")))
+    assert r.returncode == 0, r.stderr
+    return r.stdout
+
+
+PLIST_OK = ("<dict><key>WorkingDirectory</key>\n    <string>{DIR}</string></dict>")
+PLIST_BAD = ("<dict><key>ProgramArguments</key><string>{DIR}/cli-proxy-api</string>\n"
+             "<key>StandardOutPath</key><string>{DIR}/logs/x.out</string></dict>")
+LA = "Library/LaunchAgents/com.claudebotlife.cliproxy.plist"
+SVC = ".config/systemd/user/claudebotlife-cliproxy.service"
+
+
+def test_没有常驻单元时不许报就绪(tmp_path):
+    """装上了但没挂常驻 = 开机不起，报"就绪"等于骗人。"""
+    out = _run_section6(tmp_path)
+    assert "OK:" not in out and "没有常驻单元" in out
+
+
+def test_plist里工作目录钉住了才算就绪(tmp_path):
+    assert "OK:" in _run_section6(tmp_path, LA, PLIST_OK)
+
+
+def test_plist里只是恰好出现过这个路径不算数(tmp_path):
+    """模糊 grep 的老毛病：二进制路径、日志路径里都带这个目录。"""
+    out = _run_section6(tmp_path, LA, PLIST_BAD)
+    assert "OK:" not in out and "没钉在" in out
+
+
+def test_systemd_unit同样按工作目录那行判(tmp_path):
+    assert "OK:" in _run_section6(tmp_path, SVC, "[Service]\nWorkingDirectory={DIR}\n")
+    out = _run_section6(tmp_path, SVC, "[Service]\nExecStart={DIR}/cli-proxy-api\n")
+    assert "OK:" not in out and "没钉在" in out

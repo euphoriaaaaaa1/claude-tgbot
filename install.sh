@@ -92,12 +92,26 @@ elif bash scripts/install_cliproxy.sh; then
   # cliproxy v7 启动会往**进程 CWD** 下载 2.7 MB 的 static/management.html，
   # 没钉住就落进这个代码仓库（还会跟着 git status 一起碍眼）。
   cliproxy_dir="$(python3 scripts/hub_bootstrap.py get dir 2>/dev/null || true)"
-  unit="$HOME/Library/LaunchAgents/com.claudebotlife.cliproxy.plist"
-  [ -f "$unit" ] || unit="$HOME/.config/systemd/user/claudebotlife-cliproxy.service"
-  if [ -n "$cliproxy_dir" ] && [ -f "$unit" ] && ! grep -q "$cliproxy_dir" "$unit"; then
-    todo "常驻单元 $unit 的 WorkingDirectory 没指向 ${cliproxy_dir}，重跑：bash scripts/install_cliproxy.sh"
+  plist="$HOME/Library/LaunchAgents/com.claudebotlife.cliproxy.plist"
+  svc="$HOME/.config/systemd/user/claudebotlife-cliproxy.service"
+  # 只认那一行工作目录配置。模糊 grep 这个路径没用：二进制路径、日志路径里都带它，
+  # WorkingDirectory 整个丢了也照样命中。
+  unit=""; wd_ok=0
+  if [ -f "$plist" ]; then
+    unit="$plist"
+    if grep -A1 '<key>WorkingDirectory</key>' "$plist" | grep -qF "<string>$cliproxy_dir</string>"; then wd_ok=1; fi
+  elif [ -f "$svc" ]; then
+    unit="$svc"
+    if grep -qF "WorkingDirectory=$cliproxy_dir" "$svc"; then wd_ok=1; fi
+  fi
+  if [ -z "$cliproxy_dir" ]; then
+    todo "读不到 cliproxy 的安装目录，重跑：bash scripts/install_cliproxy.sh"
+  elif [ -z "$unit" ]; then
+    todo "cliproxy 装好了但没有常驻单元（SSH 无图形会话、或没有 systemd 都会这样），开机不会自己起；手动起：${cliproxy_dir}/cli-proxy-api -config ${cliproxy_dir}/config.yaml（工作目录必须是 ${cliproxy_dir}）"
+  elif [ "$wd_ok" = 0 ]; then
+    todo "常驻单元 $unit 的 WorkingDirectory 没钉在 ${cliproxy_dir}，重跑：bash scripts/install_cliproxy.sh"
   else
-    ok "cliproxy 就绪，工作目录钉在 $cliproxy_dir"
+    ok "cliproxy 已常驻，工作目录钉在 $cliproxy_dir"
   fi
   if [ -d static ]; then
     todo "仓库根多了个 static/：那是 cliproxy 拉的管理面板，说明有进程没钉住工作目录，可直接删"
