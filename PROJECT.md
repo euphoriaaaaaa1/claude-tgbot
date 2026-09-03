@@ -72,3 +72,4 @@
 | BUG-16 | M0 project() url 打码带 isinstance(str) 前置，dict/list 型 base-url 原样出站 | 已修复 | test-m0-r2 / dev-m0 | 009b3bd |
 - 第一批合并完成 @76b58cb：M0/M4/M6 零冲突并入，集成基线 验收 253红/100绿/3skip、unit 302 全绿。
   worktree 已清，放 M1（阻塞项）@../ctgb-m1。
+- M1 骨架并入 @merge（验收净+23 绿、页面组 15/15；其行为全被锁定验收覆盖故免独立实测轮）。放 M2 @../ctgb-m2。
