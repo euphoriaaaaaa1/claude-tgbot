@@ -642,12 +642,22 @@ def api_moment_detail(moment_id):
     return jsonify(out)
 
 
+# 安全修复(2026-09-03)：此路由曾把 URL 直接拼成绝对路径读文件 —— 一旦经隧道暴露
+# 即公网任意文件读（send_from_directory 的防逃逸只护 basename，目录部分完全失控）。
+# 现按 realpath 白名单收口到 media 根：库里/前端拼的 image_path 全落在其下
+# （评论图 __user__/comments、styles 示例 __styles__、各 bot 媒体目录），根外一律 404。
+_IMAGE_ROOT = os.path.realpath(os.path.expanduser("~/resource/media"))
+
 @app.route("/image/<path:filename>")
 def serve_image(filename):
-    """图片可能在 ~/resource/media/ 下"""
+    """只服务 media 根下的图片；realpath 校验，符号链接逃逸同样拦截"""
     full_path = "/" + filename if not filename.startswith("/") else filename
-    if not os.path.exists(full_path):
+    real = os.path.realpath(full_path)
+    if not (real == _IMAGE_ROOT or real.startswith(_IMAGE_ROOT + os.sep)):
         return "Not found", 404
+    if not os.path.exists(real):
+        return "Not found", 404
+    full_path = real
     directory = os.path.dirname(full_path)
     name = os.path.basename(full_path)
     resp = send_from_directory(directory, name)
