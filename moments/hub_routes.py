@@ -144,6 +144,13 @@ _OAUTH_SESSIONS = {}
 
 _STATUS_TEXT = {"ok": "授权已完成", "wait": "还在等授权完成…", "error": "授权失败，请重新开始"}
 
+#: §4.3：超窗、失配、已消费三种情况用户看到同一句话 —— 动作都是"重走一次 start"。
+_STATE_EXPIRED_TEXT = "授权会话已过期或已被新的登录取代，请重新点击开始登录"
+
+#: §4.6：detail 必须指出修复路径，否则用户拿到 409 完全无从下手。
+_NO_ALIAS_TEXT = ("该账户尚未配置模型映射，请在 cliproxy 的 oauth-model-alias（按渠道）"
+                  "或该账户 auth JSON 的 model_aliases 里加一条")
+
 
 def _json_errors(fn):
     """HubError -> §0.1 的 ``{"error","detail"}`` + 状态码。
@@ -296,9 +303,10 @@ def oauth_submit():
     else:
         raise HubError(400, "bad_body", "请给 redirect_url，或 code + state")
     # state 只在**给了**的时候校验：各家回调不一定带 state，没带的那层由 cliproxy 自己兜；
-    # 给了却对不上本进程发出去的会话（或超了 5 分钟），就是粘错/过期，早拦早说清。
+    # 给了却对不上本进程发出去的会话（或超了 5 分钟）→ §4.3 的专码 409：
+    # URL 通常完全正确，只是会话作废了，正确动作是重走 start 而不是改输入（400 会指错路）。
     if state and not _state_alive(state, provider):
-        raise HubError(400, "bad_body", "授权会话不存在或已过期，请重新开始")
+        raise HubError(409, "oauth_state_expired", _STATE_EXPIRED_TEXT)
     client = cliproxy_client.from_env()
     payload = {"provider": provider, "code": code, "state": state}
     if redirect_url:            # 两种字段都送：真机认哪个由 cliproxy 定，桩两种都认
@@ -406,9 +414,9 @@ def oauth_account_activate(provider, email_hash):
     _provider_or_400(provider)
     aliases = _account_aliases(acc)
     if not aliases:
-        # 没登记别名的账户切过去也没东西可写进 ANTHROPIC_MODEL。§4 没给这一态错误码，
-        # 取 §7 的 400 家族里语义最近的 bad_alias，detail 说清怎么修（重新授权一次）。
-        raise HubError(400, "bad_alias", "该账户没有登记模型别名，请重新授权一次")
+        # §4.6 专码：请求体是空对象，用户没传错任何东西 —— 是账户还没被映射到官方模型名
+        # 这个**状态**问题（切过去 ANTHROPIC_MODEL 无值可写），归 409 不归 400。
+        raise HubError(409, "oauth_no_alias", _NO_ALIAS_TEXT)
     path = provider_model.settings_path()
     settings = provider_model.parse_settings(settings_io.read_text(path))    # A2
     if not settings_io.dir_writable(path):                                   # A3

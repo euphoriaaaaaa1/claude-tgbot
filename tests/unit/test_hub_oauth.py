@@ -237,7 +237,7 @@ def test_submit_没带state的回调URL照样送给cliproxy(api, env):
 def test_submit_没发过的state直接拦掉(api, env):
     code, body = api.post("/hub/api/oauth/submit",
                           {"provider": "codex", "redirect_url": CB + "&state=forged"})
-    assert (code, body["error"]) == (400, "bad_body")
+    assert (code, body["error"]) == (409, "oauth_state_expired")
     assert not env.paths_hit("oauth-callback"), "没校验就把伪造 state 转发给了 cliproxy"
 
 
@@ -245,7 +245,7 @@ def test_submit_state属于另一个渠道也拦掉(api):
     st = _start(api, "codex")
     code, body = api.post("/hub/api/oauth/submit",
                           {"provider": "antigravity", "code": "x", "state": st})
-    assert (code, body["error"]) == (400, "bad_body")
+    assert (code, body["error"]) == (409, "oauth_state_expired")
 
 
 def test_submit_超过5分钟窗口的state按过期拦掉(api, env):
@@ -255,8 +255,8 @@ def test_submit_超过5分钟窗口的state按过期拦掉(api, env):
     hub_routes._OAUTH_SESSIONS[st] = (provider, issued - hub_routes.OAUTH_WAIT_SECONDS - 1)
     code, body = api.post("/hub/api/oauth/submit",
                           {"provider": "codex", "code": "abc", "state": st})
-    assert (code, body["error"]) == (400, "bad_body")
-    assert not env.paths_hit("oauth-callback")
+    assert (code, body["error"]) == (409, "oauth_state_expired")
+    assert body["detail"] and not env.paths_hit("oauth-callback")
 
 
 def test_submit_窗口内的state正常放行(api):
@@ -560,7 +560,8 @@ def test_没登记别名的账户切不过去(api, env, settings_file):
     """没 alias 就没东西可写进 ANTHROPIC_MODEL，早拦掉而不是写一个 null 进去。"""
     env.seed_auth_file(email=EMAIL, alias=None)
     code, body = _activate(api, env)
-    assert (code, body["error"]) == (400, "bad_alias")
+    assert (code, body["error"]) == (409, "oauth_no_alias")
+    assert "model_aliases" in body["detail"], "detail 没指出去哪配，用户无从下手"
     assert not settings_file.exists()
 
 
