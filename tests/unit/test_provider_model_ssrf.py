@@ -85,3 +85,17 @@ def test_默认解析器吞掉解析异常不冒泡():
     """空 host 会让 getaddrinfo 立刻抛 gaierror（不发包），验证它被吞成空列表。"""
     from moments.provider_model import resolve_host
     assert resolve_host("") == []
+
+
+# ---------------- BUG-05：urlsplit 自己会抛，必须 400 不是 500 ----------------
+
+@pytest.mark.parametrize("url", ["http://[::1", "http://[fe80::1/v1",
+                                 "http://127.0.0.1:99999/v1", "http://127.0.0.1:-1/v1",
+                                 "http://127.0.0.1:abc/v1"])
+def test_畸形URL一律bad_base_url而不是冒泡成500(url):
+    assert code(url) == "bad_base_url", url
+
+
+def test_多余右括号被urlsplit读成回环_照样拦住():
+    """`http://[::1]]:80/` 不抛异常，hostname 是 ::1 —— 走内网判定这条路拦下。"""
+    assert code("http://[::1]]:80/") == "bad_base_url_private"

@@ -156,12 +156,12 @@ def _check_base_url(raw, allow_private=False, resolve=None):
     url = _text(raw)
     if not url:
         raise HubError(400, "bad_base_url", "base_url 必须是 http(s):// 绝对地址")
-    parts = urlsplit(url)
     try:
+        parts = urlsplit(url)               # 方括号不配对（http://[::1）时它自己抛 ValueError
         host = parts.hostname
-        parts.port                          # 端口越界（:99999）时 urlsplit 在这里抛 ValueError
+        parts.port                          # 端口越界（:99999）时在这里抛
     except ValueError:
-        raise HubError(400, "bad_base_url", "base_url 的端口非法")
+        raise HubError(400, "bad_base_url", "base_url 不是合法 URL（端口或 IPv6 括号有误）")
     if parts.scheme not in ("http", "https") or not host:
         raise HubError(400, "bad_base_url", "base_url 必须是 http(s):// 绝对地址")
     if allow_private:                       # 逃生门：真在内网自建网关的用户
