@@ -43,3 +43,6 @@
 - M6 备忘：A12/C1（门户 plist 自动注册）因需动白名单外的 moments-web.plist.tmpl 与 run_moments_web.sh
   （后者写死 cd $HOME/claudebotlife 是既有 bug）未做——归 M8/合并后主线。白名单外增补 run-cliproxy.ps1
   （B4 硬断言依据）与 .gitignore 两行，接受。顺手修：bash 变量紧跟中文标点在 C locale 吃字节的真 bug。
+- 契约裁决 §3.0d @INTERFACE 1250 行：互斥改 per-entry prefix（禁写 disabled 键）+ M2 真机必验 V1–V4；
+  haiku 并集判占用（第二个 provider 创建即停用=预期）；active.alias 恒回 env 原值；空 settings 等同不存在。
+  待分发：dev-m4 改①③两处口径；出题人改⑲⑳㉑三处后第三次落锁（攒到三路实测齐再发）。
