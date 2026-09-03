@@ -328,6 +328,10 @@ def oauth_submit():
     if redirect_url:            # 两种字段都送：真机认哪个由 cliproxy 定，桩两种都认
         payload["redirect_url"] = redirect_url
     client.mgmt_post("oauth-callback", payload)
+    # §4.3 成功消费即作废：授权码本就是一次性凭据。不删就是同一串可无限重放、
+    # 每次都真转发给 cliproxy —— 等于给公网可达的门户装了个免费放大器。
+    # **只在 200 之后删**：上面任何一步抛错时 state 保留，用户可修正后重试。
+    _OAUTH_SESSIONS.pop(state, None)
     return jsonify({"ok": True})               # §4.3：只表示已提交，不代表已落盘
 
 
