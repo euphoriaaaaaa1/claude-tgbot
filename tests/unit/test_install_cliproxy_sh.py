@@ -203,7 +203,17 @@ def test_plist里只是恰好出现过这个路径不算数(tmp_path):
 
 def test_systemd_unit同样按工作目录那行判(tmp_path):
     assert "OK:" in _run_section6(tmp_path, SVC, "[Service]\nWorkingDirectory={DIR}\n")
-    out = _run_section6(tmp_path, SVC, "[Service]\nExecStart={DIR}/cli-proxy-api\n")
+
+
+@pytest.mark.parametrize("unit", [
+    "[Service]\nExecStart={DIR}/cli-proxy-api\n",          # 压根没这行
+    "[Service]\nWorkingDirectory={DIR}/logs\n",            # 子串：钉到子目录去了
+    "[Service]\nWorkingDirectory={DIR}-old\n",             # 子串：钉到隔壁旧目录
+    "[Service]\n#WorkingDirectory={DIR}\n",                # 被注释掉了
+])
+def test_systemd_工作目录必须整行精确匹配(tmp_path, unit):
+    """子串匹配的三种假绿：钉到子目录、钉到同前缀的别的目录、整行被注释。"""
+    out = _run_section6(tmp_path, SVC, unit)
     assert "OK:" not in out and "没钉在" in out
 
 
