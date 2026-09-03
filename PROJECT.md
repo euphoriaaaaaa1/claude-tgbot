@@ -77,3 +77,7 @@
   （桩/真机形状差 unwrap_list 兼容、未知模型 400 非 502、healthz 无版本、GET /v0/management/config 回明文 key 禁调、
   secret-key 启动即 bcrypt 化）。两偏离备案：set_alias_exclusive 整条替换语义、COMPAT 缺失取 1。
   放最后三线：M3/M5/M7 @../ctgb-{m3,m5,m7}。
+- M7 交付 @ph-m7：bots 组 30/31 绿（1 skip=180s 慢用例）。两偏离采纳待备案：restart_available 不判 X_OK
+  （install 是 cp 644+bash 执行，判 X_OK 会误报缺失）；互斥/job 表挂 app.extensions（等价进程内且测试不串扰）。
+  集成交接：合并后 web.py:454 _BOT_PORTS 改 from bots_client import BOT_PORTS（int/str 拼 URL 均可）。
+  注意：test_unconfigured 有一条会对本机 17801 发只读 POST /status（锁定用例无法规避，无副作用）。
