@@ -96,3 +96,5 @@
 - M7 实测零缺陷 ready-to-merge（探针 74 全绿：注入 32/并发/撕裂/10MB tail/探活上限）。两上限告知不改：
   tail 全量缓冲 100MB→+310MB RSS（重启脚本自吐才触发）；探活 ≥16 卡死 bot 时队尾误报 offline（本仓 1 bot）。
   跑法注意：tests/unit 与 acceptance/provider_hub 两份顶层 conftest 重名，同一次 pytest 收集会 ImportError，须分开跑（验收阶段照此）。
+| BUG-17 | M5 专码未同步：state 失配/无 alias 应 409 oauth_state_expired/oauth_no_alias（§12.5） | 修复中 | test-m5 / dev-m5 | |
+| BUG-18 | M5 非对象 JSON 体→500（body.get 惯用法，§0.1 应 400；M3/M7 同法需排查） | 修复中 | test-m5 / dev-m5 | |
