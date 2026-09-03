@@ -752,3 +752,31 @@ def test_并发重放同一state只有一个能成(api, env):
     [t.join(20) for t in ts]
     assert (codes.count(200), codes.count(409)) == (1, 9), codes
     assert len(env.paths_hit("oauth-callback")) == 1, "重放被转发给了 cliproxy"
+
+
+# ---------------- §12.8 ㊴ 切换互斥锁 ----------------
+
+def test_锁被占时activate回409_activate_busy(api, env, settings_file):
+    """三个写 settings 的入口共用 app.extensions["hub_activate"]，抢不到就 409、不排队。"""
+    import threading
+    env.seed_auth_file(email=EMAIL, alias=ALIAS)
+    lock = api.app.extensions.setdefault("hub_activate", threading.Lock())
+    assert lock.acquire(blocking=False)
+    try:
+        code, body = _activate(api, env)
+        assert (code, body["error"]) == (409, "activate_busy")
+        assert not settings_file.exists(), "抢不到锁却还是写了 settings"
+    finally:
+        lock.release()
+    assert _activate(api, env)[0] == 200, "锁释放后切换应恢复可用"
+
+
+def test_activate无论成败都会释放锁(api, env, settings_file):
+    """失败路径不解锁的话，一次 404 就能把切换功能永久卡死。"""
+    import threading
+    assert _activate(api, env)[0] == 404                 # 账户不存在，走异常路径
+    env.seed_auth_file(email=EMAIL, alias=ALIAS)
+    assert _activate(api, env)[0] == 200
+    lock = api.app.extensions["hub_activate"]
+    assert lock.acquire(blocking=False), "成功/失败路径漏了 release，锁被永久占住"
+    lock.release()

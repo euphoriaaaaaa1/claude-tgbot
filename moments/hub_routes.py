@@ -129,10 +129,11 @@ def claude_native_activate():
 # 谁也不用改文件顶部那几行 —— 并行 worktree 合并时零冲突。
 import functools                                              # noqa: E402
 import hashlib                                                # noqa: E402
+import threading                                              # noqa: E402
 import time                                                   # noqa: E402
 from urllib.parse import parse_qs, quote, urlsplit            # noqa: E402
 
-from flask import request                                     # noqa: E402
+from flask import current_app, request                        # noqa: E402
 
 from moments import cliproxy_client, redact, settings_io      # noqa: E402
 from moments.provider_model import HubError                   # noqa: E402
@@ -445,10 +446,32 @@ def _compensate(client, undo):
                        "cliproxy 已改、settings.json 未改，请重试或手动检查")
 
 
+def _activate_lock():
+    """§12.8 ㊴：三个写 settings.json 的入口（§3.6 / §4.6 / §5）共用的一把非阻塞锁。
+
+    键名与对象都定死在 ``app.extensions["hub_activate"]``（与 §6.2 重启锁同款作用域）：
+    第 2 段的模块级辅助落地后，同键 ``setdefault`` 拿到的就是同一把锁，天然合一。
+    ``dict.setdefault`` 在 GIL 下原子，两个并发请求不会各造一把。
+    """
+    return current_app.extensions.setdefault("hub_activate", threading.Lock())
+
+
 @hub_bp.post("/hub/api/oauth/accounts/<provider>/<email_hash>/activate")
 @_json_errors
 def oauth_account_activate(provider, email_hash):
-    """§4.6 = §3.6 的 cliproxy 形态，阶段顺序照抄：A 全只读 / B 可补偿 / C 不可回退。"""
+    """§4.6 = §3.6 的 cliproxy 形态，阶段顺序照抄：A0 抢锁 / A 只读 / B 可补偿 / C 不可回退。"""
+    # A0：拿不到就 409，**不排队**（§12.8 ㊴）—— 切换是秒级人工操作，排队只会把
+    # "两个标签页各点一次"变成"看起来都成了、实际后一次覆盖前一次"。
+    lock = _activate_lock()
+    if not lock.acquire(blocking=False):
+        raise HubError(409, "activate_busy", "另一个切换正在进行，请稍后再试")
+    try:
+        return _activate_locked(provider, email_hash)
+    finally:
+        lock.release()
+
+
+def _activate_locked(provider, email_hash):
     client = cliproxy_client.from_env()
     acc = _find_account(_auth_files(client), provider, email_hash)           # A1
     # 列表给的是 activatable:false，接口就不能背着页面把它切了 —— 用户自己用命令行登过的
