@@ -278,6 +278,8 @@ debug: false
 logging-to-file: false
 request-log: false
 error-logs-max-files: 0
+# 落选 provider 靠 per-entry prefix 隔离，没这个全局开关裸模型名照样命中它们（§3.0d）
+force-model-prefix: true
 api-keys:
   - "{api_key}"
 remote-management:
@@ -299,7 +301,9 @@ def ensure_config(path, env, auth_dir):
     # 日志三件套决定 prompt 明文落不落盘）。这两类字段用户改错的代价是泄漏，所以每次装都拉回来。
     forced = [("host", '"127.0.0.1"'), ("port", env["CLIPROXY_PORT"]), ("debug", "false"),
               ("logging-to-file", "false"), ("request-log", "false"),
-              ("error-logs-max-files", "0")]
+              ("error-logs-max-files", "0"),
+              # alias 互斥的地基（§3.0d）：被改成 false 就等于两个后端抢同一个 alias
+              ("force-model-prefix", "true")]
     for k, v in forced:
         if set_top_scalar(lines, k, v):
             touched.append(k)

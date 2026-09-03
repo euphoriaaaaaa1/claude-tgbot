@@ -67,6 +67,7 @@ ENV = {"CLIPROXY_PORT": "8317", "CLIPROXY_MGMT_KEY": "mgmt-xyz", "CLIPROXY_API_K
 CLIPROXY_WRITTEN = '''host: "127.0.0.1"
 port: 8317
 debug: true
+force-model-prefix: false
 logging-to-file: false
 request-log: false
 api-keys:
@@ -99,6 +100,8 @@ def test_重跑把误开的debug与allow_remote拉回来但不碰provider块(tmp
     assert changed and "debug" in touched
     assert "debug: false" in out
     assert "  allow-remote: false" in out
+    # §3.0d：alias 互斥的地基，缺了或被改 false，落选 provider 照样接裸模型名
+    assert "force-model-prefix: true" in out
     assert "user-added-gateway" in out and "deepseek-v4-flash" in out
     assert '"$2a$10$hashedvalue"' in out, "cliproxy 启动时哈希过的 secret-key 不该被改回明文"
 
