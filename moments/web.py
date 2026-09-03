@@ -36,8 +36,8 @@ if importlib.util.find_spec("moments.hub_routes") is not None:
 hub_auth.install(app)
 
 # ---- 框架级错误 JSON 化 + /hub/api 出站兜底（INTERFACE §0.1 / §0.2 / §0.2b）----
-# 边界就是路径前缀：/hub/api/* 走新契约，`/`、`/styles`、`/api/*`、`/image/*`
-# 一律不经过任何新增中间件（§9.1 逐字节不变）。
+# 边界就是路径前缀：体积闸与出站脱敏**只**挂 /hub/api/*，
+# `/`、`/styles`、`/api/*`、`/image/*` 的响应不经过它们（§0.2b 裁决 / §9.1 逐字节不变）。
 HUB_API_PREFIX = "/hub/api/"
 HUB_MAX_BODY = 1024 * 1024
 # 框架级 404/405 回 JSON 的路径前缀。§0.1 只对 /hub/api/* "强制"，
