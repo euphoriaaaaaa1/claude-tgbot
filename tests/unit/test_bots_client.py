@@ -350,3 +350,19 @@ def test_响应里不回显命令串(client, monkeypatch, tmp_path):
     jobs = client.application.extensions["hub_restart_jobs"]
     st = wait_done(jobs, body["job_id"])
     assert "secret-path-marker" not in json.dumps([body, st], ensure_ascii=False)
+
+
+# ---------------- §0.1 通则排查：第 4 段（BUG-18 / §12.7 ㊳） ----------------
+#
+# 排查结论：本段三个端点里 **一个都不读请求体**
+#   GET  /hub/api/bots                 无体
+#   POST /hub/api/bots/restart         无入参（重启计划全从 bots_client.restart_plan 来）
+#   GET  /hub/api/bots/restart/<job_id> 无体
+# 所以 §0.1 的 400 bad_body 在本段没有落点；要盯的是顶层数组别把它冒成 500。
+
+@pytest.mark.parametrize("raw", [[], [1, 2, 3], "s", 123, True, None])
+def test_restart收到顶层非对象的体照常受理不冒500(client, monkeypatch, raw):
+    monkeypatch.setenv("HUB_RESTART_CMD", "true")
+    r = client.post("/hub/api/bots/restart", json=raw)
+    assert r.status_code == 202, (raw, r.status_code, r.get_json())
+    assert re.fullmatch(r"[0-9a-f]{8}", r.get_json()["job_id"])
