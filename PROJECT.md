@@ -52,14 +52,16 @@
 | BUG-01 | config 骨架缺 force-model-prefix | 已修复 | test-m6 / dev-m6 | c658370 |
 | BUG-02 | install.sh ⑥体检误报就绪 | 已修复 | test-m6 / dev-m6 | 65b5430 |
 | BUG-03 | Linux unit 口令注入 cliproxy 进程 | 已修复 | test-m6 / dev-m6 | 55f840d |
-| BUG-04 | M4 from_block_entry 数字型字段 TypeError 崩（mask_key/derive_id） | 修复中 | test-m4 / dev-m4 | |
-| BUG-05 | M4 不配对方括号 URL：urlsplit 在 try 外 → 500 而非 400 bad_base_url | 修复中 | test-m4 / dev-m4 | |
-| BUG-06 | M4 非 UTF-8 settings 裸 UnicodeDecodeError（只 catch OSError） | 修复中 | test-m4 / dev-m4 | |
-| BUG-07 | M4 孤代理字符落盘裸 UnicodeEncodeError，绕过 HubError 补偿契约 | 修复中 | test-m4 / dev-m4 | |
-| BUG-08 | M4 id 派生分隔符可注入：不同四元组同 id f9b581f6 | 修复中 | test-m4 / dev-m4 | |
-| 口径 | §3.0d：disabled→prefix、active.alias 回 env 原值（裁决后变更） | 修复中 | planner / dev-m4 | |
+| BUG-04 | M4 from_block_entry 数字型字段 TypeError 崩（mask_key/derive_id） | 已修复 | test-m4 / dev-m4 | 69948e7 |
+| BUG-05 | M4 不配对方括号 URL：urlsplit 在 try 外 → 500 而非 400 bad_base_url | 已修复 | test-m4 / dev-m4 | 11bce78 |
+| BUG-06 | M4 非 UTF-8 settings 裸 UnicodeDecodeError（只 catch OSError） | 已修复 | test-m4 / dev-m4 | 716dc5a |
+| BUG-07 | M4 孤代理字符落盘裸 UnicodeEncodeError，绕过 HubError 补偿契约 | 已修复 | test-m4 / dev-m4 | 904bda4 |
+| BUG-08 | M4 id 派生分隔符可注入：不同四元组同 id f9b581f6 | 已修复 | test-m4 / dev-m4 | e4a8af1 |
+| 口径 | §3.0d prefix 互斥+active.alias 回原值 | 已修复 | planner / dev-m4 | 9b46a28 |
 | 文档 | CGNAT 段/零宽 RTL/BOM 自愈/软链语义/"归一化"名不副实 → 待 planner 补文 | 待处理 | test-m4 / planner | |
 | BUG-09 | M0 admin 口令零爆破防护，猜错反清空全站限速计数 | 修复中 | test-m0 / dev-m0 | |
 | BUG-10 | M0 只设 admin 不设 access → /hub 裸奔且无告警 | 修复中 | test-m0 / dev-m0 | |
 | BUG-11 | M0 管理锁 startswith 未归一化路径（今日被 404 兜住，反代下成真绕过） | 修复中 | test-m0 / dev-m0 | |
 | 备忘 | M0→M1 交接：cliproxy_client 异常消息勿携上游响应体（traceback 进日志）；#4 老路由抹敏更严格属向安全偏离→planner 备案 | 待处理 | test-m0 | |
+- 出题人待改批次（攒单，下次一并发→第三次落锁）：⑲ 桩 prefix 断言点、⑳ 连建多 provider 期望、㉑ active.alias 期望、
+  ㉒ stub_cliproxy.aliases_enabled() 改读 prefix 语义（§3.0d 禁写 disabled 键，否则 M3 后假红）。
