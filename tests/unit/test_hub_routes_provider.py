@@ -738,3 +738,14 @@ def test_claude_native_activate收到顶层数组照常成功(c):
     """§5 端点不读请求体（形态是四键全删，没有入参）。"""
     r = c.post("/hub/api/claude-native/activate", json=[1, 2, 3])
     assert (r.status_code, r.get_json()) == (200, {"ok": True, "active_kind": "claude_native"})
+
+
+def test_supported_kinds恒是KIND_SPEC的三个键_且挂在cliproxy下(c, stub):
+    """§3.0①/§3.2：字段路径是 `cliproxy.supported_kinds`（§12 的"新增响应字段"也这么写），
+    取值由 KIND_SPEC 派生 —— 不在这里写死字面量，否则 M4 改表时这条断言先漂移。"""
+    for body in (c.get("/hub/api/provider").get_json(),          # 正常
+                 (stub.set_down(True),
+                  c.get("/hub/api/provider").get_json())[1]):    # 没跑也照样自报
+        assert body["cliproxy"]["supported_kinds"] == list(provider_model.KIND_SPEC)
+        assert len(body["cliproxy"]["supported_kinds"]) == 3
+        assert "supported_kinds" not in body, "契约里它只在 cliproxy 下，别再复制一份到顶层"
