@@ -104,3 +104,5 @@
 | BUG-20 | M3 haiku 双启用盲区 | 已修复 | test-m3 / dev-m3 | 740b898 |
 - P4 实锤批次㉒（桩 disabled 语义致 5 假红，prefix 镜像全绿）；新矛盾：§3.6 reconcile 断言 vs §3.0d 禁清 disabled，待裁。
 - M5 ready-to-merge @fb5de94（四件套+㊱㊲+锁接入=7 commit；实测互斥对翻转即复验；unit 497/oauth 42）。
+- **第四次落锁（终局）@df607f2**：验收 408 用例 405绿/0红/3skip，unit 635 全绿；
+  终修 f911189（version 读文件）。进入 05 裁判盲判。
