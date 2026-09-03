@@ -182,3 +182,10 @@ def test_只写了AUTH_TOKEN一个键也不算native():
     """四键"全"缺才是 native；剩一个说明用户或别的工具动过，如实报 none。"""
     a, w = act({"env": {"ANTHROPIC_AUTH_TOKEN": "x"}})
     assert (a["kind"], w) == ("none", [])
+
+
+@pytest.mark.parametrize("bad", [123, 4.5, True, {"a": 1}, ["x"], None])
+def test_MODEL不是字符串时alias归null(bad):
+    """BUG-13：alias 要往响应里回、还要拿去比对 provider，非字符串一律当没写。"""
+    s = {"env": {"ANTHROPIC_BASE_URL": "https://other.example.com", "ANTHROPIC_MODEL": bad}}
+    assert act(s, [_prov()])[0]["alias"] is None
