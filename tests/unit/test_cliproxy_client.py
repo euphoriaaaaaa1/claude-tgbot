@@ -433,3 +433,30 @@ def test_自测遇非JSON正文不炸也不外带(stub, client, monkeypatch):
     r = client.probe_messages(ALIAS)
     assert r["ok"] is True and r["model_echo"] is None
     assert "sk-test-leak-9999" not in json.dumps(r)
+
+
+# ---------------- 真机形状适配（M2 真机核验发现，桩与真 v7 不同形）----------------
+
+def test_unwrap_list认包装对象也认裸数组():
+    """真 v7.2.148 实测：GET 回 ``{"claude-api-key":[…]}``；§10 的桩回裸数组。"""
+    assert cc.unwrap_list([1, 2], "claude-api-key") == [1, 2]
+    assert cc.unwrap_list({"claude-api-key": [1]}, "claude-api-key") == [1]
+    assert cc.unwrap_list({"files": []}, "files", "auth-files") == []      # M5 的 auth-files
+    assert cc.unwrap_list({"whatever": [7]}, "nope") == [7]                # 只有一个数组时认它
+    for junk in [None, {}, {"a": [1], "b": [2]}, "x", 3, {"k": "v"}]:
+        assert cc.unwrap_list(junk, "k") == [], junk
+
+
+def test_读侧吃包装对象时条目照样认得出(stub, client, monkeypatch):
+    """回归：适配漏了会让 entries() 恒空 → activate 找不到目标、新增 PUT 还会抹掉旧条目。"""
+    stub.seed_openai_block()
+    real = client.mgmt_get
+
+    def wrapped(path):
+        got = real(path)
+        return {path.rsplit("/", 1)[-1]: got} if isinstance(got, list) else got
+
+    monkeypatch.setattr(client, "mgmt_get", wrapped)
+    assert len(client.entries()) == 1
+    client.add_entry("openai", {"base-url": "https://x.example", "models": []})
+    assert len(stub.openai_compat) == 2, "包装形状下新增把旧条目抹掉了"
