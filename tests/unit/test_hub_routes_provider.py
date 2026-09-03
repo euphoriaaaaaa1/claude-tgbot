@@ -479,7 +479,7 @@ def test_reconcile把多个enabled收敛成一个并打日志(env, stub, capfd):
                             "ANTHROPIC_MODEL": ALIAS}})
     make_app()                                        # 一次 app 注册 = 一次门户启动
     assert enabled_for(stub, ALIAS) == 1, "启动 reconcile 没把 alias 收敛成唯一"
-    assert "hub_reconcile fixed=true alias=%s" % ALIAS in capfd.readouterr()[1]
+    assert "hub_reconcile alias=%s haiku=%s fixed=true" % (ALIAS, HAIKU) in capfd.readouterr()[1]
 
 
 def test_reconcile把0个enabled的alias自愈(env, stub):
@@ -636,3 +636,54 @@ def test_并发切换不同provider终态只可能是某一方的完整结果(c,
         alias = settings_now()["env"]["ANTHROPIC_MODEL"]
         assert enabled_for(stub, alias) == 1, "settings 指的 alias 没有可命中的条目"
         assert enabled_for(stub, HAIKU) == 1, "haiku 被两次切换各写一半写没了"
+
+
+# ---------------- BUG-20：haiku 漂移（§3.2 haiku_conflict + reconcile 的 I2）----------------
+
+def seed_pair(stub, haiku=HAIKU):
+    """两条主 alias 各自唯一、却共用同一 haiku alias，且都不带 prefix。
+    这正是 B 阶段补偿失败留下的态：主模型走对后端，后台摘要在两家之间轮询。"""
+    a = stub.seed_openai_block(name="a", alias=ALIAS, haiku_alias=haiku)
+    b = stub.seed_openai_block(name="b", base_url="https://gw.example.com/v1",
+                               upstream="glm-4.6", alias="claude-opus-4-1-20250805",
+                               haiku_alias=haiku)
+    write_settings({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:%d" % stub.port,
+                            "ANTHROPIC_MODEL": ALIAS}})
+    return a, b
+
+
+def test_haiku双启用时列表给haiku_conflict(c, stub):
+    seed_pair(stub)                                   # app 已建好，桩状态是之后铺的
+    body = c.get("/hub/api/provider").get_json()
+    assert body["active"]["alias"] == ALIAS           # 与 active.kind 正交，五态照常取值
+    assert body["active"]["kind"] == "cliproxy"
+    assert "haiku_conflict" in body["warnings"]
+
+
+def test_haiku只有一个不带prefix时不报conflict(c, stub):
+    a, b = seed_pair(stub)
+    b["prefix"] = "deadbeef"
+    assert "haiku_conflict" not in c.get("/hub/api/provider").get_json()["warnings"]
+
+
+def test_haiku_conflict可与alias_disabled同时出现(c, stub):
+    """§3.2：两者正交，warnings 是数组不是单值。"""
+    a, b = seed_pair(stub)
+    a["disabled"] = True                              # 用户手改停用（读侧 OR，写侧不碰）
+    stub.seed_openai_block(name="c2", base_url="https://gw2.example.com/v1", upstream="x",
+                           alias="claude-haiku-only", haiku_alias=HAIKU)   # 第 2 个抢 haiku 的
+    w = c.get("/hub/api/provider").get_json()["warnings"]
+    assert "alias_disabled" in w and "haiku_conflict" in w, w
+
+
+def test_reconcile修I2_haiku也收敛成一条且是同一条目(env, stub, capfd):
+    """§3.6 断言点 2：主 alias 各自唯一、两条共用 haiku 且都不带 prefix → 重启门户 →
+    无 haiku_conflict，且只剩一个条目不带 prefix。"""
+    seed_pair(stub)
+    body = make_app().get("/hub/api/provider").get_json()
+    assert "haiku_conflict" not in body["warnings"], "只修 I1 的 reconcile 收不住 haiku 漂移"
+    assert enabled_for(stub, HAIKU) == 1 and enabled_for(stub, ALIAS) == 1
+    live = [b for b in stub.all_blocks if not b.get("prefix")]
+    assert len(live) == 1 and live[0]["models"][0]["alias"] == ALIAS
+    out = capfd.readouterr()[1]
+    assert "alias=%s" % ALIAS in out and "haiku=%s" % HAIKU in out and "fixed=true" in out
