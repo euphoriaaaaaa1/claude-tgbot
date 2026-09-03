@@ -1,0 +1,74 @@
+{# 管理台三页共用的导航条 + 主题样式（PLAN §3.1：三个页面各一模板，真正该复用的只有导航这几行）。
+   ponytail: 样式跟着本 include 走，不抽 base 模板 —— feed.html 42KB / styles.html 19KB 全内联、
+   无 static 目录，抽 base 要动那 62KB，而 BRIEF 明说既有页面内容不动。
+   <style> 落在 body 里浏览器一律接受；要塞进 <head> 得再加一个 include，不值当。 #}
+<style>
+:root{--bg:#ededed;--card:#fff;--ink:#181818;--ink-soft:#555;--ink-faint:#888;
+  --hairline:rgba(0,0,0,.06);--hairline-strong:rgba(0,0,0,.12);--soft-bg:#f7f7f7;
+  --link:#576b95;--wxgreen:#07c160;--danger:#fa5151;
+  --font-body:'Noto Sans SC',-apple-system,system-ui,sans-serif;
+  --font-mono:ui-monospace,'JetBrains Mono',monospace;}
+@media (prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--ink:#f0f0f0;--ink-soft:#c0c0c0;
+  --ink-faint:#8a8a8a;--hairline:rgba(255,255,255,.08);--hairline-strong:rgba(255,255,255,.16);
+  --soft-bg:#2c2c2e;--link:#7d8db5;}}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+body{font-family:var(--font-body);background:var(--bg);color:var(--ink);line-height:1.6;
+  font-size:15px;min-height:100vh;}
+a{color:var(--link);text-decoration:none;}
+.wrap{max-width:760px;margin:0 auto;padding:16px 14px 48px;}
+h1{font-size:19px;font-weight:600;}
+.sub{color:var(--ink-faint);font-size:13px;margin-bottom:16px;}
+.hubnav{background:var(--card);border-bottom:1px solid var(--hairline);position:sticky;top:0;z-index:5;}
+.hubnav-inner{max-width:760px;margin:0 auto;padding:9px 14px;display:flex;gap:8px;
+  flex-wrap:wrap;align-items:center;}
+.chip{font-size:13px;padding:4px 11px;border-radius:14px;background:var(--soft-bg);color:var(--ink-soft);}
+.chip.on{background:var(--wxgreen);color:#fff;}
+.card{background:var(--card);border:1px solid var(--hairline);border-radius:12px;
+  padding:16px;margin-bottom:14px;}
+.card h2{font-size:15px;font-weight:600;margin-bottom:8px;}
+.muted{color:var(--ink-faint);font-size:12.5px;}
+label{display:block;font-size:13px;color:var(--ink-soft);margin:12px 0 5px;}
+input,select{width:100%;padding:9px 11px;font-size:14px;font-family:var(--font-body);
+  color:var(--ink);background:transparent;border:1px solid var(--hairline-strong);border-radius:8px;}
+.btn{border:none;border-radius:8px;padding:9px 14px;font-size:14px;font-family:var(--font-body);
+  cursor:pointer;background:var(--wxgreen);color:#fff;}
+.btn.ghost{background:var(--soft-bg);color:var(--ink-soft);}
+.btn.danger{background:var(--danger);color:#fff;}
+.btn.mini{padding:4px 9px;font-size:12.5px;}
+.btn:hover{opacity:.85;}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+table{width:100%;border-collapse:collapse;font-size:13.5px;}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--hairline);vertical-align:middle;}
+th{color:var(--ink-faint);font-weight:500;font-size:12.5px;}
+.mono{font-family:var(--font-mono);font-size:12.5px;}
+.pill{display:inline-block;font-size:12px;padding:1px 8px;border-radius:10px;
+  background:var(--soft-bg);color:var(--ink-soft);}
+.pill.on{background:rgba(7,193,96,.15);color:var(--wxgreen);}
+.pill.off{background:rgba(250,81,81,.14);color:var(--danger);}
+.empty{color:var(--ink-faint);font-size:13px;padding:12px 0;}
+</style>
+<nav class="hubnav">
+  <div class="hubnav-inner">
+    <a class="chip{% if nav_active == 'hub' %} on{% endif %}" href="/hub">管理台</a>
+    <a class="chip{% if nav_active == 'provider' %} on{% endif %}" href="/hub/provider">模型来源</a>
+    <a class="chip{% if nav_active == 'bots' %} on{% endif %}" href="/hub/bots">bot 状态</a>
+    <a class="chip" href="/">朋友圈</a>
+    <a class="chip" href="/styles">画风</a>
+  </div>
+</nav>
+<script>
+// 三页共用的 fetch 包装。两件事：
+// 1) 401 + Hub-Gate:1 → 跳登录（§1.4 的判别位，不带该头的 401 是业务鉴权失败，不跳）；
+// 2) 501 not_implemented → 标记 todo，页面渲染「未实现」态（M1 空壳期的施工态）。
+async function hubApi(path, opts) {
+  const o = Object.assign({headers: {'Content-Type': 'application/json'}}, opts || {});
+  let r, body = null;
+  try { r = await fetch(path, o); } catch (e) { return {status: 0, body: {}, todo: false}; }
+  try { body = await r.json(); } catch (e) {}
+  if (r.status === 401 && r.headers.get('Hub-Gate') === '1') { location.href = '/login'; }
+  return {status: r.status, body: body || {},
+          todo: r.status === 501 && !!body && body.error === 'not_implemented'};
+}
+function hubSay(el, text) { if (el) el.textContent = text; }
+</script>

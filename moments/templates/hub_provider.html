@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>模型来源 · 管理台</title>
+</head>
+<body>
+{% include "_nav.html" %}
+<div class="wrap">
+  <h1>模型来源</h1>
+  <div class="sub">bot 走哪家模型，在这里配、在这里切</div>
+
+  <div class="card">
+    <h2>cliproxy</h2>
+    <div class="row">
+      <span class="pill" id="cliproxy-pill">读取中…</span>
+      <span class="muted" id="cliproxy-detail"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>已配置的来源</h2>
+    <div id="provider-warnings" class="muted"></div>
+    <table>
+      <thead>
+        <tr><th>名称</th><th>类型</th><th>对外模型名</th><th>key</th><th>状态</th><th></th></tr>
+      </thead>
+      <tbody id="provider-rows"></tbody>
+    </table>
+    <div class="empty" id="provider-empty">读取中…</div>
+  </div>
+
+  <div class="card">
+    <h2>新增来源</h2>
+    <form id="provider-form" autocomplete="off">
+      <label for="label">名称（label）</label>
+      <input id="label" name="label" placeholder="DeepSeek">
+
+      <label for="kind">类型（kind）</label>
+      <select id="kind" name="kind">
+        {% for k in kinds %}<option value="{{ k }}">{{ k }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="base_url">接口地址（base_url）</label>
+      <input id="base_url" name="base_url" placeholder="https://api.deepseek.com/v1">
+
+      <label for="api_key">API key（api_key）</label>
+      <input id="api_key" name="api_key" type="password" placeholder="只在保存这一次上传，之后页面只看得到末 4 位">
+
+      <label for="upstream_model">上游真实模型名（upstream_model）</label>
+      <input id="upstream_model" name="upstream_model" placeholder="deepseek-v4-flash">
+
+      <label for="model_alias">对外模型名（model_alias）</label>
+      <input id="model_alias" name="model_alias" placeholder="claude-sonnet-4-5-20250929">
+
+      <label for="haiku_alias">小模型名（haiku_alias，可留空）</label>
+      <input id="haiku_alias" name="haiku_alias" placeholder="{{ default_haiku_alias }}">
+      <div class="muted">留空即用 {{ default_haiku_alias }}。后台摘要请求走它，没注册会 502。</div>
+
+      <div class="row" style="margin-top:14px">
+        <button class="btn" type="submit">保存</button>
+        <span class="muted" id="form-msg"></span>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>官方订阅账户（OAuth）</h2>
+    <div class="row">
+      {% for p in oauth_providers %}
+      <button class="btn ghost oauth-start" type="button"
+              data-provider="{{ p.id }}" data-port="{{ p.callback_port }}">
+        开始登录 {{ p.label }}
+      </button>
+      {% endfor %}
+    </div>
+    <div class="muted" style="margin-top:10px">
+      授权页要在<b>有浏览器的机器</b>上打开。浏览器最后会跳到
+      <span class="mono">http://localhost:&lt;callback_port&gt;/callback</span>
+      （{% for p in oauth_providers %}{{ p.label }} 用 {{ p.callback_port }}{% if not loop.last %}，{% endif %}{% endfor %}），
+      <b>大概率显示连不上，这是正常的</b>；把浏览器<b>地址栏</b>里那一整串 URL 复制回来，
+      粘进下面的输入框。整个流程要在 {{ oauth_wait_minutes }} 分钟内完成，超时要重新开始。
+    </div>
+    <label for="oauth_redirect_url">粘贴地址栏整串 URL</label>
+    <input id="oauth_redirect_url" name="redirect_url"
+           placeholder="http://localhost:…/callback?code=…&amp;state=…">
+    <div class="row" style="margin-top:10px">
+      <button class="btn" type="button" id="oauth-submit">提交</button>
+      <span class="muted" id="oauth-msg"></span>
+    </div>
+    <table style="margin-top:12px">
+      <thead><tr><th>账户</th><th>渠道</th><th>状态</th><th></th></tr></thead>
+      <tbody id="oauth-rows"></tbody>
+    </table>
+    <div class="empty" id="oauth-empty">读取中…</div>
+  </div>
+
+  <div class="card">
+    <h2>Claude 官方订阅</h2>
+    <div class="row">
+      <button class="btn ghost" type="button" id="claude-native">切回 Claude 官方订阅</button>
+      <span class="muted" id="claude-native-msg"></span>
+    </div>
+    <div class="muted" style="margin-top:8px">
+      需要先在终端跑一次 <span class="mono">claude</span> 完成登录（凭证存在系统 keychain / DPAPI，本页不接触它）。
+      这条路不经过 cliproxy，所以 cliproxy 挂着也能切回来。
+    </div>
+  </div>
+</div>
+<script>
+// M1 空壳期：/hub/api/* 回 501 not_implemented，这里渲染「未实现」态而不是白屏。
+// M3 接第 2 段、M5 接第 3 段时把 render 部分换成真渲染即可，DOM 结构与 id 不用动。
+const TODO_TEXT = '这块还没接上（后端返回 not_implemented）';
+const $ = (id) => document.getElementById(id);
+
+async function loadProviders() {
+  const r = await hubApi('/hub/api/provider');
+  const pill = $('cliproxy-pill'), rows = $('provider-rows'), empty = $('provider-empty');
+  rows.innerHTML = '';
+  if (r.todo) {
+    pill.textContent = '未实现'; pill.className = 'pill';
+    hubSay(empty, TODO_TEXT); hubSay($('provider-warnings'), '');
+    return;
+  }
+  if (r.status !== 200) {
+    pill.textContent = '读取失败'; pill.className = 'pill off';
+    hubSay($('cliproxy-detail'), (r.body && r.body.error) || ('HTTP ' + r.status));
+    hubSay(empty, '');
+    return;
+  }
+  const cp = r.body.cliproxy || {};
+  pill.textContent = cp.running ? '运行中' : '未运行';
+  pill.className = 'pill ' + (cp.running ? 'on' : 'off');
+  hubSay($('cliproxy-detail'), cp.port ? ('127.0.0.1:' + cp.port) : '');
+  hubSay($('provider-warnings'), (r.body.warnings || []).join('、'));
+  for (const p of (r.body.providers || [])) rows.appendChild(providerRow(p));
+  hubSay(empty, (r.body.providers || []).length ? '' : '还没配任何来源');
+}
+
+function cell(text, cls) {
+  const td = document.createElement('td');
+  td.textContent = text == null ? '' : String(text);
+  if (cls) td.className = cls;
+  return td;
+}
+
+function providerRow(p) {
+  const tr = document.createElement('tr');
+  tr.appendChild(cell(p.label));
+  tr.appendChild(cell(p.kind));
+  tr.appendChild(cell(p.model_alias, 'mono'));
+  tr.appendChild(cell(p.key_masked, 'mono'));
+  const st = document.createElement('td');
+  st.innerHTML = '<span class="pill ' + (p.active ? 'on' : '') + '">' +
+                 (p.active ? '生效中' : '未生效') + '</span>';
+  tr.appendChild(st);
+  const ops = document.createElement('td');
+  for (const [act, txt, cls] of [['test', '自测', 'ghost'],
+                                 ['activate', '切换到它', ''],
+                                 ['delete', '删除', 'danger']]) {
+    const b = document.createElement('button');
+    b.className = 'btn mini ' + cls;
+    b.type = 'button'; b.textContent = txt;
+    b.dataset.action = act; b.dataset.id = p.id;
+    ops.appendChild(b);
+  }
+  tr.appendChild(ops);
+  return tr;
+}
+
+// 行内三个操作走事件委托：行是异步渲染的，逐个绑监听会漏掉后来的行。
+$('provider-rows').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-action]');
+  if (!b) return;
+  const id = b.dataset.id, act = b.dataset.action;
+  if (act === 'delete' && !confirm('删除这个来源？')) return;
+  b.disabled = true;
+  const r = await hubApi('/hub/api/provider/' + encodeURIComponent(id) +
+                         (act === 'delete' ? '' : '/' + act),
+                         {method: act === 'delete' ? 'DELETE' : 'POST', body: '{}'});
+  b.disabled = false;
+  alert(r.todo ? TODO_TEXT : JSON.stringify(r.body));
+  loadProviders();
+});
+
+$('provider-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = {};
+  for (const f of ['label', 'kind', 'base_url', 'api_key', 'upstream_model',
+                   'model_alias', 'haiku_alias']) {
+    const v = $(f).value.trim();
+    if (v) body[f] = v;
+  }
+  const r = await hubApi('/hub/api/provider', {method: 'POST', body: JSON.stringify(body)});
+  hubSay($('form-msg'), r.todo ? TODO_TEXT
+        : (r.status === 201 ? '已保存' : ((r.body.error || '') + ' ' + (r.body.detail || ''))));
+  if (r.status === 201) { $('provider-form').reset(); loadProviders(); }
+});
+
+async function loadOauth() {
+  const r = await hubApi('/hub/api/oauth/accounts');
+  const rows = $('oauth-rows'), empty = $('oauth-empty');
+  rows.innerHTML = '';
+  if (r.todo) { hubSay(empty, TODO_TEXT); return; }
+  if (r.status !== 200) { hubSay(empty, (r.body && r.body.error) || ('HTTP ' + r.status)); return; }
+  for (const a of (r.body.accounts || [])) {
+    const tr = document.createElement('tr');
+    tr.appendChild(cell(a.email_masked));
+    tr.appendChild(cell(a.provider));
+    tr.appendChild(cell(a.status));
+    tr.appendChild(cell(''));
+    rows.appendChild(tr);
+  }
+  hubSay(empty, (r.body.accounts || []).length ? '' : '还没登录任何官方订阅账户');
+}
+
+let oauthProvider = null;   // 记住最近一次「开始登录」的渠道，提交时要带上
+
+for (const b of document.querySelectorAll('.oauth-start')) {
+  b.addEventListener('click', async () => {
+    oauthProvider = b.dataset.provider;
+    const r = await hubApi('/hub/api/oauth/start',
+                           {method: 'POST', body: JSON.stringify({provider: oauthProvider})});
+    if (r.todo) { hubSay($('oauth-msg'), TODO_TEXT); return; }
+    if (r.status === 200 && r.body.url) {
+      hubSay($('oauth-msg'), '已生成授权地址，' + Math.round((r.body.expires_in || 300) / 60) + ' 分钟内完成');
+      window.open(r.body.url, '_blank', 'noopener');
+    } else {
+      hubSay($('oauth-msg'), (r.body.error || '') + ' ' + (r.body.detail || ''));
+    }
+  });
+}
+
+$('oauth-submit').addEventListener('click', async () => {
+  const url = $('oauth_redirect_url').value.trim();
+  const r = await hubApi('/hub/api/oauth/submit',
+      {method: 'POST', body: JSON.stringify({provider: oauthProvider, redirect_url: url})});
+  hubSay($('oauth-msg'), r.todo ? TODO_TEXT
+        : (r.body.ok ? '已提交，稍后刷新看账户列表' : ((r.body.error || '') + ' ' + (r.body.detail || ''))));
+  if (r.body.ok) loadOauth();
+});
+
+$('claude-native').addEventListener('click', async () => {
+  const r = await hubApi('/hub/api/claude-native/activate', {method: 'POST', body: '{}'});
+  hubSay($('claude-native-msg'), r.todo ? TODO_TEXT
+        : (r.body.ok ? '已切回官方订阅' : ((r.body.error || '') + ' ' + (r.body.detail || ''))));
+  loadProviders();
+});
+
+loadProviders();
+loadOauth();
+</script>
+</body>
+</html>
