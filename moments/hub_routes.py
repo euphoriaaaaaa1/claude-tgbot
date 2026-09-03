@@ -166,6 +166,22 @@ def _json_errors(fn):
     return wrapper
 
 
+def _json_body():
+    """§0.1 通则：请求体不是 JSON 对象一律 ``400 bad_body``（BUG-18）。
+
+    ``get_json(silent=True)`` 对**合法但顶层是数组/字符串/数字/布尔**的体会原样返回，
+    再 ``body.get()`` 就是 AttributeError → 500，把用户的输入错误说成门户坏了。
+    空体 / Content-Type 不对回 ``None`` → 按"体缺失"当空对象，
+    交给各端点自己的必填校验去报更准的码（如 ``bad_provider``）。
+    """
+    body = request.get_json(silent=True)
+    if body is None:
+        return {}
+    if not isinstance(body, dict):
+        raise HubError(400, "bad_body", "请求体必须是一个 JSON 对象")
+    return body
+
+
 def _provider_or_400(raw):
     """§4：枚举只有 codex / antigravity。anthropic 被显式移除（Claude 走 §5 原生订阅）。"""
     if isinstance(raw, str) and raw in OAUTH_CALLBACK_PORTS:
@@ -253,7 +269,7 @@ def oauth_accounts():
 @hub_bp.post("/hub/api/oauth/start")
 @_json_errors
 def oauth_start():
-    body = request.get_json(silent=True) or {}
+    body = _json_body()
     provider = _provider_or_400(body.get("provider"))
     client = cliproxy_client.from_env()          # 没配 → 503 cliproxy_unconfigured（§0.3）
     data = client.mgmt_get("%s-auth-url" % provider)
@@ -291,7 +307,7 @@ def _split_callback(raw):
 @hub_bp.post("/hub/api/oauth/submit")
 @_json_errors
 def oauth_submit():
-    body = request.get_json(silent=True) or {}
+    body = _json_body()
     provider = _provider_or_400(body.get("provider"))
     if "redirect_url" in body:                            # 形式一：整串回调 URL
         redirect_url = body["redirect_url"]
