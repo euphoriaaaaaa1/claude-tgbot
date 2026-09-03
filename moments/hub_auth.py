@@ -231,10 +231,19 @@ def install(app):
             page = render_template("login.html", need_admin=bool(admin_pw), error=True)
             return page, 401
 
-        guard.reset()
-        print("hub_login ok=true n=0", flush=True)
-        admin_ok = bool(admin_pw) and _eq(request.form.get("admin_password"), admin_pw)
-        # 只有全站口令对 → 只签一个 cookie，跳 `/`（家人只看朋友圈的正常路径，不算失败）
+        supplied_admin = request.form.get("admin_password") or ""
+        admin_ok = bool(admin_pw) and _eq(supplied_admin, admin_pw)
+        # admin 留空 = 家人只要浏览权的正常路径，§1.5 明说不计入爆破计数；
+        # admin 填了却填错 = 有人在猜管理口令。全站口令本来就会分给家人，家人正是管理锁的
+        # 攻击面，这条内锁不能是零成本的 —— 计入同一个滑窗，享受同样的递增延迟与 429。
+        if admin_pw and supplied_admin and not admin_ok:
+            n = guard.record_failure()
+            print("hub_login ok=false n=%d scope=admin" % n, flush=True)
+            time.sleep(guard.delay_for(n))
+        else:
+            guard.reset()          # 只有"两把全对"或"只要浏览权"才清窗
+            print("hub_login ok=true n=0", flush=True)
+        # 只有全站口令对 → 只签一个 cookie，跳 `/`（§1.5 表第二行）
         resp = redirect("/hub" if (not admin_pw or admin_ok) else "/", code=303)
         _set_cookie(resp, COOKIE_SESSION, issue_cookie(pw, SALT_SESSION))
         if admin_ok:
