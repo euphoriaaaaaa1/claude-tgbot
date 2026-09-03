@@ -102,7 +102,9 @@ elif bash scripts/install_cliproxy.sh; then
     if grep -A1 '<key>WorkingDirectory</key>' "$plist" | grep -qF "<string>$cliproxy_dir</string>"; then wd_ok=1; fi
   elif [ -f "$svc" ]; then
     unit="$svc"
-    if grep -qF "WorkingDirectory=$cliproxy_dir" "$svc"; then wd_ok=1; fi
+    # -x 整行匹配：子串匹配会被 WorkingDirectory=$dir/logs、=$dir-old、
+    # 以及 `#WorkingDirectory=$dir` 这种注释掉的行骗过去
+    if grep -qxF "WorkingDirectory=$cliproxy_dir" "$svc"; then wd_ok=1; fi
   fi
   if [ -z "$cliproxy_dir" ]; then
     todo "读不到 cliproxy 的安装目录，重跑：bash scripts/install_cliproxy.sh"
