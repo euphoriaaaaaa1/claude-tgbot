@@ -205,3 +205,16 @@ def test_systemd_unit同样按工作目录那行判(tmp_path):
     assert "OK:" in _run_section6(tmp_path, SVC, "[Service]\nWorkingDirectory={DIR}\n")
     out = _run_section6(tmp_path, SVC, "[Service]\nExecStart={DIR}/cli-proxy-api\n")
     assert "OK:" not in out and "没钉在" in out
+
+
+def test_三平台常驻单元都不给cliproxy注凭据():
+    """cliproxy 不读任何门户变量，注进去只是多一份 /proc 可读的口令副本。"""
+    sh = (ROOT / "scripts" / "install_cliproxy.sh").read_text(encoding="utf-8")
+    assert "EnvironmentFile" not in sh, "systemd unit 又把 hub.env 注进去了"
+    import re as _re
+    for rel in ("plist-templates/cliproxy.plist.tmpl", "windows/run-cliproxy.ps1",
+                "windows/register-tasks.ps1"):
+        t = (ROOT / rel).read_text(encoding="utf-8-sig")
+        body = _re.sub(r"<!--.*?-->", "", t, flags=_re.S)          # 去 XML 注释
+        body = "\n".join(l for l in body.splitlines() if not l.lstrip().startswith("#"))
+        assert "hub.env" not in body and "HUB_ACCESS_PASSWORD" not in body, rel
