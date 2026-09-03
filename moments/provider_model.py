@@ -381,6 +381,8 @@ def resolve_active(settings, port, providers):
     # alias 恒取 ANTHROPIC_MODEL 原值（键缺失才 None），none/direct 态也回原值——
     # 页面要能显示"现在到底钉在哪个模型名上"，判不出来源不等于读不出名字。
     alias = env.get("ANTHROPIC_MODEL")
+    if not isinstance(alias, str):          # 手写的 settings 里可能是数字/对象/true
+        alias = None
     if not any(k in env for k in ANTHROPIC_ENV_KEYS):
         return {"kind": "claude_native", "id": None, "alias": alias}, []
     if not _points_at_cliproxy(env.get("ANTHROPIC_BASE_URL"), port):
