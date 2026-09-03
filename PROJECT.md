@@ -84,3 +84,5 @@
 - M5 交付 @ph-m5：oauth 42/42 绿，全量 156绿/197红（余红全是 M3 未填段）。三留白待 planner 定死：
   ①无 model_aliases 的账户 activate→暂 400 bad_alias ②state 不匹配/超窗→暂 400 bad_body ③DELETE auth-files
   入参形状未实测（真机核验项，归验收前单点核验）。state 表进程内存（单进程够用，注释有升级路径）。
+- §12.5 定死：oauth_no_alias/oauth_state_expired 专码（M5 需由 400 临时码改 409 专码，攒至其实测后一并）；
+  DELETE auth-files=真机核验项 R1（核验前不放行）；M7 两偏离据实入文。出题人批次至 10 项（+㉚㉛㉝）。
