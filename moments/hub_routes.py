@@ -82,11 +82,13 @@ def hub_bots_page():
 # ======================================================================
 
 
-import functools                              # noqa: E402  第 2 段自己的依赖，段界即分工线
+import contextlib                             # noqa: E402  第 2 段自己的依赖，段界即分工线
+import functools                              # noqa: E402
 import os                                     # noqa: E402
 import sys                                    # noqa: E402
+import threading                              # noqa: E402
 
-from flask import request                     # noqa: E402
+from flask import current_app, request        # noqa: E402
 
 from moments import cliproxy_client, redact, settings_io   # noqa: E402
 from moments.provider_model import HubError   # noqa: E402
@@ -108,6 +110,31 @@ def _api(fn):
         except HubError as e:
             return jsonify({"error": e.error, "detail": e.detail}), e.status
     return wrapper
+
+
+@contextlib.contextmanager
+def hold_activate_lock(app=None):
+    """§3.6 A0：**三个写 settings.json 的入口共用的一把非阻塞锁**（§3.6 / §5 / §4.6）。
+
+    不加锁时两个并发切换会各自基于**旧快照**读-改-写条目表，终态可能两条都带 prefix
+    （settings 指的 alias 一个不带 prefix 的条目都没有、haiku 也是 0），而双方都回 200 ——
+    用户看到"切换成功"，bot 却全线 502（BUG-19）。锁覆盖整段 A→B→C（含写 settings），
+    终态必是最后完成者的完整结果，不会是两次切换各写一半拼出来的四不像。
+
+    抢不到不排队，直接 `409 activate_busy`：切换是秒级人工操作，排队只会把
+    "两个标签页各点一次"变成"看起来都成了、实际后一次覆盖前一次"，还要引进
+    超时/队列长度/取消这些本不需要的东西。
+    锁挂在 ``app.extensions["hub_activate"]``（与 §6.2 重启锁同款作用域，测试不串扰）。
+    **M5 的 §4.6 OAuth activate 直接 `with hold_activate_lock():` 即可，别另起一把。**
+    """
+    ext = (app or current_app).extensions
+    lock = ext.setdefault("hub_activate", threading.Lock())     # dict.setdefault 在 GIL 下原子
+    if not lock.acquire(blocking=False):
+        raise HubError(409, "activate_busy", "另一次切换正在进行，请稍候重试")
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 def _validated(body, base=None):
@@ -270,7 +297,14 @@ def _activate(client, pid):
     settings 仍指向它" —— bot 每个请求 502，而页面显示"当前生效：旧 provider"，
     用户完全看不出问题在哪。重排后最常见的两类失败都在动 cliproxy 之前返回。
     幂等：同一目标重放收敛到同一结果，不因"已经是这个状态"报错。
+    **全段持锁**（含 C 段写 settings）：终态必是最后完成者的完整结果，
+    不会是两次切换各写一半拼出来的四不像。
     """
+    with hold_activate_lock():                                # A0
+        return _activate_locked(client, pid)
+
+
+def _activate_locked(client, pid):
     entry = client.find(pid)                                  # A1
     if entry is None:
         raise HubError(404, "not_found", "provider 不存在")
@@ -333,11 +367,13 @@ def provider_test(pid):
 def claude_native_activate():
     """§5：只做 §3.6 的 C 阶段，形态是四键全删。**不经过 cliproxy** ——
     没有 A4 探活、没有 B 阶段、也就没有补偿与 activate_partial。
-    cliproxy 挂了/压根没配时，这是唯一还能用的逃生出口。"""
-    path, data = _settings_now()
-    if not settings_io.dir_writable(path):
-        raise HubError(500, "settings_write_failed", "settings.json 所在目录不可写")
-    settings_io.write_json_atomic(path, provider_model.apply_native_env(data))
+    cliproxy 挂了/压根没配时，这是唯一还能用的逃生出口。
+    与 §3.6 共用同一把 activate 锁：它同样写 settings.json，跟切 provider 互斥（BUG-19）。"""
+    with hold_activate_lock():
+        path, data = _settings_now()
+        if not settings_io.dir_writable(path):
+            raise HubError(500, "settings_write_failed", "settings.json 所在目录不可写")
+        settings_io.write_json_atomic(path, provider_model.apply_native_env(data))
     return jsonify({"ok": True, "active_kind": "claude_native"})
 
 
