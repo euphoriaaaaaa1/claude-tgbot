@@ -28,6 +28,10 @@ def read_text(path):
             return f.read()
     except FileNotFoundError:
         return None
+    except UnicodeDecodeError:
+        # 不是 UTF-8（Windows 记事本另存的 GBK/带 BOM 很常见）。解码是解析的一部分，
+        # 按坏 JSON 同路走 409，用户改完文件即可自愈；500 会让人以为是门户坏了。
+        raise HubError(409, "settings_unparsable", "settings.json 不是 UTF-8 编码")
     except OSError as e:
         raise HubError(500, "config_unreadable", "settings.json 读取失败：%s" % type(e).__name__)
 

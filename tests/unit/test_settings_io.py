@@ -176,3 +176,12 @@ def test_posix上的PermissionError不当成占用(path, monkeypatch):
     with pytest.raises(HubError) as e:
         write_json_atomic(path, {})
     assert (e.value.status, e.value.error) == (500, "settings_write_failed")
+
+
+def test_非UTF8的settings给409而不是裸UnicodeDecodeError(path):
+    """BUG-06：GBK 存的 settings.json（Windows 记事本另存）。解码失败也是"解析不了"。"""
+    path.parent.mkdir()
+    path.write_bytes(b'{"env": {"X": "\xd6\xd0\xce\xc4"}}')
+    with pytest.raises(HubError) as e:
+        read_text(path)
+    assert (e.value.status, e.value.error) == (409, "settings_unparsable")
