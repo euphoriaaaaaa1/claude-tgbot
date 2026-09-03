@@ -66,5 +66,20 @@ Register-Task "claude-tgbot-memory-compactor" `
     (PyAction "`"$RepoDir\memory\memory_compactor.py`"") `
     (New-ScheduledTaskTrigger -Daily -At "04:00")
 
+# 6) cliproxy：登录时自启（provider 管理台的后端代理，可选）。
+#    动作必须是 run-cliproxy.ps1 守护循环——计划任务没有 launchd 的 KeepAlive，
+#    直接跑二进制的话崩一次就再也不起来（INTERFACE §8.2 B4）。
+#    -WorkingDirectory 必须钉在 ~/.claude-tgbot/cliproxy：v7 启动会往进程 CWD
+#    写 static\management.html（2.7 MB），不钉就拉进代码仓库根目录。
+$CliproxyRoot = if ($env:CLAUDE_TGBOT_HOME) { $env:CLAUDE_TGBOT_HOME } else { Join-Path $env:USERPROFILE ".claude-tgbot" }
+$CliproxyDir  = Join-Path $CliproxyRoot "cliproxy"
+if (Test-Path (Join-Path $CliproxyDir "cli-proxy-api.exe")) {
+    Register-Task "claude-tgbot-cliproxy" `
+        (New-ScheduledTaskAction -Execute "powershell" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSScriptRoot\run-cliproxy.ps1`"" -WorkingDirectory $CliproxyDir) `
+        (New-ScheduledTaskTrigger -AtLogOn)
+} else {
+    Write-Warning "跳过 claude-tgbot-cliproxy：还没装 cliproxy（先跑 windows\install-cliproxy.ps1），装完重跑本脚本即可补上。"
+}
+
 Write-Host ""
 Write-Host "全部注册完成。查看：taskschd.msc 或 Get-ScheduledTask -TaskName 'claude-tgbot-*'"
