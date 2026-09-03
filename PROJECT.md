@@ -33,7 +33,7 @@
   含 CLAUDE_SETTINGS_PATH 非 CLI 变量的红线级纠正）；haiku 双 alias 契约变更由出题人修题后重锁，
   356 用例（328红/25绿/3skip）。施工版 PLAN 835 行 / INTERFACE 1155 行。开发放行。
 - 04 开发启动 @eddfc4c：3 条 worktree 并行（上限3，压掉方案里的4）——
-  [测] M0 鉴权门+骨架  dev-m0 交付 @538470f（验收 270红/83绿），模块实测中
+  [✓] M0 鉴权门+骨架  ready-to-merge @009b3bd（轮2 探针 r1 16/0、r4 30/0 翻绿；unit 42 绿）
   [✓] M4 纯函数层     ready-to-merge @df14583（轮2五缺陷确认+两小修被复测方探针 88 条钉住全绿；unit 226/m4probe 227）
   [✓] M6 安装与常驻   ready-to-merge @20093e8（轮2三修复硬验全过+BUG-12 单测钉住；unit 34 绿/探针 56 绿）
   串行队列：M1 空壳骨架（M0 合并后）→ M2 客户端 → M3/M5/M7 → M8。桩已随测试锁定交付，M2 起只读复用。
@@ -68,5 +68,5 @@
 | BUG-12 | M6 systemd 分支 grep 子串匹配 | 已修复 | test-m6-r2 / dev-m6 | 20093e8 |
 | BUG-13 | M4 resolve_active：MODEL 非字符串未归 null（契约㉑另一半），int/dict/bool 原样回 | 已修复 | test-m4-r2 / dev-m4 | 5334847 |
 | BUG-14 | M4 方括号内非法 IPv6 字面量当域名放行（[gggg::1] 等应 400；仅脏数据非 SSRF） | 已修复 | test-m4-r2 / dev-m4 | df14583 |
-| BUG-15 | M0 爆破防护半修：只签浏览 cookie 的成功分支仍 reset 滑窗→交替登录可无限猜 admin | 修复中 | test-m0-r2 / dev-m0 | |
-| BUG-16 | M0 project() url 打码带 isinstance(str) 前置，dict/list 型 base-url 原样出站 | 修复中 | test-m0-r2 / dev-m0 | |
+| BUG-15 | M0 爆破防护半修：只签浏览 cookie 的成功分支仍 reset 滑窗→交替登录可无限猜 admin | 已修复 | test-m0-r2 / dev-m0 | 1fc82dc |
+| BUG-16 | M0 project() url 打码带 isinstance(str) 前置，dict/list 型 base-url 原样出站 | 已修复 | test-m0-r2 / dev-m0 | 009b3bd |
