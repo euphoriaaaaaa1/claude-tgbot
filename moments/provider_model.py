@@ -134,6 +134,14 @@ def validate_provider_payload(body, supported_kinds=SUPPORTED_KINDS,
             "haiku_alias": haiku_alias}
 
 
+def _as_ip(host):
+    """host 能当 IP 字面量解析就返回对象，否则 None（域名走这条）。"""
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        return None
+
+
 def _private_ip(ip):
     """内网/回环/链路本地/保留/多播/未指定，任一为真即拒（§3.3 SSRF 收口）。
 
@@ -164,11 +172,16 @@ def _check_base_url(raw, allow_private=False, resolve=None):
         raise HubError(400, "bad_base_url", "base_url 不是合法 URL（端口或 IPv6 括号有误）")
     if parts.scheme not in ("http", "https") or not host:
         raise HubError(400, "bad_base_url", "base_url 必须是 http(s):// 绝对地址")
+    if "[" in parts.netloc and _as_ip(host) is None:
+        # RFC 3986：方括号里只能是 IP 字面量。`[gggg::1]` / `[v1.fe80::a]` 解析不出地址，
+        # 落进域名分支就等于"解析不出 → 放行"，成了内网判定的旁路。
+        raise HubError(400, "bad_base_url", "base_url 的方括号里不是合法 IPv6 字面量")
     if allow_private:                       # 逃生门：真在内网自建网关的用户
         return url
-    try:
-        ips = [ipaddress.ip_address(host)]
-    except ValueError:                      # 域名：解析一次做同样判断，解析不出就放行
+    literal = _as_ip(host)
+    if literal is not None:
+        ips = [literal]
+    else:                                   # 域名：解析一次做同样判断，解析不出就放行
         ips = []
         for addr in (resolve or resolve_host)(host):
             try:

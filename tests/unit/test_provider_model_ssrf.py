@@ -99,3 +99,23 @@ def test_畸形URL一律bad_base_url而不是冒泡成500(url):
 def test_多余右括号被urlsplit读成回环_照样拦住():
     """`http://[::1]]:80/` 不抛异常，hostname 是 ::1 —— 走内网判定这条路拦下。"""
     assert code("http://[::1]]:80/") == "bad_base_url_private"
+
+
+# ---------------- BUG-14：方括号里只能是 IP 字面量 ----------------
+
+@pytest.mark.parametrize("url", ["http://[gggg::1]/v1", "http://[:::::1]/",
+                                 "http://[v1.fe80::a]/v1", "http://[127.0.0.1x]/",
+                                 "http://[]/v1", "http://[example.com]/v1"])
+def test_方括号里不是合法IPv6一律400(url):
+    """解析不出地址就会落进域名分支（解析不出 → 放行），成了内网判定的旁路。"""
+    assert code(url) == "bad_base_url", url
+
+
+@pytest.mark.parametrize("url", ["http://[gggg::1]/v1", "http://[v1.fe80::a]/v1"])
+def test_逃生门也不放行畸形方括号(url):
+    assert code(url, allow_private=True) == "bad_base_url"
+
+
+@pytest.mark.parametrize("url", ["http://[2606:4700::1]/v1", "http://[::ffff:1.2.3.4]/"])
+def test_合法IPv6公网字面量照常放行(url):
+    assert code(url) == "ok", url
