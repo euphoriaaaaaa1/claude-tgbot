@@ -168,6 +168,28 @@ def _aliases(view):
     return {a for a in (view.get("model_alias"), view.get("haiku_alias")) if a}
 
 
+def unwrap_list(payload, *keys):
+    """管理 API 读侧的形状适配：**真 v7 回 ``{"<块名>": [...]}``，§10 的桩回裸数组**。
+
+    M2 真机实测（7.2.148）：``GET /v0/management/claude-api-key`` →
+    ``{"claude-api-key":[…]}``、``api-keys`` → ``{"api-keys":[…]}``、
+    ``auth-files`` → ``{"files":[]}``（**键名不等于路径段**，所以允许多给几个候选键）。
+    两种都认，形状再变也只坏这一个函数。认不出来一律回空列表 ——
+    读侧宁可"看不见条目"，也不能把 dict 当成条目往下传。
+    M5 读 auth-files 请用 ``unwrap_list(resp, "files", "auth-files")``。
+    """
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for k in keys:
+            if isinstance(payload.get(k), list):
+                return payload[k]
+        lists = [v for v in payload.values() if isinstance(v, list)]
+        if len(lists) == 1:
+            return lists[0]
+    return []
+
+
 def _short(text, limit):
     """出站兜底（§0.2 第二层）+ 截断。非字符串一律回 None，别把结构体带出去。"""
     if not isinstance(text, str):
@@ -265,9 +287,7 @@ class CliproxyClient:
         """
         out = []
         for kind in (kinds or tuple(KIND_SPEC)):
-            block = self.mgmt_get(KIND_SPEC[kind]["block"])
-            items = block if isinstance(block, list) else []
-            for i, raw in enumerate(items):
+            for i, raw in enumerate(self._block(kind)):
                 if isinstance(raw, dict):
                     out.append(Entry(kind, i, raw, _to_view(kind, raw)))
         return out
@@ -283,10 +303,14 @@ class CliproxyClient:
                 return e
         return None
 
+    def _block(self, kind):
+        """读一个承载块的条目数组（真机是包装对象，桩是裸数组，见 :func:`unwrap_list`）。"""
+        name = KIND_SPEC[kind]["block"]
+        return unwrap_list(self.mgmt_get(name), name)
+
     def add_entry(self, kind, entry):
-        """新增一条：整块 PUT 回去（v7 的 PUT 是整表替换，[CPX] Q3）。**恰好一次写**。"""
-        block = self.mgmt_get(KIND_SPEC[kind]["block"])
-        items = list(block) if isinstance(block, list) else []
+        """新增一条：整块 PUT 回去（v7 的 PUT 收裸数组、整表替换，[CPX] Q3）。**恰好一次写**。"""
+        items = list(self._block(kind))
         items.append(entry)
         self.mgmt_put(KIND_SPEC[kind]["block"], items)
 
@@ -296,8 +320,7 @@ class CliproxyClient:
 
     def delete_entry(self, kind, index):
         """删一条：管理 API 没有"删第 n 条"，只能把其余条目整块 PUT 回去。"""
-        block = self.mgmt_get(KIND_SPEC[kind]["block"])
-        items = list(block) if isinstance(block, list) else []
+        items = list(self._block(kind))
         if 0 <= index < len(items):
             items.pop(index)
         self.mgmt_put(KIND_SPEC[kind]["block"], items)
@@ -348,8 +371,7 @@ class CliproxyClient:
                 self._write_prefix(e, r["prefix"])
 
     def _entry_at(self, kind, index):
-        block = self.mgmt_get(KIND_SPEC[kind]["block"])
-        items = block if isinstance(block, list) else []
+        items = self._block(kind)
         if 0 <= index < len(items) and isinstance(items[index], dict):
             return Entry(kind, index, items[index], _to_view(kind, items[index]))
         return None
