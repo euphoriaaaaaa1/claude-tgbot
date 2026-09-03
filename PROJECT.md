@@ -98,3 +98,5 @@
   跑法注意：tests/unit 与 acceptance/provider_hub 两份顶层 conftest 重名，同一次 pytest 收集会 ImportError，须分开跑（验收阶段照此）。
 | BUG-17 | M5 专码未同步：state 失配/无 alias 应 409 oauth_state_expired/oauth_no_alias（§12.5） | 修复中 | test-m5 / dev-m5 | |
 | BUG-18 | M5 非对象 JSON 体→500（body.get 惯用法，§0.1 应 400；M3/M7 同法需排查） | 修复中 | test-m5 / dev-m5 | |
+- §12.7：state 成功消费即作废（二次 409）；activatable=合法且有 alias（新增 not_activatable_reason）；
+  非 dict 体→400 提为 §0.1 通则。集成批追加④：M3/M7 段收 body 端点按通则排查收口。
