@@ -662,3 +662,22 @@ def test_命令行登过的其它渠道照样能删(api, env):
     env.seed_auth_file(provider="anthropic", email=EMAIL)
     code, _ = api.delete("/hub/api/oauth/accounts/anthropic/%s" % env.email_hash(EMAIL))
     assert (code, env.auth_files) == (200, [])
+
+
+# ---------------- §0.1 通则：请求体必须是 JSON 对象 ----------------
+
+@pytest.mark.parametrize("path", ["/hub/api/oauth/start", "/hub/api/oauth/submit"])
+@pytest.mark.parametrize("payload", [["codex"], "codex", 42, True, 1.5])
+def test_请求体不是对象一律400_bad_body(api, path, payload):
+    """BUG-18：合法 JSON 但顶层不是对象，body.get 会抛 AttributeError → 500。"""
+    code, body = api.post(path, payload)
+    assert (code, body["error"]) == (400, "bad_body"), (path, payload, body)
+
+
+@pytest.mark.parametrize("path", ["/hub/api/oauth/start", "/hub/api/oauth/submit"])
+def test_空体与ContentType不对按体缺失处理(api, path):
+    """§0.1：禁用 force=True → 按体缺失 → 各端点自己的必填校验去报更准的码。"""
+    r = api.c.post(path, data="provider=codex",
+                   content_type="application/x-www-form-urlencoded")
+    assert r.status_code == 400
+    assert r.get_json()["error"] in ("bad_body", "bad_provider")
