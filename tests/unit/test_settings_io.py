@@ -185,3 +185,22 @@ def test_非UTF8的settings给409而不是裸UnicodeDecodeError(path):
     with pytest.raises(HubError) as e:
         read_text(path)
     assert (e.value.status, e.value.error) == (409, "settings_unparsable")
+
+
+def test_孤代理字符串写盘抛HubError而不是裸异常(path):
+    """BUG-07：'{"a":"x-\\ud800-y"}' 是合法 JSON，get_json 会给出孤代理串，
+    但 UTF-8 编不出来。函数自述"失败一律抛 HubError"，裸异常会绕过 §3.6 C 阶段的补偿。"""
+    path.parent.mkdir()
+    lone = json.loads(r'{"a": "x-\ud800-y"}')["a"]
+    with pytest.raises(HubError) as e:
+        write_json_atomic(path, {"env": {"ANTHROPIC_MODEL": lone}})
+    assert (e.value.status, e.value.error) == (500, "settings_write_failed")
+    assert list(path.parent.glob(".settings-*")) == []      # 临时文件含明文令牌
+
+
+def test_不可序列化的值也抛HubError(path):
+    path.parent.mkdir()
+    with pytest.raises(HubError) as e:
+        write_json_atomic(path, {"env": {"X": object()}})
+    assert e.value.error == "settings_write_failed"
+    assert list(path.parent.glob(".settings-*")) == []

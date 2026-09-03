@@ -65,12 +65,18 @@ def write_json_atomic(path, data):
     """
     path = os.path.abspath(path)
     directory = os.path.dirname(path) or "."
-    payload = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    try:
+        # 先序列化成字节：孤代理（JSON 合法、UTF-8 不可编码）与不可序列化的值
+        # 必须在建临时文件**之前**炸掉，既没有残留可清，也不会漏成裸异常绕过 §3.6 的补偿分支。
+        payload = (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    except (ValueError, TypeError) as e:     # UnicodeEncodeError 也是 ValueError
+        raise HubError(500, "settings_write_failed",
+                       "settings.json 序列化失败：%s" % type(e).__name__)
     tmp = None
     try:
         # mkstemp 一次就建成 0600 的随机名文件，中间没有别人可读的窗口
         fd, tmp = tempfile.mkstemp(dir=directory, prefix=".settings-", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "wb") as f:
             f.write(payload)
             f.flush()
             os.fsync(f.fileno())            # 崩溃安全：内容先落盘，再让 rename 生效
