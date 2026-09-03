@@ -796,3 +796,15 @@ def test_落选条目的prefix就是它自己的id(api, stub):
     assert by_url["https://gw2.example.com/v1"].get("prefix", "") == "", "当选条目不该带 prefix"
     assert by_url["https://api.deepseek.com/v1"].get("prefix") == p1["id"], \
         "落选条目的 prefix 应是它自己的 id，实得 %r" % by_url["https://api.deepseek.com/v1"].get("prefix")
+
+
+def test_supported_kinds恒等于三个kind的字面数组(api):
+    """§3.0①：`supported_kinds` **恒为** `["openai","anthropic","gemini"]`。
+
+    上面那条只断言"openai 与 anthropic 必在其中"，字段整个缺失时它也能过 —— 实拍漏网就漏在这。
+    这条按 §3.0 的字面值锁死：键必须在、值必须是这三个、顺序照字面。
+    """
+    code, body = api.get("/hub/api/provider")
+    assert code == 200, body
+    assert "supported_kinds" in body["cliproxy"], "响应里根本没有 supported_kinds 这个键"
+    assert body["cliproxy"]["supported_kinds"] == ["openai", "anthropic", "gemini"]
