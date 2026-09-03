@@ -13,8 +13,8 @@ todo() { printf '  \033[1;33m⚠️  %s\033[0m\n' "$*"; }
 # ── ① 前置依赖检查 ─────────────────────────────────────────
 say "① 检查前置依赖"
 missing=0
-command -v python3 >/dev/null || { todo "缺 Python 3 → https://www.python.org/downloads/"; missing=1; }
-command -v bun     >/dev/null || { todo "缺 Bun → https://bun.sh （curl -fsSL https://bun.sh/install | bash）"; missing=1; }
+command -v python3 >/dev/null || { todo "缺 Python 3 → 去 python.org 的 Downloads 页装"; missing=1; }
+command -v bun     >/dev/null || { todo "缺 Bun → 照 bun.sh 官网首页给的那行安装命令装"; missing=1; }
 command -v claude  >/dev/null || { todo "缺 Claude Code CLI → npm install -g @anthropic-ai/claude-code，装完跑一次 claude 登录"; missing=1; }
 [ "$missing" = 1 ] && { echo; echo "先装齐上面缺的，再重新跑 bash install.sh"; exit 1; }
 ok "python3 / bun / claude 都在"
@@ -66,7 +66,7 @@ else
     mv -f "$tmp_plist" "$AUTOSTART_PLIST"
     launchctl bootout "gui/$UID/$AUTOSTART_LABEL" >/dev/null 2>&1 || true
     if launchctl bootstrap "gui/$UID" "$AUTOSTART_PLIST" >/dev/null 2>&1; then
-      ok "开机自启已注册（$AUTOSTART_LABEL）"
+      ok "开机自启已注册（${AUTOSTART_LABEL}）"
       autostart_on=1
     else
       todo "plist 已写好但没加载上（常见于 SSH，没有图形会话）。图形登录后手动跑：launchctl bootstrap gui/\$UID $AUTOSTART_PLIST"
@@ -80,6 +80,30 @@ else
   if [ -f "$old_plist" ]; then
     todo "检测到旧版自启，删掉免得开机起两次：launchctl bootout gui/\$UID/com.example.claudebotlife-autostart; rm $old_plist"
   fi
+fi
+
+# ── ⑥ provider 管理台的后端代理 cliproxy（可选组件）────────
+# 装不上不阻断整体安装：bot 本体不依赖它，只是管理台的 provider 页会显示"未配置"。
+say "⑥ 装 provider 管理台后端（cliproxy，约 20 MB 下载）"
+if [ "${SKIP_CLIPROXY:-0}" = "1" ]; then
+  todo "SKIP_CLIPROXY=1，已跳过。想装：bash scripts/install_cliproxy.sh"
+elif bash scripts/install_cliproxy.sh; then
+  # 体检：常驻单元的 WorkingDirectory 必须钉在 ~/.claude-tgbot/cliproxy。
+  # cliproxy v7 启动会往**进程 CWD** 下载 2.7 MB 的 static/management.html，
+  # 没钉住就落进这个代码仓库（还会跟着 git status 一起碍眼）。
+  cliproxy_dir="$(python3 scripts/hub_bootstrap.py get dir 2>/dev/null || true)"
+  unit="$HOME/Library/LaunchAgents/com.claudebotlife.cliproxy.plist"
+  [ -f "$unit" ] || unit="$HOME/.config/systemd/user/claudebotlife-cliproxy.service"
+  if [ -n "$cliproxy_dir" ] && [ -f "$unit" ] && ! grep -q "$cliproxy_dir" "$unit"; then
+    todo "常驻单元 $unit 的 WorkingDirectory 没指向 ${cliproxy_dir}，重跑：bash scripts/install_cliproxy.sh"
+  else
+    ok "cliproxy 就绪，工作目录钉在 $cliproxy_dir"
+  fi
+  if [ -d static ]; then
+    todo "仓库根多了个 static/：那是 cliproxy 拉的管理面板，说明有进程没钉住工作目录，可直接删"
+  fi
+else
+  todo "cliproxy 没装上（不影响 bot 本体）。重试：bash scripts/install_cliproxy.sh"
 fi
 
 echo

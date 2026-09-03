@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- cliproxy 常驻。占位符由 scripts/install_cliproxy.sh 渲染。
+     凭据一个都不许出现在本文件里（launchd 的 EnvironmentVariables 没有 source 能力，
+     plist 又是 644 可读）：cliproxy 自己的 key 在 config.yaml（600），门户的在 hub.env（600）。-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claudebotlife.cliproxy</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{CLIPROXY_BIN}</string>
+        <string>-config</string>
+        <string>{CLIPROXY_DIR}/config.yaml</string>
+    </array>
+
+    <!-- 🔴 必须钉死：v7 启动会往进程 CWD 下载 static/management.html（2.7 MB），
+         不钉就拉进用户当时的工作目录（通常是代码仓库根）。 -->
+    <key>WorkingDirectory</key>
+    <string>{CLIPROXY_DIR}</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- 日志落在 700 的 cliproxy 目录里，不进世界可读的 /tmp：
+         出错的请求会把完整 prompt 明文写进日志（[CPX] Q7）。 -->
+    <key>StandardOutPath</key>
+    <string>{CLIPROXY_DIR}/logs/cliproxy.out</string>
+    <key>StandardErrorPath</key>
+    <string>{CLIPROXY_DIR}/logs/cliproxy.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
