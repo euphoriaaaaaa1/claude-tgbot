@@ -451,7 +451,8 @@ def _trigger_bot_moment_reply(cfg: dict, moment: dict, user_text: str,
 
 
 # bot 端口映射（每个 bot 的 dispatcher 端口；加 bot 就在这里加一行）
-_BOT_PORTS = {"chenlulu": "17801"}
+from moments.bots_client import BOT_PORTS as _BOTS_SRC  # 单一事实源（原本地表与 bots_client 重复）
+_BOT_PORTS = {k: str(v) for k, v in _BOTS_SRC.items()}
 
 
 def _ensure_worker_alive(bot_id: str, chat_id: str, bot_dir: str):
