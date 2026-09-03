@@ -32,3 +32,8 @@
 - **测试重锁 @1b0596f**：S0 双门槛通过（.devflow/RESEARCH-spike-S0.md，382 行，8 处实测修正
   含 CLAUDE_SETTINGS_PATH 非 CLI 变量的红线级纠正）；haiku 双 alias 契约变更由出题人修题后重锁，
   356 用例（328红/25绿/3skip）。施工版 PLAN 835 行 / INTERFACE 1155 行。开发放行。
+- 04 开发启动 @eddfc4c：3 条 worktree 并行（上限3，压掉方案里的4）——
+  [ ] M0 鉴权门+骨架  负责 dev-m0@feature/ph-m0（../ctgb-m0）
+  [ ] M4 纯函数层     负责 dev-m4@feature/ph-m4（../ctgb-m4）
+  [ ] M6 安装与常驻   负责 dev-m6@feature/ph-m6（../ctgb-m6）
+  串行队列：M1 空壳骨架（M0 合并后）→ M2 客户端 → M3/M5/M7 → M8。桩已随测试锁定交付，M2 起只读复用。
