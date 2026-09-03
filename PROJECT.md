@@ -81,3 +81,6 @@
   （install 是 cp 644+bash 执行，判 X_OK 会误报缺失）；互斥/job 表挂 app.extensions（等价进程内且测试不串扰）。
   集成交接：合并后 web.py:454 _BOT_PORTS 改 from bots_client import BOT_PORTS（int/str 拼 URL 均可）。
   注意：test_unconfigured 有一条会对本机 17801 发只读 POST /status（锁定用例无法规避，无副作用）。
+- M5 交付 @ph-m5：oauth 42/42 绿，全量 156绿/197红（余红全是 M3 未填段）。三留白待 planner 定死：
+  ①无 model_aliases 的账户 activate→暂 400 bad_alias ②state 不匹配/超窗→暂 400 bad_body ③DELETE auth-files
+  入参形状未实测（真机核验项，归验收前单点核验）。state 表进程内存（单进程够用，注释有升级路径）。
