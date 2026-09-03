@@ -52,3 +52,6 @@ voicecall/.devflow/
 # 万一有人在仓库根手动跑 cli-proxy-api：57 MB 的二进制 + 它往 CWD 拉的 2.7 MB 管理面板
 /cli-proxy-api
 /static/
+state.db
+state.db-shm
+state.db-wal
