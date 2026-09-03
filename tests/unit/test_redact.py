@@ -69,3 +69,13 @@ def test_自由文本字段递归脱敏_其余字段不动():
 
 if __name__ == "__main__":
     sys.exit(__import__("pytest").main([__file__, "-q"]))
+
+
+def test_投影时url里的userinfo凭据打码():
+    """纵深：M4 的校验已经拒了带 @ 的 base-url，投影是出站前最后一道。"""
+    out = R.project({"name": "x", "base-url": "https://user:p4ssw0rd@gw.example.com/v1"})
+    assert out["base-url"] == "https://****@gw.example.com/v1"
+    assert "p4ssw0rd" not in str(out)
+    # 不带 userinfo 的正常 URL 一个字节都不动
+    assert R.project({"base-url": "https://api.deepseek.com/v1"})["base-url"] \
+        == "https://api.deepseek.com/v1"

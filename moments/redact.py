@@ -33,6 +33,10 @@ SECRET_RE = re.compile(
 # 字段名像凭据就掩掉（大小写不敏感，含连字符/下划线变体）
 _SECRET_FIELD_RE = re.compile(r"key|token|secret|password|credential|auth", re.I)
 
+# URL 里的 userinfo（https://user:pass@host/…）也是凭据。M4 的入参校验已经拒了带 @ 的
+# base-url，这里再打一层：投影是出站前的最后一道，纵深防御不差这一行。
+_URL_USERINFO_RE = re.compile(r"(//)[^/@\s]+@")
+
 # §0.2 安全字段白名单。顶层为 provider 配置块的字段，MODEL_SAFE_FIELDS 为 models[] 元素的字段。
 SAFE_FIELDS = ("name", "base-url", "prefix", "weight", "disabled", "excluded-models", "models")
 MODEL_SAFE_FIELDS = ("name", "alias", "display-name", "max-context-length", "force-mapping")
@@ -66,7 +70,9 @@ def project(block, fields=SAFE_FIELDS, model_fields=MODEL_SAFE_FIELDS) -> dict:
         if k not in block:
             continue
         v = block[k]
-        if k == "models":
+        if isinstance(v, str) and "@" in v and k.endswith("url"):
+            out[k] = _URL_USERINFO_RE.sub(r"\1****@", v)
+        elif k == "models":
             out[k] = [project(m, model_fields, model_fields) for m in v] if isinstance(v, list) else []
         elif is_secret_field(k):
             out[k] = mask(v)
