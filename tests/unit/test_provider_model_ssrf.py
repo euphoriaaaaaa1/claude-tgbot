@@ -119,3 +119,71 @@ def test_逃生门也不放行畸形方括号(url):
 @pytest.mark.parametrize("url", ["http://[2606:4700::1]/v1", "http://[::ffff:1.2.3.4]/"])
 def test_合法IPv6公网字面量照常放行(url):
     assert code(url) == "ok", url
+
+
+# ---------------- §12.6 ㉟：Clash TUN 的 fake-IP 假阳性（T4-T6） ----------------
+
+def test_T4_fake_IP段的字面量仍然400():
+    """例外只许作用在第 2 层。滥用到字面量这层，等于把整个 SSRF 判定拆了。"""
+    assert code("http://198.18.0.1/") == "bad_base_url_private"
+
+
+@pytest.mark.parametrize("url", ["http://198.18.0.1/", "http://198.19.255.254:8317/v1",
+                                 "http://[::ffff:198.18.0.1]/"])
+def test_T4_fake_IP段字面量各形态一律400(url):
+    """IPv4-mapped 形态同样是字面量，同样走第 1 层。"""
+    assert code(url) == "bad_base_url_private", url
+
+
+def test_T5_域名解析到fake_IP要放行():
+    """TUN 事故场景：解析结果被代理接管、不携带真实目的地信息 → 不据它判。
+    这条红了 = 开着 Clash TUN 的用户一个 provider 都建不了。"""
+    assert code("https://api.deepseek.com/v1", resolve=dns_to("198.18.0.121")) == "ok"
+
+
+def test_T6_域名解析到真内网仍然400():
+    """证明第 2 层没被整层删掉 —— 只是不拿 fake-IP 当证据，别的解析结果照判。"""
+    assert code("https://gw.example.com/v1", resolve=dns_to("10.0.0.5")) == \
+        "bad_base_url_private"
+
+
+def test_混合解析里有真内网仍然400():
+    """198.18 与 10.x 并存：fake 的那条丢掉，真内网那条留着照拦。"""
+    assert code("https://mixed.example.com/v1",
+                resolve=dns_to("198.18.0.121", "10.0.0.5")) == "bad_base_url_private"
+    assert code("https://mixed.example.com/v1",
+                resolve=dns_to("10.0.0.5", "198.18.42.7")) == "bad_base_url_private"
+
+
+def test_fake_IP与公网并存时按公网判_放行():
+    """fake 段那条按噪声丢掉，剩下的公网地址照常放行。
+    （部分代理栈只 fake 掉 A 记录、AAAA 直通，那种环境不该被判成内网。）"""
+    assert code("https://api.deepseek.com/v1",
+                resolve=dns_to("198.18.0.121", "93.184.216.34")) == "ok"
+
+
+def test_T7_逃生门开启后真内网解析也放行():
+    assert code("https://gw.example.com/v1", resolve=dns_to("10.0.0.5"),
+                allow_private=True) == "ok"
+
+
+def test_默认解析器路径也吃这条例外(monkeypatch):
+    """路由层调 validate 时**不传** resolve，走的是模块里的 resolve_host。
+    只测注入版会漏掉真正跑在生产里的那条路。"""
+    from moments import provider_model
+    monkeypatch.setattr(provider_model, "resolve_host", lambda _h: ["198.18.0.121"])
+    assert provider_model.validate_provider_payload(
+        payload(base_url="https://api.deepseek.com/v1"))["base_url"] == \
+        "https://api.deepseek.com/v1"
+    monkeypatch.setattr(provider_model, "resolve_host", lambda _h: ["10.0.0.5"])
+    with pytest.raises(HubError) as ei:
+        provider_model.validate_provider_payload(payload(base_url="https://gw.example.com/v1"))
+    assert ei.value.error == "bad_base_url_private"
+
+
+def test_内网文案给出可执行出路():
+    """§12.6：只说"不允许"等于把用户堵死在门口，必须写清逃生门怎么开。"""
+    with pytest.raises(HubError) as ei:
+        validate_provider_payload(payload(base_url="http://127.0.0.1:8317/v1"),
+                                  resolve=no_dns)
+    assert "HUB_ALLOW_PRIVATE_BASE_URL=1" in ei.value.detail
