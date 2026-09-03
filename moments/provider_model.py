@@ -207,16 +207,17 @@ def provider_id(p):
 def mask_key(key):
     """§0.2 的合规形态：`****`+末 4 位。与 styles_routes._mask 同口径（那个是私有的，
     且所在模块导入 flask + 在导入期算路径，纯函数层不该反向依赖它）。"""
-    key = key or ""
+    key = _s(key)                           # 手写 config.yaml 里的纯数字 key 是 int
     return ("****" + key[-4:]) if len(key) >= 4 else ("****" if key else "")
 
 
 def entry_api_key(kind, entry):
     """从承载块 entry 取明文 key（PATCH 保原 key 用）。取不到返回空串，绝不进日志/响应。"""
     if KIND_SPEC[kind]["key_field"] == "api-key-entries":
-        entries = [e for e in (entry.get("api-key-entries") or []) if isinstance(e, dict)]
-        return (entries[0].get("api-key") or "") if entries else ""
-    return entry.get("api-key") or ""
+        raw = entry.get("api-key-entries")
+        entries = [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
+        return _s(entries[0].get("api-key")) if entries else ""
+    return _s(entry.get("api-key"))
 
 
 def to_block_entry(p, disabled=False):
@@ -253,17 +254,19 @@ def from_block_entry(kind, entry, active=False):
     models[0] 当主 alias、models[1] 当 haiku alias（就是 to_block_entry 写下去的顺序）。
     用户手写的单 model 条目 haiku_alias 为 None，页面据此提示"补一条 haiku 映射"。
     """
-    models = [m for m in (entry.get("models") or []) if isinstance(m, dict)]
+    raw = entry.get("models")
+    models = [m for m in raw if isinstance(m, dict)] if isinstance(raw, (list, tuple)) else []
     main = models[0] if models else {}
-    upstream = main.get("name") or ""
+    # 全部字段过 _s()：条目可能是用户手写的 config.yaml，YAML 不加引号的值就是 int/float。
+    upstream = _s(main.get("name"))
     # cliproxy 口径：alias 为空则回落用 name（service.go:958-963），id 派生跟着用同一口径
-    alias = main.get("alias") or upstream
-    base_url = entry.get("base-url") or ""
+    alias = _s(main.get("alias")) or upstream
+    base_url = _s(entry.get("base-url"))
     return {"id": derive_id(KIND_SPEC[kind]["block"], base_url, upstream, alias),
-            "label": main.get("display-name") or entry.get("name") or alias,
+            "label": _s(main.get("display-name")) or _s(entry.get("name")) or alias,
             "kind": kind, "base_url": base_url, "upstream_model": upstream,
             "model_alias": alias,
-            "haiku_alias": (models[1].get("alias") if len(models) > 1 else None),
+            "haiku_alias": (_s(models[1].get("alias")) or None) if len(models) > 1 else None,
             "key_masked": mask_key(entry_api_key(kind, entry)),
             # §3.0d：disabled 的语义 = "该条目当前带 prefix"。仍兼读用户手写的原生
             # disabled（openai-compatibility 独有）—— 那种条目 cliproxy 真的不路由，

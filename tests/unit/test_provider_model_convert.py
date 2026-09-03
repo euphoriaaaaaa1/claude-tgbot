@@ -182,3 +182,33 @@ def test_haiku名撞车也能被查出来():
     other = _p("bbbb2222", alias="claude-opus-4-5-20251101")
     assert alias_occupied([other], ALIAS) is False
     assert alias_occupied([other], [ALIAS, DEFAULT_HAIKU_ALIAS]) is True
+
+
+# ---------------- BUG-04：手写 config.yaml 的非字符串字段不得让列表端点崩 ----------------
+
+@pytest.mark.parametrize("entry,kind", [
+    ({"base-url": "https://a.com", "api-key": 1234567890,
+      "models": [{"name": "m", "alias": "x"}]}, "anthropic"),
+    ({"base-url": 8317, "api-key": "sk-abcd", "models": [{"name": 4, "alias": 4.5}]},
+     "anthropic"),
+    ({"base-url": "https://a.com", "api-key-entries": [{"api-key": 1234567890}],
+      "models": [{"name": "m", "alias": "x"}]}, "openai"),
+    ({"models": {"name": "m"}}, "openai"),          # YAML 写成了映射不是数组
+    ({"models": "m"}, "openai"),
+    ({"models": 3}, "openai"),
+    ({"models": ["not-a-dict"]}, "openai"),
+    ({"api-key-entries": ["plain"]}, "openai"),
+    ({}, "gemini"),
+])
+def test_残缺或类型错的条目一律降级不抛(entry, kind):
+    """§3.2 铁律：GET /hub/api/provider 恒 200。这里抛异常 = 页面直接打不开。"""
+    out = from_block_entry(kind, entry)
+    assert isinstance(out["id"], str) and len(out["id"]) == 8
+    assert isinstance(out["key_masked"], str)
+
+
+def test_数字key照样被脱敏成末四位():
+    out = from_block_entry("anthropic", {"base-url": "https://a.com", "api-key": 1234567890,
+                                         "models": [{"name": "m", "alias": "x"}]})
+    assert out["key_masked"] == "****7890"
+    assert "1234567890" not in out["key_masked"]
