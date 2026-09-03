@@ -89,3 +89,25 @@ def test_两把全对才清窗(app_client):
     guard = c.application.extensions["hub_login_guard"]
     assert _login(c, PW, ADMIN).status_code == 303
     assert guard.record_failure() == 1
+
+
+def test_只设admin口令时_hub关死而不是裸奔(app_client):
+    """配置误用：用户显然想锁管理面。§1.0 规则 3 下这是个拿不到 hub_session 的配置，
+    只能关死；绝不能因为"门关闭"就把 /hub 连同管理 API 一起裸奔出去。"""
+    c = app_client(access=None, admin=ADMIN)
+    for path in ("/hub", "/hub/api/provider"):
+        r = c.get(path, headers=FETCH)
+        assert r.status_code == 401, "%s 裸奔了" % path
+        assert b"TOP-SECRET-HUB-PAGE" not in r.get_data()
+    assert c.get("/", headers=FETCH).status_code == 200, "全站锁没开，朋友圈不该受影响"
+    assert c.get("/hub/healthz").status_code == 200, "healthz 是放行清单，别一起关掉"
+
+
+def test_只设admin口令时启动打WARN不拒绝启动(monkeypatch):
+    import io
+    monkeypatch.delenv("HUB_ACCESS_PASSWORD", raising=False)
+    monkeypatch.setenv("HUB_ADMIN_PASSWORD", ADMIN)
+    out, err = io.StringIO(), io.StringIO()
+    assert A.check_startup("127.0.0.1", out=out, err=err) is None
+    assert any(l.startswith("WARN:") for l in (out.getvalue() + err.getvalue()).splitlines())
+    assert ADMIN not in out.getvalue() + err.getvalue()

@@ -147,6 +147,10 @@ def check_startup(host: str, out=None, err=None):
     out = out or sys.stdout
     err = err or sys.stderr
     pw = access_password()
+    if admin_password() and not pw:
+        print("WARN: 只设了 HUB_ADMIN_PASSWORD 没设 HUB_ACCESS_PASSWORD —— /hub 会被关死"
+              "（管理锁是叠加在全站锁之上的，拿不到 hub_session 就进不去）。补上 "
+              "HUB_ACCESS_PASSWORD 才能登录管理台。", file=out)
     if pw:
         if len(pw) < WEAK_PASSWORD_LEN:
             print("WARN: HUB_ACCESS_PASSWORD 短于 %d 字符，建议换成 `python3 -c \"import secrets;"
@@ -189,15 +193,19 @@ def install(app):
 
     @app.before_request
     def _hub_gate():
-        if not gate_open():
-            return None                      # 门关闭：行为与改造前完全一致
         path = request.path
+        admin_pw = admin_password()
+        # 只设 HUB_ADMIN_PASSWORD 没设 HUB_ACCESS_PASSWORD：用户显然想锁管理面。
+        # 按 §1.0 规则 3（两个 cookie 缺一不可）这就是个**拿不到 hub_session** 的配置，
+        # 管理面只能关死，绝不能因为"门关闭"就把 /hub 裸奔出去。
+        admin_scope = bool(admin_pw) and path.startswith("/hub")
+        if not gate_open() and not admin_scope:
+            return None                      # 门关闭：行为与改造前完全一致
         if path in PASSLIST:                 # 精确相等，不是前缀
             return None
         if not verify_cookie(request.cookies.get(COOKIE_SESSION), access_password(), SALT_SESSION):
             return _deny("unauthorized")
-        admin_pw = admin_password()
-        if admin_pw and path.startswith("/hub"):
+        if admin_scope:
             # 叠加的第二道锁：两个 cookie 缺一不可（§1.0 规则 3）
             if not verify_cookie(request.cookies.get(COOKIE_ADMIN), admin_pw, SALT_ADMIN):
                 return _deny("admin_unauthorized")
