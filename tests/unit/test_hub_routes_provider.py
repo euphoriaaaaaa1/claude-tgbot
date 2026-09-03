@@ -588,3 +588,51 @@ def test_自测超时是业务结果不是down(c, stub, monkeypatch):
                         lambda self, model, timeout=0.3: real(self, model, timeout))
     code, body = post(c, "/hub/api/provider/%s/test" % a["id"])
     assert (code, body["ok"], body["stage"]) == (200, False, "timeout")
+
+
+# ---------------- BUG-19：activate 全段互斥 ----------------
+
+def test_切换被别的切换占着时409_activate_busy且零副作用(c, stub):
+    """并发两个 activate 会各自基于旧快照读-改-写条目表，终态可能两条都带 prefix
+    而双方都回 200。整段串行化后，抢不到锁的那个如实回 409，什么都不改。"""
+    a = create(c)[1]
+    before = (prefixes(stub), len(writes(stub)))
+    with c.application.app_context():
+        with hub_routes.hold_activate_lock():             # 锁被别人占着
+            code, body = post(c, "/hub/api/provider/%s/activate" % a["id"])
+            native = post(c, "/hub/api/claude-native/activate")
+    assert (code, body["error"]) == (409, "activate_busy"), body
+    assert (native[0], native[1]["error"]) == (409, "activate_busy"), native
+    assert (prefixes(stub), len(writes(stub))) == before
+    assert settings_now() is None, "抢不到锁却写了 settings.json"
+    assert post(c, "/hub/api/provider/%s/activate" % a["id"])[0] == 200   # 锁释放后照常
+
+
+def test_三个写settings的入口共用同一把锁(c):
+    """§3.6 A0：同一把非阻塞锁挂 app.extensions["hub_activate"]，
+    覆盖 §3.6 activate / §5 claude-native / §4.6 OAuth activate（第 3 段由 M5 接入）。"""
+    with c.application.app_context():
+        with hub_routes.hold_activate_lock():
+            assert c.application.extensions["hub_activate"].locked()
+    assert not c.application.extensions["hub_activate"].locked()
+
+
+def test_并发切换不同provider终态只可能是某一方的完整结果(c, stub):
+    import threading
+    a = create(c)[1]
+    b = create(c, label="备用网关", base_url=PUBLIC2, upstream_model="glm-4.6",
+               model_alias="claude-opus-4-1-20250805")[1]
+    for _ in range(8):
+        gate, res = threading.Barrier(2), {}
+
+        def go(tag, pid):
+            gate.wait()
+            res[tag] = post(c, "/hub/api/provider/%s/activate" % pid)[0]
+        ts = [threading.Thread(target=go, args=("a", a["id"])),
+              threading.Thread(target=go, args=("b", b["id"]))]
+        [t.start() for t in ts]
+        [t.join(30) for t in ts]
+        assert sorted(res.values()) == [200, 409], res
+        alias = settings_now()["env"]["ANTHROPIC_MODEL"]
+        assert enabled_for(stub, alias) == 1, "settings 指的 alias 没有可命中的条目"
+        assert enabled_for(stub, HAIKU) == 1, "haiku 被两次切换各写一半写没了"
