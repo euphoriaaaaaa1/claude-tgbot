@@ -79,7 +79,9 @@ def _client():
     app = Flask(__name__)
     app.register_blueprint(hub_routes.hub_bp)
     app.config["TESTING"] = True
-    return _Api(app.test_client())
+    a = _Api(app.test_client())
+    a.app = app                 # 并发用例要另开 test_client
+    return a
 
 
 @pytest.fixture
@@ -729,3 +731,22 @@ def test_列表里activatable为true的账户点了一定切得成(api, env, set
         code, _b = api.post("/hub/api/oauth/accounts/%s/%s/activate"
                             % (a["provider"], a["email_hash"]))
         assert (code == 200) is a["activatable"], (a, code)
+
+
+def test_并发重放同一state只有一个能成(api, env):
+    """㊱ 的检查与消费必须原子：分两步做的话，10 个并发重放会一起穿过检查。"""
+    import threading
+    st = _start(api)
+    codes = []
+
+    def one(i):
+        r = api.app.test_client().post("/hub/api/oauth/submit",
+                                       json={"provider": "codex", "code": "c%d" % i,
+                                             "state": st})
+        codes.append(r.status_code)
+
+    ts = [threading.Thread(target=one, args=(i,)) for i in range(10)]
+    [t.start() for t in ts]
+    [t.join(20) for t in ts]
+    assert (codes.count(200), codes.count(409)) == (1, 9), codes
+    assert len(env.paths_hit("oauth-callback")) == 1, "重放被转发给了 cliproxy"
