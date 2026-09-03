@@ -166,17 +166,47 @@ def oauth_account_activate(provider, email_hash):
 # 两个测试接缝 HUB_RESTART_CMD / HUB_BOTS_FILE 在 bots_client.py 里落，不写进 README。
 # ======================================================================
 
+# import 放在本段内而不是文件顶部：段界就是分工线，顶部 import 区是各段的公共冲突点。
+from flask import current_app                          # noqa: E402
+
+from moments import bots_client                        # noqa: E402
+
+
+@hub_bp.record_once
+def _init_restart_jobs(state):
+    """每个 app 一份 job 表（生产里一个进程一个 app = §6.2 的进程内互斥）。"""
+    state.app.extensions["hub_restart_jobs"] = bots_client.RestartJobs()
+
+
+def _jobs():
+    return current_app.extensions["hub_restart_jobs"]
+
 
 @hub_bp.get("/hub/api/bots")
 def bots_list():
-    return _todo()
+    try:
+        entries = bots_client.list_bots()
+    except Exception as e:      # 名单读不出来就是 config_unreadable，detail 只给类名（§6.0/§7）
+        return jsonify({"error": "config_unreadable", "detail": type(e).__name__}), 500
+    # 探活自己吞异常，不会把故障冒成 config_unreadable；空名单是正常态，不是错误。
+    return jsonify({"bots": bots_client.probe_bots(entries),
+                    "restart_available": bots_client.restart_plan()[1]})
 
 
 @hub_bp.post("/hub/api/bots/restart")
 def bots_restart():
-    return _todo()
+    argv, available = bots_client.restart_plan()
+    if not available:
+        return jsonify({"error": "restart_script_missing", "detail": "先跑 install.sh"}), 409
+    acc = _jobs().start(argv)
+    if acc.busy:
+        return jsonify({"error": "restart_in_progress", "job_id": acc.busy}), 409
+    return jsonify({"job_id": acc.job_id, "started_at": acc.started_at}), 202
 
 
 @hub_bp.get("/hub/api/bots/restart/<job_id>")
 def bots_restart_status(job_id):
-    return _todo()
+    st = _jobs().get(job_id)
+    if st is None:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify(st)
