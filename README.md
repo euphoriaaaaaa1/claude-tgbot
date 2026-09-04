@@ -280,6 +280,7 @@ powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 - **想再加一道内锁**：文件里加一行 `HUB_ADMIN_PASSWORD=<另一个口令>`，`/hub` 之下就要两把口令都对（家人只给第一把，只能看不能改）。
 - 🔴 **公网暴露前先确认门是开的**：把 `:8765` 挂到 cloudflare tunnel / frp 这类隧道上之前，先无痕窗口开一次 `你的域名/hub` —— 必须跳到登录页。直接进得去就是没读到口令，**这时管理台对全互联网开放**：任何人都能改 key、把 bot 的对话引到自己的端点、一键重启你所有 bot。
 - 启动时若没读到口令，`moments-web` 的日志里会有一条 `WARN: 未设 HUB_ACCESS_PASSWORD`。
+- **挂在隧道/反代后面**：再在 `hub.env` 加一行 `HUB_TRUST_PROXY=1`。隧道到本机这一段是明文 http，不开这个开关的话门户以为自己在 http 上，签出去的登录 cookie 不会带 `Secure` 标记（可能被降级到明文链路上带走）。**只有确认外面真有一层 https 隧道/反代时才开**——直连访问时开着它，等于让任何人伪造一个请求头就说自己是 https。
 
 ## 查看后台对话（所有平台）
 
