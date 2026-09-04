@@ -28,27 +28,40 @@ Register-Task "claude-tgbot-dispatchers" `
     (New-ScheduledTaskAction -Execute "powershell" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSScriptRoot\start-bots.ps1`"") `
     (New-ScheduledTaskTrigger -AtLogOn)
 
-# 2) self-initiate：每 10 分钟 tick（脚本内部随机 30min-24h 自节流）
-#    多 bot 时复制本段改 bot 名/chat_id。chat_id = 你自己的 Telegram user_id。
-#    chat_id 自动从该 bot 的 access.json → allowFrom 取第一个纯数字项，不用手改本文件。
-$SelfInitBot  = "chenlulu"
-$AccessJson   = Join-Path $env:USERPROFILE ".claude\channels\$SelfInitBot\access.json"
-$SelfInitChat = $null
-if (Test-Path $AccessJson) {
-    try {
-        $allowFrom = (Get-Content -Raw -Encoding UTF8 $AccessJson | ConvertFrom-Json).allowFrom
-        # 过滤掉 YOUR_TELEGRAM_USER_ID 之类占位；JSON 里写成数字或字符串都能认
-        $SelfInitChat = $allowFrom | Where-Object { "$_" -match '^\d+$' } | Select-Object -First 1
-    } catch {
-        # JSON 坏了/格式不对 → 当成没读到，下面 warn
-    }
-}
-if ($SelfInitChat) {
-    Register-Task "claude-tgbot-self-initiate-$SelfInitBot" `
-        (PyAction "`"$RepoDir\scripts\self_initiate.py`" $SelfInitBot $SelfInitChat") `
-        (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 10) -RepetitionDuration $Forever)
+# 2) self-initiate：每 10 分钟 tick（脚本内部随机 30min-24h 自节流），**每个 bot 一个任务**。
+#    bot 名单来自注册表（configs\*.yml），加 bot 后重跑本脚本即可带上，不用手改本文件。
+#    chat_id 自动从该 bot 的 access.json → allowFrom 取第一个纯数字项。
+#    先判 $LASTEXITCODE 再 ConvertFrom-Json：读不出名单就整段跳过并 warn，其余任务照常注册。
+Push-Location $RepoDir
+$RegistryJson = & $Py -m bots_registry --format=json
+$RegistryCode = $LASTEXITCODE
+Pop-Location
+if ($RegistryCode -ne 0 -or -not $RegistryJson) {
+    Write-Warning "跳过全部 self-initiate：bots_registry 读不出 bot 名单（退出码 $RegistryCode）。其余任务已正常注册。"
+    $Registry = @()
 } else {
-    Write-Warning "跳过 claude-tgbot-self-initiate-$SelfInitBot：没能从 $AccessJson 的 allowFrom 读到数字 user_id。填好白名单后重跑本脚本即可补上（其余任务已正常注册）。"
+    # @() 包一层：只有一个 bot 时 ConvertFrom-Json 回的是单个对象而不是数组
+    $Registry = @($RegistryJson | ConvertFrom-Json)
+}
+foreach ($b in $Registry) {
+    $AccessJson   = Join-Path $env:USERPROFILE ".claude\channels\$($b.id)\access.json"
+    $SelfInitChat = $null
+    if (Test-Path $AccessJson) {
+        try {
+            $allowFrom = (Get-Content -Raw -Encoding UTF8 $AccessJson | ConvertFrom-Json).allowFrom
+            # 过滤掉 YOUR_TELEGRAM_USER_ID 之类占位；JSON 里写成数字或字符串都能认
+            $SelfInitChat = $allowFrom | Where-Object { "$_" -match '^\d+$' } | Select-Object -First 1
+        } catch {
+            # JSON 坏了/格式不对 → 当成没读到，下面 warn
+        }
+    }
+    if ($SelfInitChat) {
+        Register-Task "claude-tgbot-self-initiate-$($b.id)" `
+            (PyAction "`"$RepoDir\scripts\self_initiate.py`" $($b.id) $SelfInitChat") `
+            (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 10) -RepetitionDuration $Forever)
+    } else {
+        Write-Warning "跳过 claude-tgbot-self-initiate-$($b.id)：没能从 $AccessJson 的 allowFrom 读到数字 user_id。填好白名单后重跑本脚本即可补上（其余任务已正常注册）。"
+    }
 }
 
 # 3) jiwen tick：每 5 分钟（情绪+关系数值）
