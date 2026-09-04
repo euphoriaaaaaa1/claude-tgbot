@@ -305,7 +305,7 @@ def _run_sample(style_id):
         "--ratio", "square",  # 示例图恒为 1024 见方，画风之间才有可比性
     ]
     try:
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=180)
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
     except subprocess.TimeoutExpired:
         return jsonify({"error": "生图超时"}), 504
 

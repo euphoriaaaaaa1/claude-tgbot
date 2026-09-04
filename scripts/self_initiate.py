@@ -78,7 +78,7 @@ def main() -> int:
     if os.path.isfile(life_ctx):
         try:
             r = subprocess.run([sys.executable, life_ctx, bot, chat],
-                               capture_output=True, text=True, timeout=300, cwd=REPO_ROOT)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, cwd=REPO_ROOT)
             if r.returncode != 0:
                 print(f"life-context exit={r.returncode} → skip", file=sys.stderr)
                 return 0
