@@ -154,6 +154,11 @@ _USAGE = "用法：python3 -m bots_registry [--format=sh|json]\n"
 
 
 def main(argv=None):
+    # 中文 Windows 控制台默认 cp936，display_name 里一个 emoji 就让 --format=json 整个
+    # UnicodeEncodeError 崩掉 → 调用方（start-bots.ps1 / register-tasks.ps1）读不到名单，
+    # 一个 bot 都起不来。hasattr 判一下：pytest 的捕获流不一定有 reconfigure。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     argv = list(sys.argv[1:] if argv is None else argv)
     fmt = "json"
     for a in argv:
