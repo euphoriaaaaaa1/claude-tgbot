@@ -4,8 +4,9 @@
 门户与 bot dispatcher 之间**唯一**的出口：bot 名单、并发探活、重启命令构造与执行。
 与 ``cliproxy_client`` 对称 —— 路由层不自己发请求、不自己拼平台分支。
 
-**依赖方向只许 web.py → 本模块**（[RA] M1）：``BOT_PORTS`` 落在这里，
+**依赖方向只许 web.py → 本模块**（[RA] M1）：端口出口落在这里，
 web.py 反向 import 它；反过来会因为 web.py 要 register_blueprint 而循环 import。
+端口表本身已收敛到仓库根的 ``bots_registry``（扫 ``configs/*.yml``），本模块只做包装。
 
 两个测试注入接缝（§6.0，生产零行为变化，README 不写）：
 ``HUB_RESTART_CMD`` 只替换"执行哪个命令串"，``HUB_BOTS_FILE`` 只替换"名单从哪来"，
@@ -29,10 +30,6 @@ from moments import redact
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# bot 端口映射（加 bot 就在这里加一行）。由 moments/web.py 的 _BOT_PORTS 迁来 ——
-# 那边改成 import 本表后即可删掉它自己那份，别再各写一张。
-BOT_PORTS = {"chenlulu": 17801}
-
 PROBE_TIMEOUT = 1.5       # §6.1 单次探活超时
 PROBE_BUDGET = 2.0        # §6.1 整体封顶：慢 bot 不许拖住门户
 PROBE_WORKERS = 8         # 并发封顶：bot 再多也不炸线程
@@ -48,6 +45,17 @@ Accepted = namedtuple("Accepted", "job_id started_at busy")
 
 
 # ---------------------------------------------------------------- 名单与端口
+
+def bot_ports():
+    """``{bot_id: port}``，**现读注册表**（唯一事实源 = ``configs/*.yml``），加 bot 零代码改动。
+
+    原来这里是一张写死的表，加 bot 要手改一行。读不出配置目录就回空表 ——
+    端口查不到 = unknown 态，比拿旧快照去连一个不相干的服务安全。
+    # ponytail: 每次现读，bot 数量是个位数；真到成百上千再谈缓存。
+    """
+    import bots_registry      # 延迟 import：仓库根模块，别在 moments 包导入期就拉进来
+    return bots_registry.ports()
+
 
 def _entry(bot_id, display_name):
     """规范化一条名单项；id 缺失/不是字符串一律抛（路由层转 500 config_unreadable）。"""
@@ -82,12 +90,13 @@ def list_bots():
 
 
 def bot_port(bot_id):
-    """端口优先级：``DISPATCHER_PORT_<BOT大写>`` → ``BOT_PORTS``；都查不到回 None（unknown 态）。
+    """端口优先级：``DISPATCHER_PORT_<BOT大写>`` → 注册表；都查不到回 None（unknown 态）。
 
-    口径与 scripts/self_initiate.py 一致。非法值（空串/不是数字/越界）当查不到处理，
+    口径与 scripts/self_initiate.py 一致，env 覆盖优先级**不变**（[I1] §6.1）。
+    非法值（空串/不是数字/越界）当查不到处理，
     宁可显示 unknown 也不要拿垃圾端口去连一个不相干的服务。
     """
-    raw = os.environ.get("DISPATCHER_PORT_%s" % bot_id.upper(), BOT_PORTS.get(bot_id))
+    raw = os.environ.get("DISPATCHER_PORT_%s" % bot_id.upper(), bot_ports().get(bot_id))
     try:
         port = int(raw)
     except (TypeError, ValueError):

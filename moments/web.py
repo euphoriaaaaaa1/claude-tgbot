@@ -460,9 +460,10 @@ def _trigger_bot_moment_reply(cfg: dict, moment: dict, user_text: str,
                         chat_id, bot_dir)
 
 
-# bot 端口映射（每个 bot 的 dispatcher 端口；加 bot 就在这里加一行）
-from moments.bots_client import BOT_PORTS as _BOTS_SRC  # 单一事实源（原本地表与 bots_client 重复）
-_BOT_PORTS = {k: str(v) for k, v in _BOTS_SRC.items()}
+# bot 端口：唯一事实源 = bots_registry（扫 configs/*.yml），加 bot 零代码改动。
+# 直接用 bots_client.bot_port 而不再自建派生表：那张表是导入期快照，
+# 既看不见新加的 bot，也漏掉了 DISPATCHER_PORT_<BOT> 覆盖（探活认、这里不认，两处不一致）。
+from moments.bots_client import bot_port as _bot_port
 
 
 def _ensure_worker_alive(bot_id: str, chat_id: str, bot_dir: str):
@@ -470,7 +471,7 @@ def _ensure_worker_alive(bot_id: str, chat_id: str, bot_dir: str):
     session uuid/slug 由 dispatcher 内部算，这里不再猜（旧版按 mtime 猜 uuid + 手拼
     slug 是丢记忆隐患，且旧 per-chat 会话名根本匹配不上 unified worker）。"""
     import urllib.request
-    port = _BOT_PORTS.get(bot_id)
+    port = _bot_port(bot_id)
     if not port:
         sys.stderr.write(f"[ensure_worker] 未知 bot {bot_id}，跳过 spawn\n")
         return

@@ -27,22 +27,34 @@ def _project_dir(bot_dir: str) -> str:
     return os.path.expanduser(f"~/.claude/projects/{_project_slug_for(bot_dir)}")
 
 
-# bot 名 → UUIDv5 namespace，必须与 dispatcher.ts 的 BOT_NAMESPACES 完全一致。
-# worker 的 session jsonl 文件名 = uuid5(namespace, chat_id)，据此可精确定位某个
-# chat 的会话文件，不再靠"目录里 mtime 最新的 jsonl"猜（私聊/群聊共享 project 目录，会猜错）。
-_BOT_NAMESPACES = {
-    "chenlulu": "550e8400-e29b-41d4-a716-446655440001",
-}
+def _bot_namespace(bot_name: str) -> str | None:
+    """bot 名 → UUIDv5 namespace，必须与 dispatcher.ts 的 BOT_NAMESPACES 完全一致。
+
+    表已收敛到 ``bots_registry``（configs/<bot>.yml 的 namespace_uuid + legacy 兜底），
+    加 bot 不用再改本文件。注册表读不出来（配置目录不在/坏了）就回 None = 不猜。
+    """
+    try:
+        import bots_registry
+        return bots_registry.namespace_for(bot_name)
+    except Exception:
+        return None
 
 
 def unified_session_uuid(bot_name: str) -> str | None:
     """unified session：每个 bot 只有一个 worker 会话（群+私聊同脑），
     uuid = uuid5(namespace[bot], "unified")，与 dispatcher/worker-manager.ts 一致。
-    env BOT_NAMESPACE 优先（与 TS 侧对齐——部署时用它免改源码，两侧必须一致）。"""
-    ns = os.environ.get("BOT_NAMESPACE") or _BOT_NAMESPACES.get(bot_name)
+    env BOT_NAMESPACE 优先（与 TS 侧对齐——部署时用它免改源码，两侧必须一致）。
+
+    worker 的 session jsonl 文件名 = uuid5(namespace, chat_id)，据此可精确定位某个
+    chat 的会话文件，不再靠"目录里 mtime 最新的 jsonl"猜（私聊/群聊共享 project 目录，会猜错）。
+    """
+    ns = os.environ.get("BOT_NAMESPACE") or _bot_namespace(bot_name)
     if not ns:
         return None
-    return str(uuid.uuid5(uuid.UUID(ns), "unified"))
+    try:
+        return str(uuid.uuid5(uuid.UUID(ns), "unified"))
+    except ValueError:      # yml 里填了个不是 uuid 的串：不猜，按"没有命名空间"处理
+        return None
 
 
 def _parse_iso_safe(ts_str: str) -> float:
