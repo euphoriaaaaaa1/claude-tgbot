@@ -460,3 +460,51 @@ def test_读侧吃包装对象时条目照样认得出(stub, client, monkeypatch
     assert len(client.entries()) == 1
     client.add_entry("openai", {"base-url": "https://x.example", "models": []})
     assert len(stub.openai_compat) == 2, "包装形状下新增把旧条目抹掉了"
+
+
+# ---------------- BUG-26：形状认不出时，写路径必须拒绝而不是当空列表 ----------------
+
+WEIRD_SHAPES = [
+    {"entries": {"0": {"base-url": "x"}}},   # 上游把数组换成了按下标的对象
+    {"data": {"items": []}},                 # 多包了一层
+    "just a string",
+    42,
+    None,
+]
+
+
+@pytest.mark.parametrize("shape", WEIRD_SHAPES)
+def test_块形状认不出时写路径一律502而不是抹光(stub, client, monkeypatch, shape):
+    """整块 PUT 是"拿读到的列表当全量写回去"。读成空 = 把用户全部 provider
+    连同上游明文 key 静默抹光，且门户还会回 201/200 说成功。"""
+    stub.seed_openai_block()
+    before = json.loads(json.dumps(stub.openai_compat))
+    monkeypatch.setattr(client, "mgmt_get", lambda path: shape)
+    for call in (lambda: client.add_entry("openai", {"base-url": "https://x.example"}),
+                 lambda: client.delete_entry("openai", 0)):
+        with pytest.raises(HubError) as ei:
+            call()
+        assert (ei.value.status, ei.value.error) == (502, "cliproxy_reject")
+    assert stub.openai_compat == before, "拒绝之后还是把块写了"
+
+
+@pytest.mark.parametrize("shape", WEIRD_SHAPES)
+def test_块形状认不出时展示路径仍恒200(stub, client, monkeypatch, shape):
+    """§3.2 铁律：列表端点恒 200。展示侧认不出就当空 —— 用户看得出"一条都没有"不对劲。"""
+    monkeypatch.setattr(client, "mgmt_get", lambda path: shape)
+    assert client.entries() == [] and client.providers() == []
+
+
+def test_真的空块照常可写(stub, client):
+    """"认不出"与"真的是空的"必须分开：新装的机器三个块都是空数组，那是正常态。"""
+    client.add_entry("openai", {"base-url": "https://x.example", "models": []})
+    assert len(stub.openai_compat) == 1
+
+
+def test_补偿路径的按下标读也不吃认不出的形状(stub, client, monkeypatch):
+    """形状认不出时下标毫无意义，按它写等于往随机位置整条覆盖。"""
+    stub.seed_openai_block()
+    monkeypatch.setattr(client, "mgmt_get", lambda path: {"nope": {"a": 1}})
+    with pytest.raises(HubError) as ei:
+        client.restore_prefixes([{"kind": "openai", "index": 0, "prefix": ""}])
+    assert ei.value.error == "cliproxy_reject"
