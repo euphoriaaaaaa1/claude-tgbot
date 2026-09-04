@@ -520,9 +520,18 @@ def reconcile():
         haiku = target["haiku_alias"]
         if _sole(views, alias, target["id"]) and (not haiku or _sole(views, haiku, target["id"])):
             return                                          # I1 与 I2 都成立，健康
-        records = client.set_alias_exclusive(alias, target["id"])
-        if haiku:
-            records += client.set_alias_exclusive(haiku, target["id"])
+        records = []
+        try:
+            records = client.set_alias_exclusive(alias, target["id"])
+            if haiku:
+                records += client.set_alias_exclusive(haiku, target["id"])
+        except HubError as e:
+            # BUG-25：中途失败原地不动会留下比自愈前**更坏**的态 —— 典型是主 alias 那轮
+            # 已经把别人停了、给当选那条清 prefix 的那一步没跑成 = 0 个条目接裸模型名，
+            # bot 每个请求 502。自愈是"尽力而为"，做不完就必须退回原样，下次启动再来。
+            # 补偿自己再失败会抛 activate_partial，由下面的 except 记进日志（不拦启动）。
+            _compensate(client, records + list(getattr(e, "undo", None) or []))
+            raise
         # 真写了才算 fixed=true：目标条目是被用户手改的 disabled: true 停用的话这里写不动它
         # （§3.0d 禁止写 cliproxy 的 disabled 键），如实报 false，别把没修好说成修好了。
         log("alias=%s" % alias, "haiku=%s" % (haiku or "-"),
