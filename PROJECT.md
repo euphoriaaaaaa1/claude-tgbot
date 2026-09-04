@@ -142,3 +142,6 @@
   ＋ UTF-8 两批（subprocess/open 显式 encoding、ps1 PYTHONUTF8 根治层）。
 - 遗留（非阻断）：moments-web plist Label 沿用 com.example.*（改名需旧标签检测防双起）；
   Windows ps1 无 pwsh 本机语法验证，仅人工比对；一期人工清单 5 条仍待用户。
+
+## 2026-09-04 install.sh 第②步在 Homebrew Python 上报 externally-managed-environment（另一台 Mac 实测）
+- 根因：PEP 668 标记（Homebrew/Debian 的 python3 自带 `EXTERNALLY-MANAGED`）禁止 `pip install` 往系统 site-packages 装。本项目十几处入口直接调 `python3` 不走 venv，故改为按标记文件判断后装到用户 site（`--user --break-system-packages`），装完立刻 `import yaml, feedparser, requests, flask` 自检。本机用 /opt/homebrew/bin/python3 + 临时 PYTHONUSERBASE 复现并验证通过；相关 55 条测试绿。README 两处手动 pip 命令同步加注。
