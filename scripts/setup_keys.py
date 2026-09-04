@@ -134,10 +134,13 @@ def main(argv=None) -> int:
     if a.cmd == "status":
         print(json.dumps({"deepseek": deepseek_filled(yml), "token": token_filled(env), "userid": userid_filled(acc)}))
         return 0
-    if not a.value or not a.value.strip():
+    # value 传 "-" = 从 stdin 读：密钥放 argv 会进 `ps` 进程列表（多用户机上他人可见），
+    # setup_keys.sh 一律走 stdin；argv 直传只留给单用户机手动救急。
+    raw = sys.stdin.readline() if a.value == "-" else a.value
+    if not raw or not raw.strip():
         print("缺少要写入的值", file=sys.stderr)
         return 2
-    v = a.value.strip()
+    v = raw.strip()
     try:
         if a.cmd == "set-deepseek":
             if not yml.exists():

@@ -117,3 +117,16 @@ def test_shell_guide_noninteractive_prints_where_and_how(sandbox):
     for must in ("@BotFather", "@userinfobot", "platform.deepseek.com", "TELEGRAM_BOT_TOKEN", "allowFrom", "jiwen.delta_llm.api_key"):
         assert must in out, f"说明里缺 {must}\n{out}"
     assert "👉" not in out  # --check 不提问
+
+
+def test_stdin传值_密钥不进argv(tmp_path, monkeypatch):
+    """密钥放 argv 会进 ps 进程列表；value 为 - 时必须改从 stdin 读。"""
+    import io
+    import scripts.setup_keys as sk
+    env = tmp_path / ".claude" / "channels" / "chenlulu" / ".env"
+    env.parent.mkdir(parents=True)
+    env.write_text("TELEGRAM_BOT_TOKEN=\n", encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", io.StringIO("123456789:AAstdin-secret-token-abcdefghij\n"))
+    rc = sk.main(["set-token", "-", "--home", str(tmp_path)])
+    assert rc == 0
+    assert "AAstdin-secret-token" in env.read_text(encoding="utf-8")
