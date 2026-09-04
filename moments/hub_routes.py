@@ -1317,12 +1317,43 @@ def setup_status():
     return jsonify(setup_keys.status(_sk_paths()))
 
 
+def _sk_deepseek_provider(key):
+    """同一把 DeepSeek key 也建成对话 provider 并切过去（`as_provider` 勾选时走这里）。
+
+    **不新写任何 provider 逻辑**：校验/建/切全是第 2 段那三个既有函数，
+    等价于用户自己去 /hub/provider 填一遍再点「切换到它」。
+    同名条目已存在（四元组由 DEEPSEEK_PRESET 钉死，id 因此是定值）→ **只换 key，不重复建**。
+
+    🔴 本函数**不返回、不抛出**任何带 key 的东西：调用方只会拿到 §7 的机读错误码。
+    """
+    p = _validated(dict(DEEPSEEK_PRESET, api_key=key))
+    client = cliproxy_client.from_env()
+    pid = provider_model.provider_id(p)
+    with hold_activate_lock():
+        entries = client.entries()
+        e = client.find(pid, entries)
+        if e is None:
+            _create_locked(client, p)
+        else:
+            # 管理 API 是整条替换语义（§3.0d），所以拿原条目做底、只把我们管的字段盖上去：
+            # weight / 用户手改的 disabled / excluded-models 不能被这次换 key 顺手删掉。
+            client.replace_entry(e.kind, e.index, dict(e.raw, **provider_model.to_block_entry(
+                p, disabled=e.view["disabled"])))
+    # 锁不可重入，必须出了上面的 with 再切（_activate 自己会再抢一次，同 §3.4 的注释）。
+    _activate(client, pid)
+
+
 @hub_bp.post("/hub/api/setup/keys")
 @_api
 def setup_write_key():
     """`{"field": "token"|"userid"|"deepseek", "value": "…"}` → 校验 + 写进对应文件。
 
     成功回 `{"ok": true, "filled": {…新的三项状态}}`；失败只回错误码与形状说明。
+
+    `deepseek` 项可带 `"as_provider": true`（页面默认勾着）：写完 jiwen 那把 key 之后，
+    **再用同一把 key** 建一条 DeepSeek 官方 provider 并切成对话模型。
+    这一步失败**不回滚已经写好的 jiwen key**（那是两件独立的事，为切模型失败而把
+    用户刚填对的 key 抹掉才是坑），如实在 `provider_error` 里回机读码。
     """
     body = _require_json_object(request.get_json(silent=True))
     field = body.get("field")
@@ -1347,4 +1378,15 @@ def setup_write_key():
     except OSError as e:
         # 权限/磁盘等意外：只报类型名，异常消息可能带上不该出站的东西
         raise HubError(500, "write_failed", type(e).__name__)
-    return jsonify({"ok": True, "filled": setup_keys.status(paths)})
+    resp = {"ok": True, "filled": setup_keys.status(paths)}
+    if field == "deepseek" and body.get("as_provider"):
+        try:
+            _sk_deepseek_provider(value.strip())
+        except HubError as e:
+            resp["provider_error"] = e.error          # §7 机读码，detail 里可能有路径，不回
+        except Exception as e:                        # noqa: BLE001
+            # 兜底同上：异常消息可能带上不该出站的东西，只报类型名。
+            # 兜得这么宽是有意的 —— key 已经写进 _global.yml 了，这一步再怎么炸也
+            # 不该让整个请求变成 500，那会让用户以为 key 没填成、再填一遍。
+            resp["provider_error"] = type(e).__name__
+    return jsonify(resp)

@@ -14,6 +14,8 @@
 configs/_global.yml 与 ~/.claude/channels/。
 """
 import json
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -256,3 +258,107 @@ def test_路由段没有自己复制一份写盘逻辑():
 def test_安装脚本与README都指了网页入口():
     for f in ("install.sh", "README.md"):
         assert "/hub/setup" in (ROOT / f).read_text(encoding="utf-8"), "%s 没说网页也能填" % f
+
+
+# ── as_provider：同一把 DeepSeek key 顺带当对话模型 ─────────────────────
+#
+# 三条分支各一个用例（成功 / 同名已存在只换 key / 激活失败），外加"不勾就是现行为"
+# 和红线"key 不回显"。provider 那一半全走第 2 段的既有函数，所以这里要盯的不是
+# CRUD 本身（那是 test_hub_routes_provider.py 的活），而是**联动的接缝**：
+# 建没建、切没切、失败了会不会把已经写好的 jiwen key 一起赔进去。
+sys.path.insert(0, str(ROOT / "tests" / "acceptance" / "provider_hub"))
+from stub_cliproxy import StubCliproxy  # noqa: E402
+
+MGMT, DOWNSTREAM = "sk-test-mgmt-0000", "sk-test-downstream-0000"
+PRESET = hub_routes.DEEPSEEK_PRESET
+
+
+@pytest.fixture
+def stub():
+    s = StubCliproxy(mgmt_key=MGMT, downstream_key=DOWNSTREAM).start()
+    try:
+        yield s
+    finally:
+        s.stop()
+
+
+@pytest.fixture
+def linked(sandbox, monkeypatch, stub, tmp_path):
+    """setup 沙箱 + 桩 cliproxy。DNS 也换成假的 —— 单测不许联网（conftest 同款口径）。"""
+    monkeypatch.setenv("CLIPROXY_PORT", str(stub.port))
+    monkeypatch.setenv("CLIPROXY_MGMT_KEY", MGMT)
+    monkeypatch.setenv("CLIPROXY_API_KEY", DOWNSTREAM)
+    monkeypatch.setenv("CLIPROXY_ANTHROPIC_COMPAT", "1")
+    monkeypatch.setattr(hub_routes.provider_model, "resolve_host", lambda _h: [])
+    return _app(monkeypatch, *sandbox).test_client()
+
+
+def _settings():
+    return json.loads(Path(os.environ["CLAUDE_SETTINGS_PATH"]).read_text(encoding="utf-8"))
+
+
+def test_勾了as_provider就把同一把key建成provider并切过去(linked, stub):
+    r = post(linked, field="deepseek", value=GOOD["deepseek"], as_provider=True)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["ok"] is True and "provider_error" not in r.get_json()
+    # 建了一条 anthropic 条目（claude-api-key 块），值全来自 DEEPSEEK_PRESET
+    assert stub.openai_compat == [] and stub.gemini_api_key == []
+    assert len(stub.claude_api_key) == 1
+    blk = stub.claude_api_key[0]
+    assert blk["base-url"] == PRESET["base_url"] and blk["api-key"] == GOOD["deepseek"]
+    assert [m["alias"] for m in blk["models"]] == [
+        PRESET["model_alias"], hub_routes.provider_model.DEFAULT_HAIKU_ALIAS]
+    assert all(m["name"] == PRESET["upstream_model"] for m in blk["models"])
+    # 切过去了：settings.json 指向本机 cliproxy + 该 alias，且当选条目不带 prefix
+    env = _settings()["env"]
+    assert env["ANTHROPIC_MODEL"] == PRESET["model_alias"]
+    assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:%d" % stub.port
+    assert stub.aliases_enabled(PRESET["model_alias"]) == 1
+    # jiwen 那把也照常写了（联动不许把原本这件事顶掉）
+    assert status(linked)["deepseek"] is True
+
+
+def test_同名provider已存在时只换key不重复建(linked, stub, sandbox):
+    old = "sk-oldcanaryvaluexxxxxxx"
+    assert post(linked, field="deepseek", value=old, as_provider=True).status_code == 200
+    assert stub.claude_api_key[0]["api-key"] == old
+    r = post(linked, field="deepseek", value=GOOD["deepseek"], as_provider=True)
+    assert r.status_code == 200 and "provider_error" not in r.get_json()
+    assert len(stub.claude_api_key) == 1, "同一个来源被建了第二遍"
+    assert stub.claude_api_key[0]["api-key"] == GOOD["deepseek"]
+    assert stub.aliases_enabled(PRESET["model_alias"]) == 1
+
+
+def test_激活失败不回滚jiwen_key且如实回provider_error(linked, stub, sandbox):
+    repo, _ = sandbox
+    stub.set_down()                      # cliproxy 连不上 → 创建那一步就 503
+    r = post(linked, field="deepseek", value=GOOD["deepseek"], as_provider=True)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    b = r.get_json()
+    assert b["ok"] is True and b["filled"]["deepseek"] is True
+    assert b["provider_error"] == "cliproxy_down"
+    # 红线：切模型失败不许把已经写对的 key 抹掉
+    assert 'api_key: "%s"' % GOOD["deepseek"] in \
+        (repo / "configs" / "_global.yml").read_text(encoding="utf-8")
+
+
+def test_不勾就只写jiwen不碰cliproxy和settings(linked, stub, tmp_path):
+    for body in ({}, {"as_provider": False}):
+        assert post(linked, field="deepseek", value=GOOD["deepseek"], **body).status_code == 200
+    assert stub.all_blocks == []
+    assert not Path(os.environ["CLAUDE_SETTINGS_PATH"]).exists()
+
+
+@pytest.mark.parametrize("down", [False, True])
+def test_联动路径的响应同样不含key(linked, stub, down):
+    if down:
+        stub.set_down()
+    body = post(linked, field="deepseek", value=GOOD["deepseek"], as_provider=True) \
+        .get_data(as_text=True)
+    assert "canary" not in body.lower(), body
+
+
+def test_预置常量里没有api_key字段():
+    """模板常量不许带 key —— 带了就等于往 cliproxy 里预埋一条无主凭据。"""
+    assert "api_key" not in PRESET and set(PRESET) == {
+        "label", "kind", "base_url", "upstream_model", "model_alias"}

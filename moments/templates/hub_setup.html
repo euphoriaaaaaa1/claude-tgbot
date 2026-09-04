@@ -70,6 +70,14 @@
         <input type="password" data-input style="flex:1" autocomplete="off" spellcheck="false" placeholder="sk-...">
         <button class="btn mini" type="button" data-save>保存</button>
       </div>
+      <label class="row" style="gap:6px;margin-top:8px;font-weight:normal">
+        <input type="checkbox" data-as-provider checked>
+        <span>同时用它作对话模型（DeepSeek 官方）</span>
+      </label>
+      <div class="muted">
+        勾着 = 同一把 key 再建一条「DeepSeek 官方」来源并切成说话模型（等价于去「模型来源」页填一遍）。
+        不想让 bot 说话也走 DeepSeek（比如你有 Claude 订阅或别家中转）就取消勾选，那只写上面这一处。
+      </div>
     </div>
     <div class="muted" data-msg style="margin-top:6px"></div>
   </div>
@@ -84,6 +92,10 @@ const ERRS = {
   bad_format: '格式不对', bad_field: '字段名不对（页面版本可能过旧）',
   bad_body: '请求体不对', not_provisioned: '配置还没铺好',
   write_failed: '写入失败', config_busy: '有别的写入在跑，稍后再试',
+  // 下面这些只会出现在 provider_error 里（同一把 key 顺带切对话模型那一步）
+  cliproxy_unconfigured: 'cliproxy 还没配', cliproxy_down: 'cliproxy 没在跑',
+  cliproxy_reject: 'cliproxy 拒绝了这次写入', activate_busy: '有别的切换在跑，稍后再试',
+  settings_unparsable: 'settings.json 被手写坏了', settings_write_failed: 'settings.json 写不进去',
 };
 const q = (card, sel) => card.querySelector(sel);
 
@@ -125,14 +137,24 @@ async function save(card) {
   const msg = q(card, '[data-msg]');
   const value = input.value.trim();
   if (!value) { hubSay(msg, '还没填内容'); return; }
+  // DeepSeek 那张卡才有这个勾（默认勾着）：同一把 key 顺带建成对话模型并切过去。
+  const asProvider = q(card, '[data-as-provider]');
+  const payload = {field: field, value: value};
+  if (asProvider) payload.as_provider = asProvider.checked;
   btn.disabled = true;
   hubSay(msg, '写入中…');
-  const r = await hubApi('/hub/api/setup/keys',
-    {method: 'POST', body: JSON.stringify({field: field, value: value})});
+  const r = await hubApi('/hub/api/setup/keys', {method: 'POST', body: JSON.stringify(payload)});
   btn.disabled = false;
   if (r.status === 200 && r.body && r.body.ok) {
     input.value = '';                       // 立刻清掉，别把密钥留在 DOM 里
-    hubSay(msg, NAMES[field] + ' 已写入。重启 bot 后生效。');
+    // key 写进去了但模型没切成是**两件事**，如实分开说，别混成一句「已写入」。
+    let extra = '';
+    if (payload.as_provider) {
+      const pe = r.body.provider_error;
+      extra = pe ? ('（对话模型没切成：' + (ERRS[pe] || pe) + '，可到「模型来源」页重试）')
+                 : '（同一把 key 已设为对话模型「DeepSeek 官方」并生效）';
+    }
+    hubSay(msg, NAMES[field] + ' 已写入。重启 bot 后生效。' + extra);
     paintAll(r.body.filled || {});
     return;
   }
