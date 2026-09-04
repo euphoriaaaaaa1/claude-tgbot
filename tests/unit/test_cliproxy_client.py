@@ -453,7 +453,7 @@ def test_读侧吃包装对象时条目照样认得出(stub, client, monkeypatch
     stub.seed_openai_block()
     real = client.mgmt_get
 
-    def wrapped(path):
+    def wrapped(path, timeout=None):
         got = real(path)
         return {path.rsplit("/", 1)[-1]: got} if isinstance(got, list) else got
 
@@ -480,7 +480,7 @@ def test_块形状认不出时写路径一律502而不是抹光(stub, client, mo
     连同上游明文 key 静默抹光，且门户还会回 201/200 说成功。"""
     stub.seed_openai_block()
     before = json.loads(json.dumps(stub.openai_compat))
-    monkeypatch.setattr(client, "mgmt_get", lambda path: shape)
+    monkeypatch.setattr(client, "mgmt_get", lambda path, timeout=None: shape)
     for call in (lambda: client.add_entry("openai", {"base-url": "https://x.example"}),
                  lambda: client.delete_entry("openai", 0)):
         with pytest.raises(HubError) as ei:
@@ -492,7 +492,7 @@ def test_块形状认不出时写路径一律502而不是抹光(stub, client, mo
 @pytest.mark.parametrize("shape", WEIRD_SHAPES)
 def test_块形状认不出时展示路径仍恒200(stub, client, monkeypatch, shape):
     """§3.2 铁律：列表端点恒 200。展示侧认不出就当空 —— 用户看得出"一条都没有"不对劲。"""
-    monkeypatch.setattr(client, "mgmt_get", lambda path: shape)
+    monkeypatch.setattr(client, "mgmt_get", lambda path, timeout=None: shape)
     assert client.entries() == [] and client.providers() == []
 
 
@@ -505,7 +505,7 @@ def test_真的空块照常可写(stub, client):
 def test_补偿路径的按下标读也不吃认不出的形状(stub, client, monkeypatch):
     """形状认不出时下标毫无意义，按它写等于往随机位置整条覆盖。"""
     stub.seed_openai_block()
-    monkeypatch.setattr(client, "mgmt_get", lambda path: {"nope": {"a": 1}})
+    monkeypatch.setattr(client, "mgmt_get", lambda path, timeout=None: {"nope": {"a": 1}})
     with pytest.raises(HubError) as ei:
         client.restore_prefixes([{"kind": "openai", "index": 0, "prefix": ""}])
     assert ei.value.error == "cliproxy_reject"
