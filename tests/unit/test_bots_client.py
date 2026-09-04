@@ -366,3 +366,30 @@ def test_restart收到顶层非对象的体照常受理不冒500(client, monkeyp
     r = client.post("/hub/api/bots/restart", json=raw)
     assert r.status_code == 202, (raw, r.status_code, r.get_json())
     assert re.fullmatch(r"[0-9a-f]{8}", r.get_json()["job_id"])
+
+
+# ---------------- BUG-27：线程起不来时互斥标记必须收回 ----------------
+
+def test_重启线程起不来时不把互斥永久卡住(client, monkeypatch, tmp_path):
+    """标记在起线程之前就立起来了，而 _run 永远不会跑到清理那句 ——
+    不收回的话之后每次重启都恒 409，只能重启门户才解得开。"""
+    monkeypatch.setenv("HUB_RESTART_CMD", "true")
+    boom = {"n": 0}
+    real_start = threading.Thread.start
+
+    def flaky(self):
+        if self.name == "hub-restart" and boom["n"] == 0:
+            boom["n"] += 1
+            raise RuntimeError("can't start new thread")
+        return real_start(self)
+    monkeypatch.setattr(threading.Thread, "start", flaky)
+
+    r = client.post("/hub/api/bots/restart")
+    assert r.status_code == 202, r.get_json()
+    st = client.get("/hub/api/bots/restart/%s" % r.get_json()["job_id"]).get_json()
+    assert st["state"] == "failed", "线程没起来却报成 running，用户会一直等"
+    # 关键：下一次重启还能受理，不是恒 409
+    r2 = client.post("/hub/api/bots/restart")
+    assert r2.status_code == 202, r2.get_json()
+    jobs = client.application.extensions["hub_restart_jobs"]
+    assert wait_done(jobs, r2.get_json()["job_id"])["state"] == "done"

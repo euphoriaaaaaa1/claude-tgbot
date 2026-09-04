@@ -265,9 +265,24 @@ class RestartJobs:
             while len(self._jobs) > self._keep:
                 self._jobs.popitem(last=False)      # 只留最近 keep 条，最新的那条永远在
             self._running = job_id
-        threading.Thread(target=self._run, args=(job_id, argv, timeout),
-                         daemon=True, name="hub-restart").start()
+        try:
+            threading.Thread(target=self._run, args=(job_id, argv, timeout),
+                             daemon=True, name="hub-restart").start()
+        except (RuntimeError, OSError) as e:
+            # BUG-27：线程起不来（进程线程数打满 / 内存不足）时互斥标记已经立起来了，
+            # 而 _run 永远不会跑到那句清理 —— 之后每一次重启都恒 409 restart_in_progress，
+            # 只能重启门户才能解开。这里当场收回，并把这条 job 如实标成 failed。
+            self._fail_now(job_id, "重启线程起不来：%s" % type(e).__name__)
         return Accepted(job_id, started_at, None)
+
+    def _fail_now(self, job_id, tail):
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is not None:
+                job.update(state="failed", exit_code=None, tail=tail,
+                           took_ms=int((time.monotonic() - job["t0"]) * 1000))
+            if self._running == job_id:
+                self._running = None
 
     def _run(self, job_id, argv, timeout):
         try:
