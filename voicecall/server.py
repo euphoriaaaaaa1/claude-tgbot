@@ -220,7 +220,7 @@ def _write_inbox(bot: str, text: str, prefix: str) -> bool:
             "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
             "message_id": str(ms),
         }
-        with open(os.path.join(inbox, f"{prefix}-{ms}.json"), "w") as f:
+        with open(os.path.join(inbox, f"{prefix}-{ms}.json"), "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
         _ensure_worker_alive(bot)
         return True
@@ -289,7 +289,7 @@ def _recap_call_to_inbox(bot: str) -> bool:
     state = os.path.join(BOTS[bot]["bot_dir"], "chats", cid, ".voice-recap-ts")
     last = 0
     try:
-        last = int(open(state).read().strip())
+        last = int(open(state, encoding="utf-8").read().strip())
     except Exception:
         pass
     fresh = [r for r in rows if r.get("ts", 0) > last]
@@ -301,7 +301,7 @@ def _recap_call_to_inbox(bot: str) -> bool:
     ok = _write_inbox(bot, text, "voice-recap")
     if ok and rows:
         try:
-            with open(state, "w") as f:
+            with open(state, "w", encoding="utf-8") as f:
                 f.write(str(int(rows[-1].get("ts", int(time.time())))))
         except Exception:
             pass

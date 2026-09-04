@@ -489,7 +489,7 @@ def _gen_image_comfyui(bot_id: str, moment_id: int, text: str, visibility: str):
                 cmd += ["--init-image", anchor_image]
                 if anchor_denoise is not None:
                     cmd += ["--denoise", str(anchor_denoise)]
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
             for line in r.stdout.splitlines():
                 if line.startswith("MEDIA: "):
                     img = line[len("MEDIA: "):].strip()
