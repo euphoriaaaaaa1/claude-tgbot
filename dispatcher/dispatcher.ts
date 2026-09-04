@@ -623,9 +623,19 @@ async function slashBridgeIfApplicable(ctx: Context, text: string): Promise<bool
   const msgId = ctx.message?.message_id
   const replyOpt = msgId != null ? { reply_parameters: { message_id: msgId } } : {}
 
-  // /clear 会把会话清空 → 先把最近聊的压成摘要写进自动记忆，再下发。
+  // /clear 会把会话清空 → 先把最近聊的压成摘要写进自动记忆，再清。
   // 摘要走脱离 handler 的异步链（claude -p 最长 25 秒，await 在这会卡住整个 bot 的
   // 更新循环）；顺序仍是"摘要 → 清空 → 回执"，用户看到回执即代表已清。
+  //
+  // ⚠️ 不能把 /clear 喂给活着的 worker（曾经的做法）：CLI 2.1.257 起 /clear 不再原地
+  // 清空会话文件，而是**保留旧文件、fork 出一个新 session id 落盘**（实测：turn1 落
+  // <--session-id>.jsonl，/clear 后所有轮次落一个全新 uuid 的文件）。而本仓把会话 id
+  // 钉死成 uuid5(ns,"unified")（worker-manager.ts spawnWorker 的 --resume、本文件的
+  // SESSION_JSONL、chat_history.py 的 unified_session_uuid 都用它）→ 漂移之后：
+  //   ① worker 下次重启 --resume 钉死的 uuid = 把 /clear 掉的上下文原样接回来（清了个寂寞）；
+  //   ② /clear 到重启之间说的所有话落在漂移文件里，重启后永久孤儿（摘要/门户/self-initiate 都读不到）。
+  // 治法与 /clearall 同源：杀 worker + 移走会话文件，下次 spawn 用钉死的 uuid 起全新
+  // 会话——会话 id 收敛回来，CLI 没机会 fork。代价只是一次 worker 重启（1s backoff）。
   if (/^\/clear(@\w+)?$/.test(trimmed)) {
     if (clearInProgress) {
       await bot.api.sendMessage(chatId, '[上一次清理还没走完，稍等]', replyOpt).catch(() => {})
@@ -635,8 +645,12 @@ async function slashBridgeIfApplicable(ctx: Context, text: string): Promise<bool
     void (async () => {
       try {
         const kept = await saveClearSummary('all')
-        getManager().sendSlash(trimmed)
-        await bot.api.sendMessage(chatId, `已下发: ${trimmed}${kept ? '（最近聊到哪我记小本本上了）' : ''}`, replyOpt)
+        const mgr = getManager()
+        mgr.kill({ intentional: true })
+        await new Promise(r => setTimeout(r, 500))   // 先杀再删：claude 活着时还在写这个 jsonl
+        const wiped = wipeSessionJsonl()
+        process.stderr.write(`dispatcher[${BOT_NAME}]: /clear chat=${chatId} wiped=${wiped} summary=${kept}\n`)
+        await bot.api.sendMessage(chatId, `已清空${kept ? '（最近聊到哪我记小本本上了）' : ''}`, replyOpt)
       } catch (e) {
         await bot.api.sendMessage(chatId, `[slash bridge 失败: ${String(e).slice(0, 200)}]`, replyOpt).catch(() => {})
       } finally {
