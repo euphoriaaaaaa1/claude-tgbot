@@ -125,7 +125,7 @@ cp -r channels/_persona_template ~/.claude/channels/myrole
 Copy-Item -Recurse channels\_persona_template $env:USERPROFILE\.claude\channels\myrole
 notepad $env:USERPROFILE\.claude\channels\myrole\CLAUDE.md
 ```
-用新角色名（如 `myrole`）时，记得同步：`configs/myrole.yml`（复制 `configs/_example.yml` 改）、两处 `BOT_NAMESPACES`、启动脚本的端口——详见文末「加更多机器人」。
+用新角色名（如 `myrole`）时，还要建一份 `configs/myrole.yml`（复制 `configs/_example.yml` 改）——详见文末「加更多机器人」。端口和启动脚本不用动。
 
 > **最简单的玩法**：不想新建，直接改 `channels/chenlulu/CLAUDE.md` 的 `# SOUL.md`/`# USER.md` 两段，把陈露露换成你的角色即可，其它配置都不用动。改完重启一次 bot 生效。
 
@@ -232,10 +232,16 @@ cd $env:USERPROFILE\claudebotlife    # 回到仓库目录
 # ⑤.5 换成你自己的人设（强烈建议！别一直用陈露露）——详见下方「换成你自己的人设」
 #      最省事：notepad $env:USERPROFILE\.claude\channels\chenlulu\CLAUDE.md，改里面的 # SOUL.md 段
 
-# ⑥ 启动！（首次若提示"禁止运行脚本"，前面加 -ExecutionPolicy Bypass）
+# ⑥ 装管理台后端 cliproxy（约 20 MB 下载）
+#    这一步同时生成 %USERPROFILE%\.claude-tgbot\hub.env —— 管理台 :8765/hub 的登录口令
+#    **只有这里会生成**。Windows 上不跑它就没有口令，而没口令 = 管理台零鉴权，
+#    所以哪怕你不打算换 provider，也建议先跑一次。
+powershell -ExecutionPolicy Bypass -File windows\install-cliproxy.ps1
+
+# ⑦ 启动！（首次若提示"禁止运行脚本"，前面加 -ExecutionPolicy Bypass）
 powershell -ExecutionPolicy Bypass -File windows\start-bots.ps1
 
-# ⑦ 注册后台任务：开机自启 + 主动消息 + 情绪引擎 + 朋友圈 + 记忆压缩
+# ⑧ 注册后台任务：开机自启 + 主动消息 + 情绪引擎 + 朋友圈 + 记忆压缩 + cliproxy
 #    不用改任何文件，脚本会自己去 access.json 读你填的 user_id
 powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 ```
@@ -243,7 +249,9 @@ powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 看实时对话：`powershell -File windows\watch-bot.ps1 chenlulu`
 常用运维：`windows\restart-bots.ps1` 重启全部 · `windows\unregister-tasks.ps1` 卸载后台任务（含开机自启）。
 
-> ⑦ 里的「主动消息」任务需要你的数字 user_id。如果 ⑤ 的 `access.json` 还没填，脚本会黄字提示跳过这一个任务、其余照常注册；填好后重跑一次 ⑦ 就补上了。
+> ⑧ 里的「主动消息」任务需要你的数字 user_id。如果 ⑤ 的 `access.json` 还没填，脚本会黄字提示跳过这一个任务、其余照常注册；填好后重跑一次 ⑧ 就补上了。
+>
+> 跳过 ⑥ 的话，⑧ 也会黄字提示跳过 cliproxy 那个任务（其余照常注册）；补装后重跑 ⑧ 即可。
 
 **先自测环境（强烈建议，不碰 Telegram）**：`cd dispatcher; bun test-e2e.ts` —— 打出 `5 过 / 0 挂` 说明这台机器整条链路 OK。
 
@@ -260,13 +268,13 @@ powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 
 **Mac 开机自启的细节**：`install.sh` 第 ⑤ 步会把 `plist-templates/autostart.plist.tmpl` 填好路径写到 `~/Library/LaunchAgents/com.claudebotlife.autostart.plist` 并 `launchctl bootstrap` 挂上，以后每次登录自动跑 `restart-bots.sh`。重复跑 `install.sh` 不会挂两份。若你是在 SSH 里跑的（没有图形会话），加载会失败但 plist 已写好，脚本会打出手动加载命令，图形登录后跑一次即可。**Linux 没有 launchd，这步自动跳过**，想自启请自己挂 `cron`（`@reboot`）或 systemd user service 跑 `restart-bots.sh`。
 
-`plist-templates/` 里还有 `self-initiate`（主动消息）、`jiwen-tick`（情绪引擎）、`moments-web`（朋友圈网页）、`memory-compactor`（记忆压缩）等模板，是**可选**的后台服务，需要自己 `sed` 填占位（`{REPO_DIR}`/`{BOT_ID}`/`{CHAT_ID}`）写进 `~/Library/LaunchAgents/` 再 `launchctl bootstrap gui/$UID <plist>` 挂上。
+`install.sh` 的第 ⑤ 步一并挂上 `moments-web`（朋友圈网页 + 管理台 `:8765`）。`plist-templates/` 里剩下的 `self-initiate`（主动消息）、`memory-compactor`（记忆压缩）、`cleanup`、`daily-wildcard` 是**可选**的后台服务，要自己 `sed` 填占位（`{REPO_DIR}`/`{PROJECT_DIR}`/`{BOT_ID}`/`{CHAT_ID}`）写进 `~/Library/LaunchAgents/` 再 `launchctl bootstrap gui/$UID <plist>` 挂上。
 
 ## 朋友圈网页（`:8765`，可选）
 
 启动 moments-web 服务后，浏览器开 `http://localhost:8765` 能：刷各 bot 的朋友圈、点赞/评论（bot 会异步读到并回应）、**画风设置**、**切生图引擎**、填 **NovelAI key**。
 
-- **怎么起**：Windows 走 `register-tasks.ps1` 登录自启；Mac 挂 `moments-web` plist，或手动 `python3 -m moments.web`。
+- **怎么起**：Mac 跑过 `install.sh` 就已经登录自启了；Windows 走 `register-tasks.ps1` 登录自启。手动起：`python3 -m moments.web`。
 - ⚠️ **画风页和 NovelAI key 设置依赖你已装 `novelai-skill`**（`cp -r skills/novelai-skill ~/.claude/skills/`）——没装的话这两个页面是空的（不报错，只是没内容）。朋友圈刷帖/点赞/评论不依赖 skill，正常可用。
 - **画风预设能调的参数**：正/负面前缀之外，还能选 **模型**（V5 Full / V5 Curated / V4.5 Full）、**steps**（1–50）、**cfg_scale**（1–10）、**sampler**、**ucPreset**（负面预设强度 0–3）。每项留空 = 跟随全局默认，不用逐个填。填错会当场告诉你哪不对（比如「steps 必须是 1–50 的整数」），不会静默存进去。
 - **点「生成示例图」**：卡片上会盖一层"生成中"遮罩，同一个预设不能重复点（后台也挡着，另开一个窗口点也是 409）。示例图固定 1024 见方，方便横向比画风。
@@ -274,7 +282,9 @@ powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 
 ## 管理台（`:8765/hub`，换模型来源用）
 
-网页版的「换 provider / 填 key / 切回官方订阅 / 重启 bot」。装过 `install.sh` 才有。
+网页版的「换 provider / 填 key / 切回官方订阅 / 重启 bot」。装过 `install.sh` 才有（Windows 见部署段的 ⑥）。
+
+四个页面：**模型来源**（`/hub/provider`，换 provider、填 key）、**bot 状态**（`/hub/bots`，看在跑没、重启）、**系统参数**（`/hub/params`，网页改 `configs/_global.yml` 里的数值参数，带高级模式直接改原文、以及改前自动备份和一键回滚）、**添加 bot**（`/hub/addbot`，填个 token 就建好新 bot 并拉起来，详见「加更多机器人」）。
 
 - **口令写在 `~/.claude-tgbot/hub.env`**：`install.sh` 会生成一条随机 `HUB_ACCESS_PASSWORD` 写进去。这个文件是**门户自己去读的配置文件**（600 权限，不进 git），不是给 shell `source` 的——所以你改完它只要重启 moments-web 就生效，不用去动 plist / 计划任务。同一个文件里还放着 cliproxy 的端口和 key。
 - **上游 key 存在哪**：`~/.claude-tgbot/cliproxy/config.yaml`（明文，600）。目录本身是 700 兜底——**把这个目录拷给别人排障、或让备份工具带走之前，先把里面的 key 删掉**。
@@ -502,11 +512,19 @@ schooling:                 # 可选，只有在读的角色才写
 
 ## 加更多机器人
 
-1. `cp configs/_example.yml configs/<新bot>.yml`，改里面的人设摘要。
-2. `cp -r channels/chenlulu ~/.claude/channels/<新bot>`，改 `CLAUDE.md`(人设)、`access.json`、`.env`，删掉 `relationship.json`（让它按新关系重新起）。
-3. **两处 UUID 命名空间必须各加一行且完全一致**（否则会读错记忆）：`dispatcher/worker-manager.ts` 的 `BOT_NAMESPACES`、`chat_history.py` 的 `_BOT_NAMESPACES`。
-4. 启动脚本里加这个 bot 的端口：`restart-bots.sh` 的 `BOTS`（Windows：`windows/start-bots.ps1` 的 `$Bots`）。
-5. 多 bot 群聊由 `director.py` 调度（可选，单 bot 用不到）。
+bot 名单、端口、记忆命名空间全部由 `configs/*.yml` 派生（`bots_registry.py` 是唯一读取入口），**加 bot 不用改任何源码或启动脚本**。两条路，挑一条：
+
+**A. 网页加（省事）**：管理台 `http://localhost:8765/hub/addbot`，填 @BotFather 给的 token + bot 名 + 挑个人设模板，提交后它会建好 `configs/<新bot>.yml` 和 `~/.claude/channels/<新bot>/`、注册常驻、把 bot 拉起来。
+
+**B. 手动加（想逐项自己控）**：
+
+1. `cp configs/_example.yml configs/<新bot>.yml`，改里面的人设摘要，**并加一行 `namespace_uuid:`**（记忆命名空间，随便生成一个：`python3 -c "import uuid;print(uuid.uuid4())"`）。这行不加，worker 起来会报 `no UUIDv5 namespace`。
+2. `cp -r channels/chenlulu ~/.claude/channels/<新bot>`，改 `CLAUDE.md`(人设)、`access.json`、`.env`（填这个 bot 自己的 token），删掉 `relationship.json`（让它按新关系重新起）。
+3. 重启：`bash restart-bots.sh`（Windows：`powershell -File windows\restart-bots.ps1`）。
+
+> 端口不用管：yml 里不写 `dispatcher_port` 时，注册表会自动挑一个不跟现有 bot 撞的号；想钉死就显式写上。
+>
+> 多 bot 群聊由 `director.py` 调度（可选，单 bot 用不到）。
 
 ---
 
