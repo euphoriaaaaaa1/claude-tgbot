@@ -132,17 +132,27 @@ CLIPROXY_VERSION_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs", "cliproxy.version")
 
 
-def _installed_version():
-    """"我们装了哪一版" —— 与"正在跑哪一版"在用户手工换二进制时会不一致，如实只报前者。
-
-    读不到（还没跑过 install）回 None，不影响 running 判定。每次现读：install 升级后
-    不必重启门户；文件是一行字，没有值得缓存的成本。
-    """
+def _read_line(path):
     try:
-        with open(CLIPROXY_VERSION_FILE, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return f.read().strip() or None
     except OSError:
         return None
+
+
+def _installed_version():
+    """"我们装了哪一版" —— 与"正在跑哪一版"在用户手工换二进制时会不一致，如实只报前者。
+
+    先读 ``<cliproxy 目录>/.installed-version``（``install_cliproxy.sh`` 装完写的那行，
+    = **真的装上去的那一版**），读不到才回落仓库里钉的 ``configs/cliproxy.version``
+    （抽查 11）。两者会分叉：`git pull` 把仓库钉的版本号更到 v8、但用户没重跑 install，
+    只报仓库那份就是在说谎 —— 用户按页面显示的版本去查 changelog 会查错一版。
+    回落保留是因为没跑过 install 的机器上没有那个印记，报仓库钉的版本仍比 None 有用。
+
+    每次现读：install 升级后不必重启门户；两个文件都是一行字，没有值得缓存的成本。
+    """
+    return (_read_line(cliproxy_client.version_stamp_path())
+            or _read_line(CLIPROXY_VERSION_FILE))
 
 
 @contextlib.contextmanager
