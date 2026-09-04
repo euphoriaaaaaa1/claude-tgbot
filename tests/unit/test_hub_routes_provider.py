@@ -997,3 +997,31 @@ def test_明文key仍然原样写进cliproxy(c, stub):
     assert create(c, base_url=USERINFO_URL)[0] == 201
     assert stub.openai_compat[0]["api-key-entries"][0]["api-key"] == "sk-test-aaaabbbbcccc"
     assert stub.openai_compat[0]["base-url"] == USERINFO_URL
+
+
+# ---------------- 抽查 14：列表端点读不完时仍恒 200 ----------------
+
+def test_列表读超预算时仍200且报cliproxy_error(c, stub, monkeypatch):
+    """§3.2 铁律：列表端点恒 200，故障走 warnings。healthz 刚回过话，
+    所以 running 保持 true —— 报 cliproxy_down 会把用户支去查进程（查了也没问题）。"""
+    monkeypatch.setattr(cliproxy_client.CliproxyClient, "providers",
+                        lambda self, **kw: (_ for _ in ()).throw(
+                            cliproxy_client.CliproxyError(504, "cliproxy_slow", "慢",
+                                                          timed_out=True)))
+    r = c.get("/hub/api/provider")
+    body = r.get_json()
+    assert r.status_code == 200
+    assert body["providers"] == [] and body["warnings"] == ["cliproxy_error"]
+    assert body["cliproxy"]["running"] is True
+    assert "error_status" not in body["cliproxy"], "读不完不是上游状态码，别编一个出来"
+    assert body["cliproxy"]["supported_kinds"], "本地静态知识仍要给，否则页面下拉是空的"
+
+
+def test_列表端点带着预算调providers(c, stub, monkeypatch):
+    seen = {}
+    real = cliproxy_client.CliproxyClient.providers
+    monkeypatch.setattr(cliproxy_client.CliproxyClient, "providers",
+                        lambda self, **kw: (seen.update(kw), real(self, **kw))[1])
+    assert c.get("/hub/api/provider").status_code == 200
+    assert seen == {"timeout": cliproxy_client.LIST_TIMEOUT,
+                    "budget": cliproxy_client.LIST_BUDGET}

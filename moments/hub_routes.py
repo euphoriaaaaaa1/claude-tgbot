@@ -225,12 +225,19 @@ def provider_list():
             client = cliproxy_client.from_env()
             client.healthz()
             info["running"] = True              # 拿到 HTTP 响应就算跑着（§0.4 传输层/应用层分界）
-            providers = client.providers()
+            # 抽查 14：三个块的 GET 加起来给总预算。按 MGMT_TIMEOUT(10s) 逐个算，
+            # 最坏 30s 干转，而 §3.2 的铁律是"列表端点恒 200、故障走 warnings" ——
+            # 拿不到就该早点如实说，不是让用户对着空白页等半分钟。
+            providers = client.providers(timeout=cliproxy_client.LIST_TIMEOUT,
+                                         budget=cliproxy_client.LIST_BUDGET)
         except HubError as e:
             providers = []
-            if getattr(e, "upstream_status", None) is not None:
-                # 跑着但管理 API 非 2xx：§3.2 第四态 —— running=true + [] + cliproxy_error
-                info["error_status"] = e.upstream_status
+            if getattr(e, "upstream_status", None) is not None or e.error == "cliproxy_slow":
+                # 跑着但管理 API 非 2xx / 读不完：§3.2 第四态 ——
+                # running=true + [] + cliproxy_error。healthz 刚回过话，它确实在跑，
+                # 报 cliproxy_down 会把用户支去查进程（查了也没问题）。
+                if getattr(e, "upstream_status", None) is not None:
+                    info["error_status"] = e.upstream_status
                 warnings.append("cliproxy_error")
             else:
                 info["running"] = False

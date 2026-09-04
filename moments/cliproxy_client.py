@@ -38,6 +38,12 @@ HEALTH_TIMEOUT = 3.0        # §0.4：3 秒内拿不到 HTTP 响应 = 没跑
 MGMT_TIMEOUT = 10.0
 MESSAGES_TIMEOUT = 30.0     # §3.7
 
+# 抽查 14：列表端点要聚合三个块的 GET，逐个都按 MGMT_TIMEOUT(10s) 算最坏 30s ——
+# 页面在那儿干转，而 §3.2 的铁律是"列表端点恒 200、故障走 warnings"。
+# 单次 3s（与 healthz 同档）+ 整体 6s 封顶，超了就当"跑着但读不完"，如实回 warnings。
+LIST_TIMEOUT = 3.0
+LIST_BUDGET = 6.0
+
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -269,12 +275,12 @@ class CliproxyClient:
             raise _down(timed_out=isinstance(reason, (TimeoutError, socket.timeout)))
 
     # ---------- 管理 API ----------
-    def _mgmt(self, method, path, data=None):
+    def _mgmt(self, method, path, data=None, timeout=MGMT_TIMEOUT):
         """管理 API 的统一出口：非 2xx → 502 cliproxy_reject，正文只解析、绝不外带。"""
         if not path.startswith(MGMT_PREFIX):
             path = MGMT_PREFIX + path.lstrip("/")
         status, body = self._request(method, path, data,
-                                     {"X-Management-Key": self._mgmt_key}, MGMT_TIMEOUT)
+                                     {"X-Management-Key": self._mgmt_key}, timeout)
         if method != "GET":
             # 安审 S3：写请求会让 cliproxy 按自己的 umask 重写 config.yaml（通常 0644）。
             # 收在这一个出口，是因为所有会改配置的调用都从这里过 —— 逐个端点补必漏一个。
@@ -290,8 +296,8 @@ class CliproxyClient:
             # 2xx 却不是 JSON：回话了但不是我们能懂的 → 归"拒绝我们"，正文不带出去
             raise _reject(status, "management API 返回 %d 但正文不是 JSON")
 
-    def mgmt_get(self, path):
-        return self._mgmt("GET", path)
+    def mgmt_get(self, path, timeout=MGMT_TIMEOUT):
+        return self._mgmt("GET", path, timeout=timeout)
 
     def mgmt_put(self, path, data):
         return self._mgmt("PUT", path, data)
@@ -318,20 +324,27 @@ class CliproxyClient:
             return None
 
     # ---------- provider 条目（§3.0 KIND_SPEC 派生，块名只在那一张表里）----------
-    def entries(self, kinds=None):
+    def entries(self, kinds=None, timeout=MGMT_TIMEOUT, budget=None):
         """把三个承载块读成一串 :class:`Entry`。非 dict 的条目跳过但**不影响下标**
         （手写 config.yaml 里混进标量时，按下标写还得打得准）。
+
+        ``budget`` 给聚合读用（抽查 14）：三个块的 GET 加起来超过这个秒数就不再往下读，
+        抛 ``cliproxy_slow``。**只给展示路径用** —— 写路径宁可等，也不能读一半就去改。
         """
         out = []
+        deadline = None if budget is None else time.monotonic() + budget
         for kind in (kinds or tuple(KIND_SPEC)):
-            for i, raw in enumerate(self._block(kind)):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise CliproxyError(504, "cliproxy_slow",
+                                    "cliproxy 在 %g 秒内没读完配置" % budget, timed_out=True)
+            for i, raw in enumerate(self._block(kind, timeout=timeout)):
                 if isinstance(raw, dict):
                     out.append(Entry(kind, i, raw, to_view(kind, raw)))
         return out
 
-    def providers(self):
+    def providers(self, timeout=MGMT_TIMEOUT, budget=None):
         """§3.2 的 ``providers[]``：只含安全字段，无明文 key。"""
-        return [e.view for e in self.entries()]
+        return [e.view for e in self.entries(timeout=timeout, budget=budget)]
 
     def find(self, provider_id, entries=None):
         """按派生 id 找条目，找不到回 None（404 由路由层判）。"""
@@ -340,7 +353,7 @@ class CliproxyClient:
                 return e
         return None
 
-    def _block(self, kind, for_write=False):
+    def _block(self, kind, for_write=False, timeout=MGMT_TIMEOUT):
         """读一个承载块的条目数组（真机是包装对象，桩是裸数组，见 :func:`unwrap_list`）。
 
         ``for_write=True`` 时**形状认不出即拒绝**（BUG-26）：这条读是整块 PUT 的基础，
@@ -348,7 +361,7 @@ class CliproxyClient:
         上游明文 key 静默抹光"。展示路径相反 —— 恒 200 要紧，认不出就当空。
         """
         name = KIND_SPEC[kind]["block"]
-        items = _unwrap(self.mgmt_get(name), name)
+        items = _unwrap(self.mgmt_get(name, timeout=timeout), name)
         if items is None:
             if for_write:
                 raise _reject(200, "management API 返回 %d，但 " + name
