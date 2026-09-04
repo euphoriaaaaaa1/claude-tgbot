@@ -125,3 +125,7 @@
   ②启动闸在 install() 内 503 化、exit 仍归 __main__。**按用户指示停在卡点 4 之前，不发布**；
   发布时人工清单 5 条见 ACCEPT-REPORT。
 | BUG-21~28 | 双审八缺陷 | 已修复 | 双审 / dev-int | bc7e30c..1fc4d34 |
+
+## provider-hub 二期（参数页+加bot）
+- 卡点1已确认 @2026-09-04：PLAN-hub2 428行/INTERFACE-hub2 559行；盲审5致命全闭环
+  （版本乐观锁/yaml.compose 行级替换保真/端口legacy兜底+最小空闲/C段探活判成/token唯一落点.env 0600）。
