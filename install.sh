@@ -39,7 +39,20 @@ command -v tmux >/dev/null || {
 
 # ── ② 装依赖 ──────────────────────────────────────────────
 say "② 安装 Python + JS 依赖"
-python3 -m pip install -q -r requirements.txt
+# PEP 668：Homebrew / Debian 等发行版的 python3 带 EXTERNALLY-MANAGED 标记，禁止往系统
+# site-packages 装包，`pip install` 直接报 externally-managed-environment（另一台 Mac 实测）。
+# 本项目十几处入口（launchd plist、restart-bots.sh、moments web、hub 脚本）都直接调 `python3`、
+# 不走 venv，所以装到**用户 site**（~/Library/Python/3.x 或 ~/.local）：同一个 python3 照样
+# import 得到，也不碰发行版自己的目录。判据用标记文件本身，不靠捕获报错文案（各版本文案不同）。
+pip_flags="-q"
+if python3 -c 'import os,sys,sysconfig; sys.exit(0 if os.path.exists(os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")) else 1)'; then
+  pip_flags="$pip_flags --user --break-system-packages --no-warn-script-location"
+fi
+python3 -m pip --version >/dev/null 2>&1 || python3 -m ensurepip --user >/dev/null 2>&1 || true
+python3 -m pip install $pip_flags -r requirements.txt
+# 装完立刻验 import：装进了另一个解释器的 site（pyenv/conda 混装机器）会在这里露馅，而不是 bot 起不来时。
+python3 -c 'import yaml, feedparser, requests, flask' 2>/dev/null || {
+  todo "依赖装了但当前 python3 import 不到（多半是 PATH 上的 python3 与 pip 用的不是同一个解释器）→ 看 which -a python3，把要用的那个排到前面再跑一次"; exit 1; }
 ( cd dispatcher && bun install --silent )
 ok "依赖装好"
 

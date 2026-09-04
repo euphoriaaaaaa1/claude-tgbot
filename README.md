@@ -160,7 +160,7 @@ git clone https://github.com/euphoriaaaaaa1/claude-tgbot.git ~/claudebotlife
 cd ~/claudebotlife
 
 # ② 装 Python 依赖 + 装 dispatcher 的 JS 依赖
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt   # Homebrew/Debian 的 Python 报 externally-managed-environment 时加 --user --break-system-packages（install.sh 会自动判断）
 cd dispatcher && bun install && cd ..     # 进 dispatcher 装依赖，再退回上级目录
 
 # ③ 全局配置：填你的 DeepSeek key
@@ -211,7 +211,7 @@ git clone https://github.com/euphoriaaaaaa1/claude-tgbot.git $env:USERPROFILE\cl
 cd $env:USERPROFILE\claudebotlife
 
 # ② 装 Python 依赖 + dispatcher 的 JS 依赖
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt   # Homebrew/Debian 的 Python 报 externally-managed-environment 时加 --user --break-system-packages（install.sh 会自动判断）
 cd dispatcher; bun install; cd ..        # 进 dispatcher 装依赖，再退回上级目录
 
 # ③ 全局配置：填 DeepSeek key
