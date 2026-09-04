@@ -956,3 +956,44 @@ def test_版本印记文件名与安装脚本一致():
     """脚本换个名字而这边没跟上，就会永远读不到、永远报仓库那份。"""
     sh = (_ROOT / "scripts" / "install_cliproxy.sh").read_text(encoding="utf-8")
     assert 'STAMP="$CLIPROXY_DIR/%s"' % cliproxy_client.VERSION_STAMP_NAME in sh
+
+
+# ---------------- 安审 2：201/200 响应也必须过投影层 ----------------
+
+USERINFO_URL = "https://alice:s3cret@api.example.com/v1"
+
+
+def test_201响应里的base_url_userinfo已打码(c, stub):
+    """入参校验拦不住它 —— _check_base_url 取的是 hostname（已剥掉 userinfo），
+    所以带账号密码的 base_url 会被判成公网地址原样收下。投影是唯一的打码点。"""
+    code, body = create(c, base_url=USERINFO_URL)
+    assert code == 201, body
+    assert body["base_url"] == "https://****@api.example.com/v1"
+    assert "s3cret" not in json.dumps(body, ensure_ascii=False)
+    assert "api_key" not in body and body["key_masked"] == "****cccc"
+
+
+def test_PATCH响应同样打码(c, stub):
+    code, created = create(c)
+    assert code == 201, created
+    r = c.patch("/hub/api/provider/%s" % created["id"], json={"base_url": USERINFO_URL})
+    assert r.status_code == 200, r.get_json()
+    assert "s3cret" not in json.dumps(r.get_json(), ensure_ascii=False)
+
+
+def test_写响应与列表响应逐字段一致(c, stub):
+    """两条路各走各的投影就迟早分叉 —— 同一条 provider 在两个页面显示不一样。"""
+    code, created = create(c, base_url=USERINFO_URL)
+    assert code == 201, created
+    listed = [p for p in c.get("/hub/api/provider").get_json()["providers"]
+              if p["id"] == created["id"]]
+    assert len(listed) == 1
+    assert {k: v for k, v in listed[0].items() if k != "active"} == \
+           {k: v for k, v in created.items() if k != "active"}
+
+
+def test_明文key仍然原样写进cliproxy(c, stub):
+    """打码只作用在出站响应上，落盘那份必须还是明文，否则上游认证直接坏掉。"""
+    assert create(c, base_url=USERINFO_URL)[0] == 201
+    assert stub.openai_compat[0]["api-key-entries"][0]["api-key"] == "sk-test-aaaabbbbcccc"
+    assert stub.openai_compat[0]["base-url"] == USERINFO_URL

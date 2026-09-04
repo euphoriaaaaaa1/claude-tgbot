@@ -33,8 +33,10 @@ SECRET_RE = re.compile(
 # 字段名像凭据就掩掉（大小写不敏感，含连字符/下划线变体）
 _SECRET_FIELD_RE = re.compile(r"key|token|secret|password|credential|auth", re.I)
 
-# URL 里的 userinfo（https://user:pass@host/…）也是凭据。M4 的入参校验已经拒了带 @ 的
-# base-url，这里再打一层：投影是出站前的最后一道，纵深防御不差这一行。
+# URL 里的 userinfo（https://user:pass@host/…）也是凭据，而且**入参校验拦不住它**：
+# _check_base_url 取的是 parts.hostname（已剥掉 userinfo），所以
+# https://user:pass@api.example.com/ 会被判成公网地址原样收下、原样存进 cliproxy。
+# 这一层是它唯一的打码点，所以出站必须过投影（安审 2）。
 _URL_USERINFO_RE = re.compile(r"(//)[^/@\s]+@")
 
 # §0.2 安全字段白名单。顶层为 provider 配置块的字段，MODEL_SAFE_FIELDS 为 models[] 元素的字段。

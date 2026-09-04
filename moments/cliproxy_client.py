@@ -163,9 +163,14 @@ def from_env(env=None):
 Entry = namedtuple("Entry", "kind index raw view")
 
 
-def _to_view(kind, raw):
+def to_view(kind, raw):
     """entry → §3.1 provider 对象。**§0.2 第一层就在这一行**：先白名单投影，
     明文 key 在进 ``from_block_entry`` 之前就被丢掉；``key_masked`` 单独掩出来。
+
+    **凡是要进响应体的 entry 都得从这里出去**（安审 2）：白名单之外的字段丢掉、
+    base-url 里的 userinfo（``https://user:pass@host/``）打码。
+    路由层自己调 ``from_block_entry(raw)`` 就绕过了这两件事 —— 是公开函数不是私有的，
+    就为了让 201/200 那两条路也能走同一个出口。
     """
     view = provider_model.from_block_entry(kind, redact.project(raw))
     view["key_masked"] = provider_model.mask_key(provider_model.entry_api_key(kind, raw))
@@ -321,7 +326,7 @@ class CliproxyClient:
         for kind in (kinds or tuple(KIND_SPEC)):
             for i, raw in enumerate(self._block(kind)):
                 if isinstance(raw, dict):
-                    out.append(Entry(kind, i, raw, _to_view(kind, raw)))
+                    out.append(Entry(kind, i, raw, to_view(kind, raw)))
         return out
 
     def providers(self):
@@ -417,7 +422,7 @@ class CliproxyClient:
         # 补偿路径也是写：形状认不出时下标毫无意义，按它写等于往随机位置覆盖
         items = self._block(kind, for_write=True)
         if 0 <= index < len(items) and isinstance(items[index], dict):
-            return Entry(kind, index, items[index], _to_view(kind, items[index]))
+            return Entry(kind, index, items[index], to_view(kind, items[index]))
         return None
 
     def _write_prefix(self, entry, value):
