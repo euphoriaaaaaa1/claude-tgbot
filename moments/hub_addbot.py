@@ -368,7 +368,10 @@ def _check_token_free(bot_id, telegram_id):
 def _create_file(path, text, mode=0o600):
     """`O_CREAT|O_EXCL|O_WRONLY` 一次建成：没有"先建再 chmod"的 0644 窗口，
     也顺带挡住同名并发创建（R4）。"""
-    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, mode)
+    # O_BINARY（只有 Windows 有）：不加的话 CRT 走文本模式，下面按 "wb" 写的 \n 会被悄悄
+    # 换成 \r\n —— yml/.env 的内容就不再逐字节等于我们生成的那份。
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                 | getattr(os, "O_BINARY", 0), mode)
     with os.fdopen(fd, "wb") as f:
         f.write(text.encode("utf-8"))
 

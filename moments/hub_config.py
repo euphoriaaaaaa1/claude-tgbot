@@ -376,7 +376,10 @@ def make_backup(kind, content):
     for bid in [base] + ["%s-%02d" % (base, i) for i in range(1, 100)]:
         target = os.path.join(configs_dir(), prefix + bid)
         try:
-            fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            # O_BINARY（只有 Windows 有）：备份是拿来逐字节还原的，走 CRT 文本模式的话
+            # \n 会被换成 \r\n，恢复出来的 yml 跟备份时的原文不再一致。
+            fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                         | getattr(os, "O_BINARY", 0), 0o600)
         except FileExistsError:
             continue
         except OSError as e:

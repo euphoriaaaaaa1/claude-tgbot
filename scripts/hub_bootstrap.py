@@ -121,7 +121,10 @@ def _mkdir700(p):
 
 def _write600(path, text):
     """一次建成 0600（不是先建再 chmod，避免明文 key 有一瞬间是 644）。"""
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # O_BINARY（只有 Windows 有）：不加的话 CRT 是文本模式，TextIOWrapper 已经把 \n 换成
+    # \r\n，CRT 再换一次 → 文件里是 \r\r\n。
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+                 | getattr(os, "O_BINARY", 0), 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
     if os.name != "nt":

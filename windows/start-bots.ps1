@@ -10,6 +10,9 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 $Py = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $Py) { $Py = (Get-Command python3).Source }
+# PowerShell 按 [Console]::OutputEncoding 解码子进程 stdout；中文 Windows 上默认 cp936，
+# 注册表里的 emoji display_name 会被解成乱码 → ConvertFrom-Json 直接失败。
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 # 先判 $LASTEXITCODE 再 ConvertFrom-Json：注册表读不出来必须整体失败，
 # 而不是把空名单当"本来就没有 bot"，让所有 bot 悄悄起不来。
 Push-Location $RepoDir

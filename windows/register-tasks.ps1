@@ -5,6 +5,12 @@ $RepoDir = Split-Path -Parent $PSScriptRoot
 $Py      = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $Py) { $Py = (Get-Command python3).Source }
 $User    = "$env:USERDOMAIN\$env:USERNAME"
+# 频道目录口径与 start-bots.ps1 / restart-bots.example.sh 一致：HUB_CHANNELS_DIR 优先。
+# 写死 USERPROFILE 的话，改过这个变量的机器上会去读一个空目录 → self-initiate 全被跳过。
+$Channels = if ($env:HUB_CHANNELS_DIR) { $env:HUB_CHANNELS_DIR } else { Join-Path $env:USERPROFILE ".claude\channels" }
+# PowerShell 按 [Console]::OutputEncoding 解码子进程 stdout；中文 Windows 上默认 cp936，
+# 注册表里的 emoji display_name 会被解成乱码 → ConvertFrom-Json 直接失败。
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 # 让定时任务里的 Python 用 UTF-8 读写/输出（防 GBK 控制台 UnicodeEncodeError）
 # 注意：参数名不能叫 $Args（PowerShell 保留自动变量，PS7 直接报错、5.1 被遮蔽为空）。
 function PyAction($PyArgs) {
@@ -44,7 +50,7 @@ if ($RegistryCode -ne 0 -or -not $RegistryJson) {
     $Registry = @($RegistryJson | ConvertFrom-Json)
 }
 foreach ($b in $Registry) {
-    $AccessJson   = Join-Path $env:USERPROFILE ".claude\channels\$($b.id)\access.json"
+    $AccessJson   = Join-Path $Channels "$($b.id)\access.json"
     $SelfInitChat = $null
     if (Test-Path $AccessJson) {
         try {
