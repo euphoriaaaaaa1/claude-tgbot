@@ -16,13 +16,8 @@ from moments.hub_routes import hub_bp
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "moments" / "templates"
 
-# 后三段的全部空壳端点（method, path）。M3/M5/M7 每填一个就把它从这里挪进各自的用例。
-# 第 2 段（provider CRUD / activate / claude-native / 自测）已由 M3 填完，
-# 用例挪到 tests/unit/test_hub_routes_provider.py，故不在此清单里。
-SHELL_ENDPOINTS = [
-    # 三段（provider/OAuth/bots）均已实现，空壳清单归空；各段契约见
-    # test_hub_routes_provider.py / test_hub_oauth.py / test_bots_client.py
-]
+# 四段均已实现，空壳清单与 501 用例已删（抽查 9）。各段契约见
+# test_hub_routes_provider.py / test_hub_oauth.py / test_bots_client.py。
 
 
 @pytest.fixture
@@ -39,12 +34,10 @@ def page(client, path):
     return r.get_data(as_text=True)
 
 
-@pytest.mark.parametrize("method,path", SHELL_ENDPOINTS)
-def test_空壳端点回501合规JSON(client, method, path):
-    r = client.open(path, method=method)
-    assert r.status_code == 501, "%s %s 实得 %s" % (method, path, r.status_code)
-    assert r.headers["Content-Type"].startswith("application/json")
-    assert r.get_json() == {"error": "not_implemented"}
+def test_没有端点还停在501施工态(client):
+    """501 不在 §7 错误码总表里 —— 它只该在"这段还没人填"时出现，四段都填完了就不该有。"""
+    from moments import hub_routes
+    assert "not_implemented" not in Path(hub_routes.__file__).read_text(encoding="utf-8")
 
 
 def test_四段都在_每段至少一个端点(client):

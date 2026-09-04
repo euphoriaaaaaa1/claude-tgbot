@@ -8,9 +8,7 @@
   第 3 段  OAuth 账户      M5 填（§4）
   第 4 段  bots 状态与重启 M7 填（§6）
 
-未填的端点一律回 ``501 {"error":"not_implemented"}``：形状合规（§0.1），
-但 **501 不在 §7 错误码总表里** —— 它是「这段还没人填」的施工态，
-某段填完时该段的 ``_todo()`` 必须一个不剩。
+四段均已填完，占位用的 ``_todo()`` / 501 施工态已随之删除（501 本就不在 §7 总表里）。
 
 鉴权由 ``moments/hub_auth.py`` 的 before_request 统管（``/hub`` 及其子路径全锁），
 本模块不写任何鉴权判断。``/hub/healthz`` 已在 ``hub_auth.install()`` 注册，**不要在这里重复注册**。
@@ -26,11 +24,6 @@ hub_bp = Blueprint("hub", __name__)
 OAUTH_CALLBACK_PORTS = {"codex": 1455, "antigravity": 51121}
 OAUTH_PROVIDER_LABELS = {"codex": "ChatGPT", "antigravity": "Google（Antigravity）"}
 OAUTH_WAIT_SECONDS = 300        # §4.4 服务端授权等待窗口，页面按它显示倒计时
-
-
-def _todo():
-    """空壳占位：合规 JSON 形状 + 501。填完该端点即删本次调用。"""
-    return jsonify({"error": "not_implemented"}), 501
 
 
 def _require_json_object(body):
