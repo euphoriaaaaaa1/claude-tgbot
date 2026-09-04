@@ -76,6 +76,30 @@ _env_file_path = env_file.hub_env_path
 _parse_env_file = env_file.parse
 
 
+def config_path(env=None):
+    """cliproxy 的 config.yaml。口径与 ``hub_bootstrap.cliproxy_dir()`` 逐字一致 ——
+    不一致就是"收紧了另一个文件的权限"，等于没收紧。"""
+    return os.path.join(env_file.tgbot_home(env), "cliproxy", "config.yaml")
+
+
+def harden_config_perms(env=None):
+    """安审 S3：把 config.yaml 收回 0600，**尽力而为，失败一声不吭**。
+
+    provider 的上游 key 不是我们写的 —— 是 cliproxy（Go 进程）自己重写 config.yaml，
+    落盘权限由它的 umask 定（通常 0644）。安装期 hub_bootstrap 设的 600
+    在门户写过一次之后就不成立了，而 BRIEF 声明的是 600。
+    目录 700 兜着"同机其它用户读不到"，真正的风险是备份/同步/打包
+    （Time Machine、rsync -p、iCloud、把目录拷给别人排障）会把 644 带走。
+
+    失败不抛：权限收紧失败不该把一次已经成功的写变成报错，用户会以为 key 没存上。
+    Windows 上 chmod 基本是空操作，同 hub_bootstrap 的口径（README 已注明该差异）。
+    """
+    try:
+        os.chmod(config_path(env), 0o600)
+    except OSError:
+        pass                                # 文件不在 / 不是我们的 / 只读介质 —— 都不值得打断
+
+
 def _port(raw):
     """端口解析不出整数或越界 → None（= 没配）。带着 0 端口去连只会得到更难懂的 down。"""
     try:
@@ -231,6 +255,11 @@ class CliproxyClient:
             path = MGMT_PREFIX + path.lstrip("/")
         status, body = self._request(method, path, data,
                                      {"X-Management-Key": self._mgmt_key}, MGMT_TIMEOUT)
+        if method != "GET":
+            # 安审 S3：写请求会让 cliproxy 按自己的 umask 重写 config.yaml（通常 0644）。
+            # 收在这一个出口，是因为所有会改配置的调用都从这里过 —— 逐个端点补必漏一个。
+            # 非 2xx 也收：它可能改了一半再报错。
+            harden_config_perms()
         if not (200 <= status < 300):
             raise _reject(status)
         if not body:
