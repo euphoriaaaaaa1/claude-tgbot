@@ -191,3 +191,16 @@ if [ "$autostart_on" = 1 ]; then
   echo "以后开机自动起 bot，不想要就卸掉："
   echo "  launchctl bootout gui/\$UID/$AUTOSTART_LABEL; rm $AUTOSTART_PLIST"
 fi
+
+# ── 收尾：本地交互终端里直接把管理台弹出来（口令：cat ~/.claude-tgbot/hub.env）──
+# SSH / 管道 / CI 里不弹：open 在那些环境要么失败要么开在错误的机器上。
+if [ -t 1 ] && [ -z "${SSH_CONNECTION:-}" ]; then
+  hub_probe="$(curl -s -o /dev/null -w '%{http_code}' -m 3 http://127.0.0.1:8765/login 2>/dev/null || true)"
+  case "$hub_probe" in
+    200|302)
+      if command -v open >/dev/null 2>&1; then open "http://127.0.0.1:8765/hub" || true
+      elif command -v xdg-open >/dev/null 2>&1; then xdg-open "http://127.0.0.1:8765/hub" >/dev/null 2>&1 || true
+      fi
+      echo "已在浏览器打开管理台（登录口令：cat ~/.claude-tgbot/hub.env）" ;;
+  esac
+fi
