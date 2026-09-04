@@ -28,7 +28,7 @@ import urllib.error
 import urllib.request
 from collections import namedtuple
 
-from moments import provider_model, redact
+from moments import env_file, provider_model, redact
 from moments.provider_model import HubError, KIND_SPEC
 
 MGMT_PREFIX = "/v0/management/"
@@ -70,35 +70,10 @@ def _reject(status, why="management API 返回 %d"):
     return CliproxyError(502, "cliproxy_reject", why % status, upstream_status=status)
 
 
-def _env_file_path(env):
-    """§0.3 回落文件：``HUB_ENV_FILE`` 覆盖优先（测试必须用它指向 tmp）。"""
-    override = env.get("HUB_ENV_FILE")
-    if override:
-        return os.path.expanduser(override)
-    home = env.get("CLAUDE_TGBOT_HOME") or "~/.claude-tgbot"
-    return os.path.join(os.path.expanduser(home), "hub.env")
-
-
-def _parse_env_file(path):
-    """``KEY=VALUE`` 逐行解析，忽略 ``#`` 开头与空行（§0.3）。读不出来一律回空 dict。
-
-    与 ``scripts/hub_bootstrap.py:parse_env_file`` 是同格式的读侧孪生，**有意不 import 它**：
-    ``scripts/`` 不是包、且是安装期脚本，运行期的 ``moments/`` 不该反向依赖它。
-    回落失败绝不抛错 —— 页面必须能打开（§2 铁律），读不到就是"没配"。
-    """
-    out = {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-    except (OSError, UnicodeDecodeError):
-        return out
-    for line in text.splitlines():
-        s = line.strip()
-        if not s or s.startswith("#") or "=" not in s:
-            continue
-        k, v = s.split("=", 1)
-        out[k.strip()] = v.strip().strip('"')
-    return out
+#: §0.3 的回落读法搬去 ``moments/env_file.py`` 与 ``hub_auth`` 共用（BUG-21：
+#: 口令那一侧漏了回落 = 出货机器上鉴权门恒关）。这两个别名只为不改既有调用点。
+_env_file_path = env_file.hub_env_path
+_parse_env_file = env_file.parse
 
 
 def _port(raw):

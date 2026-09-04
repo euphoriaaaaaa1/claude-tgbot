@@ -24,6 +24,8 @@ from collections import deque
 
 from flask import jsonify, redirect, render_template, request
 
+from moments import env_file
+
 COOKIE_SESSION = "hub_session"
 COOKIE_ADMIN = "hub_admin"
 SALT_SESSION = "hubv2|"
@@ -37,13 +39,20 @@ WEAK_PASSWORD_LEN = 12
 
 
 def access_password():
-    """全站口令。每次现读 env：进程内不缓存，改 env 重启即生效，测试也好隔离。"""
-    return os.environ.get("HUB_ACCESS_PASSWORD") or ""
+    """全站口令。每次现读，进程内不缓存 —— 改配置重启即生效，测试也好隔离。
+
+    🔴 BUG-21 / 安审 F1：**必须逐键回落 ``hub.env``**，与 cliproxy 三键同一口径。
+    口令由 ``hub_bootstrap`` 生成后只写进 ``~/.claude-tgbot/hub.env``，而三条自启路径
+    （launchd plist / systemd unit / Windows 计划任务）**没有一条 source 它**。
+    只读 ``os.environ`` 的话，按文档装完的机器上这里恒为空 → ``gate_open()`` 恒 False
+    → 整站零鉴权，而功能测试全绿。
+    """
+    return env_file.get("HUB_ACCESS_PASSWORD")
 
 
 def admin_password():
-    """管理口令，可选。未设 → /hub* 退化为单口令（§1.0 规则 1）。"""
-    return os.environ.get("HUB_ADMIN_PASSWORD") or ""
+    """管理口令，可选。未设 → /hub* 退化为单口令（§1.0 规则 1）。回落同上。"""
+    return env_file.get("HUB_ADMIN_PASSWORD")
 
 
 def gate_open() -> bool:
@@ -159,6 +168,12 @@ def check_startup(host: str, out=None, err=None):
                   "print(secrets.token_urlsafe(24))\"` 生成的随机串" % WEAK_PASSWORD_LEN, file=out)
         return None
     if is_loopback(host):
+        # 绑回环仍然放行：本机自用不该被逼着设口令。但 BRIEF 的暴露方式是 cloudflare
+        # tunnel（守护进程从本机连 127.0.0.1:8765），这道闸永远不触发 —— 所以这里必须
+        # 出声，否则"隧道一挂就全网可写 key / 改 settings / 重启 bot"没有任何可发现路径。
+        print("WARN: 未设 HUB_ACCESS_PASSWORD —— 管理台当前无鉴权。仅本机访问没问题；"
+              "**挂 cloudflare tunnel 之类的公网隧道前必须先设口令**"
+              "（写进 ~/.claude-tgbot/hub.env，见 README「管理台鉴权」）。", file=err)
         return None
     print("REFUSE: MOMENTS_WEB_HOST=%s 不是回环地址，且未设 HUB_ACCESS_PASSWORD —— "
           "拒绝把无口令的门户 bind 到非本机地址。要么改回 127.0.0.1，"
