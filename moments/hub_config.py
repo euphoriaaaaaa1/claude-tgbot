@@ -230,9 +230,17 @@ def find(node, parts):
 
 
 def splice(text, spans):
-    """spans = [(起, 止, 新片段)]，**从后往前**替换，前面的下标才不会被挪动。"""
+    """spans = [(起, 止, 新片段)]，**从后往前**替换，前面的下标才不会被挪动。
+
+    按 (起, 止) 去重，首见保留：YAML 别名（*alias）让 compose 对同一节点对象
+    产出多条记录，重复区间叠加替换会错位吃掉后续字节（新片段长度≠原区间长度）。
+    去重放在这里而不是各调用方——mask_secrets 与 resolve_placeholders 都从
+    scalars() 拿 span，将来任何新调用方也自动安全。"""
+    uniq = {}
+    for start, end, piece in spans:
+        uniq.setdefault((start, end), piece)
     out = text
-    for start, end, piece in sorted(spans, key=lambda s: s[0], reverse=True):
+    for (start, end), piece in sorted(uniq.items(), key=lambda s: s[0][0], reverse=True):
         out = out[:start] + piece + out[end:]
     return out
 
