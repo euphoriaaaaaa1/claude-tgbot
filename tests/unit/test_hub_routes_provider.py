@@ -749,3 +749,28 @@ def test_supported_kinds恒是KIND_SPEC的三个键_且挂在cliproxy下(c, stub
         assert body["cliproxy"]["supported_kinds"] == list(provider_model.KIND_SPEC)
         assert len(body["cliproxy"]["supported_kinds"]) == 3
         assert "supported_kinds" not in body, "契约里它只在 cliproxy 下，别再复制一份到顶层"
+
+
+# ---------------- BUG-22：PATCH 换 kind 中途失败不得丢原条目（含明文 key） ----------------
+
+def test_换kind时add失败原条目连同key原样还在(c, stub):
+    """先删后加的话，add 一失败用户的 key 就永久没了 —— cliproxy 的 config.yaml 是
+    那份明文 key 的唯一存放处，我们手上没有第二份可回滚。"""
+    code, created = create(c)
+    assert code == 201, created
+    before = json.loads(json.dumps(stub.openai_compat))     # 深拷贝当基准
+    stub.patch_fail_after_n = 0                             # 从下一次写起一律 500
+    r = c.patch("/hub/api/provider/%s" % created["id"], json={"kind": "anthropic"})
+    assert r.status_code == 502, r.get_json()
+    assert stub.openai_compat == before, "原条目被动过了"
+    assert stub.openai_compat[0]["api-key-entries"][0]["api-key"] == "sk-test-aaaabbbbcccc"
+    assert stub.claude_api_key == [], "失败的那次新增不该留下半条"
+
+
+def test_换kind成功后旧块不留残条(c, stub):
+    code, created = create(c)
+    assert code == 201, created
+    r = c.patch("/hub/api/provider/%s" % created["id"], json={"kind": "anthropic"})
+    assert r.status_code == 200, r.get_json()
+    assert stub.openai_compat == [] and len(stub.claude_api_key) == 1
+    assert stub.claude_api_key[0]["api-key"] == "sk-test-aaaabbbbcccc"
