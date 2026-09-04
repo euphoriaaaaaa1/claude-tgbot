@@ -920,3 +920,39 @@ def test_自愈第一轮就失败时没有可补偿的东西(env, stub, monkeypa
     hub_routes.reconcile()
     assert calls == [], "没写过东西却跑了补偿"
     assert "hub_reconcile skipped reason=cliproxy_reject" in capfd.readouterr()[1]
+
+
+# ---------------- 抽查 11：version 报"真的装上去的那一版" ----------------
+
+def _stamp(tmp_path, monkeypatch, text):
+    monkeypatch.setenv("CLAUDE_TGBOT_HOME", str(tmp_path))
+    f = Path(cliproxy_client.version_stamp_path())
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(text, encoding="utf-8")
+    return f
+
+
+def test_version优先报真装上去的那一版(c, tmp_path, env):
+    """git pull 把仓库钉的版本更到新版、用户却没重跑 install 时，
+    只报仓库那份就是在说谎 —— 用户按页面显示的版本去查 changelog 会查错一版。"""
+    _stamp(tmp_path, env, "v7.9.99\n")
+    assert c.get("/hub/api/provider").get_json()["cliproxy"]["version"] == "v7.9.99"
+
+
+def test_没有版本印记时回落仓库钉的版本(c, tmp_path, env):
+    """还没跑过 install 的机器上没有那个印记，报仓库钉的仍比 None 有用。"""
+    env.setenv("CLAUDE_TGBOT_HOME", str(tmp_path / "空的"))
+    want = (_ROOT / "configs" / "cliproxy.version").read_text(encoding="utf-8").strip()
+    assert c.get("/hub/api/provider").get_json()["cliproxy"]["version"] == want
+
+
+def test_空的版本印记不当成版本号(c, tmp_path, env):
+    _stamp(tmp_path, env, "   \n")
+    want = (_ROOT / "configs" / "cliproxy.version").read_text(encoding="utf-8").strip()
+    assert c.get("/hub/api/provider").get_json()["cliproxy"]["version"] == want
+
+
+def test_版本印记文件名与安装脚本一致():
+    """脚本换个名字而这边没跟上，就会永远读不到、永远报仓库那份。"""
+    sh = (_ROOT / "scripts" / "install_cliproxy.sh").read_text(encoding="utf-8")
+    assert 'STAMP="$CLIPROXY_DIR/%s"' % cliproxy_client.VERSION_STAMP_NAME in sh

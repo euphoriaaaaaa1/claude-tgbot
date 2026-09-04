@@ -76,10 +76,25 @@ _env_file_path = env_file.hub_env_path
 _parse_env_file = env_file.parse
 
 
+def cliproxy_dir(env=None):
+    """cliproxy 的安装目录。口径与 ``hub_bootstrap.cliproxy_dir()`` 逐字一致 ——
+    不一致就是"收紧了另一个文件的权限"「读了另一个目录的版本印记」，等于没做。"""
+    return os.path.join(env_file.tgbot_home(env), "cliproxy")
+
+
 def config_path(env=None):
-    """cliproxy 的 config.yaml。口径与 ``hub_bootstrap.cliproxy_dir()`` 逐字一致 ——
-    不一致就是"收紧了另一个文件的权限"，等于没收紧。"""
-    return os.path.join(env_file.tgbot_home(env), "cliproxy", "config.yaml")
+    """cliproxy 的 config.yaml（上游 key 的明文存放处）。"""
+    return os.path.join(cliproxy_dir(env), "config.yaml")
+
+
+#: ``install_cliproxy.sh`` 装完写下的版本印记（``$CLIPROXY_DIR/.installed-version``）。
+VERSION_STAMP_NAME = ".installed-version"
+
+
+def version_stamp_path(env=None):
+    """**真的装上去的那一版**在哪（抽查 11）。仓库里钉的 configs/cliproxy.version
+    是"我们打算装哪一版"，`git pull` 之后两者会分叉。"""
+    return os.path.join(cliproxy_dir(env), VERSION_STAMP_NAME)
 
 
 def harden_config_perms(env=None):
