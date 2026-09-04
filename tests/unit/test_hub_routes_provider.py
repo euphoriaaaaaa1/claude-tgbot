@@ -1025,3 +1025,42 @@ def test_列表端点带着预算调providers(c, stub, monkeypatch):
     assert c.get("/hub/api/provider").status_code == 200
     assert seen == {"timeout": cliproxy_client.LIST_TIMEOUT,
                     "budget": cliproxy_client.LIST_BUDGET}
+
+
+# ---------------- 抽查 15：手写 disabled: true 的条目切不了，就别回 200 ----------------
+
+def test_activate手写停用的条目回409而不是假装成功(c, stub):
+    """§3.0d 禁止门户写 cliproxy 的 disabled 键（另两块会静默忽略），所以我们改不动它。
+    照常走完会 prefix 全清、settings 也写好、回 200 说切好了 ——
+    而 cliproxy 根本不路由这条，bot 每个请求 502，用户完全看不出问题在哪。"""
+    code, created = create(c)
+    assert code == 201, created
+    before = json.loads(json.dumps(stub.all_blocks))
+    stub.openai_compat[0]["disabled"] = True
+    before[0]["disabled"] = True
+    r = c.post("/hub/api/provider/%s/activate" % created["id"])
+    assert r.status_code == 409, r.get_json()
+    assert "disabled" in r.get_json()["detail"]
+    assert stub.all_blocks == before, "A 阶段就该拦下，cliproxy 一个字节都不该动"
+    assert settings_now() is None, "settings.json 也不该被写"
+
+
+def test_只有布尔真才拦(c, stub):
+    """手写 config.yaml 里 disabled 可能是 "false"/0/None 这种非布尔值 ——
+    `is True` 之外一律照常放行，别把能用的条目锁死。"""
+    code, created = create(c)
+    assert code == 201, created
+    for v in (False, "true", 1, None, 0):
+        stub.openai_compat[0]["disabled"] = v
+        r = c.post("/hub/api/provider/%s/activate" % created["id"])
+        assert r.status_code == 200, "disabled=%r 被误拦：%s" % (v, r.get_json())
+
+
+def test_手写停用不影响删除与列表(c, stub):
+    """看得见、删得掉：拦的只是"切过去"，不是把条目变成不可管理。"""
+    code, created = create(c)
+    assert code == 201, created
+    stub.openai_compat[0]["disabled"] = True
+    listed = c.get("/hub/api/provider").get_json()["providers"]
+    assert [p["id"] for p in listed] == [created["id"]] and listed[0]["disabled"] is True
+    assert c.delete("/hub/api/provider/%s" % created["id"]).status_code == 200
