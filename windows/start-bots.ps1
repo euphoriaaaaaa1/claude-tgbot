@@ -13,6 +13,7 @@ if (-not $Py) { $Py = (Get-Command python3).Source }
 # PowerShell 按 [Console]::OutputEncoding 解码子进程 stdout；中文 Windows 上默认 cp936，
 # 注册表里的 emoji display_name 会被解成乱码 → ConvertFrom-Json 直接失败。
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$env:PYTHONUTF8 = '1'  # bot 子进程与注册表 CLI 的 open/stdio 全部默认 UTF-8，防 cp936 乱码
 # 先判 $LASTEXITCODE 再 ConvertFrom-Json：注册表读不出来必须整体失败，
 # 而不是把空名单当"本来就没有 bot"，让所有 bot 悄悄起不来。
 Push-Location $RepoDir
@@ -35,7 +36,7 @@ foreach ($b in $Registry) {
     }
     # 读 .env 里的 TELEGRAM_BOT_TOKEN
     $token = ""
-    foreach ($line in Get-Content $envFile) {
+    foreach ($line in Get-Content -Encoding UTF8 $envFile) {
         if ($line -match '^\s*TELEGRAM_BOT_TOKEN\s*=\s*(.+)$') { $token = $Matches[1].Trim() }
     }
     if (-not $token) { Write-Warning "跳过 $($b.id)：.env 里没有 TELEGRAM_BOT_TOKEN"; continue }

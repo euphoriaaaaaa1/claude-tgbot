@@ -5,6 +5,7 @@
 # 接缝：HUB_CLIPROXY_LOCAL_PKG=<zip 路径> 用本地包代替下载，校验流程照跑。
 $ErrorActionPreference = "Stop"
 $RepoDir = Split-Path -Parent $PSScriptRoot
+$env:PYTHONUTF8 = '1'  # hub_bootstrap 读写 hub.env 走 UTF-8，防 cp936
 $Py = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $Py) { $Py = (Get-Command python3).Source }
 $BS = Join-Path $RepoDir "scripts\hub_bootstrap.py"
@@ -21,7 +22,7 @@ if ($Asset -notlike "CLIProxyAPI_*_windows_*.zip") { throw "资产名不像 Wind
 if ($Url -notlike "https://github.com/*") { throw "bad_download_host: $Url" }
 $Stamp = Join-Path $Dir ".installed-version"
 
-if ((Test-Path $Bin) -and (Test-Path $Stamp) -and ((Get-Content -Raw $Stamp).Trim() -eq $Ver)) {
+if ((Test-Path $Bin) -and (Test-Path $Stamp) -and ((Get-Content -Raw -Encoding UTF8 $Stamp).Trim() -eq $Ver)) {
     Write-Host "已是 $Ver，跳过下载"
 } else {
     New-Item -ItemType Directory -Force -Path $Dir | Out-Null
