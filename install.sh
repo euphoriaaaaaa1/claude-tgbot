@@ -10,6 +10,21 @@ say()  { printf '\033[1;36m%s\033[0m\n' "$*"; }
 ok()   { printf '  \033[1;32m✅ %s\033[0m\n' "$*"; }
 todo() { printf '  \033[1;33m⚠️  %s\033[0m\n' "$*"; }
 
+# 还差几项要人手补。从 ① 起就可能被置 1，结尾据它决定报不报"全部就绪"。
+left=0
+
+# 渲染好的 plist 装进 ~/Library/LaunchAgents 并加载。
+# 返回 0=已加载 / 1=写好了但没加载上（典型：SSH 里没有图形会话）/ 2=格式校验没过（已丢弃）
+load_agent() {
+  _label="$1"; _tmp="$2"; _dest="$HOME/Library/LaunchAgents/$_label.plist"
+  plutil -lint "$_tmp" >/dev/null 2>&1 || { rm -f "$_tmp"; return 2; }
+  mkdir -p "$HOME/Library/LaunchAgents"
+  mv -f "$_tmp" "$_dest"
+  launchctl bootout "gui/$UID/$_label" >/dev/null 2>&1 || true
+  launchctl bootstrap "gui/$UID" "$_dest" >/dev/null 2>&1 || return 1
+  return 0
+}
+
 # ── ① 前置依赖检查 ─────────────────────────────────────────
 say "① 检查前置依赖"
 missing=0
@@ -18,6 +33,9 @@ command -v bun     >/dev/null || { todo "缺 Bun → 照 bun.sh 官网首页给�
 command -v claude  >/dev/null || { todo "缺 Claude Code CLI → npm install -g @anthropic-ai/claude-code，装完跑一次 claude 登录"; missing=1; }
 [ "$missing" = 1 ] && { echo; echo "先装齐上面缺的，再重新跑 bash install.sh"; exit 1; }
 ok "python3 / bun / claude 都在"
+# tmux 不阻断安装，但 restart-bots.sh 是靠它常驻 dispatcher 的：没有它一个 bot 都起不来
+command -v tmux >/dev/null || {
+  todo "缺 tmux（restart-bots.sh 用它常驻每个 bot 的 dispatcher，没它起不来）→ brew install tmux（Linux：apt install tmux）"; left=1; }
 
 # ── ② 装依赖 ──────────────────────────────────────────────
 say "② 安装 Python + JS 依赖"
@@ -32,11 +50,24 @@ mkdir -p "$HOME/.claude/channels"
 [ -d "$HOME/.claude/channels/chenlulu" ] || cp -r channels/chenlulu "$HOME/.claude/channels/"
 [ -f "$HOME/.claude/channels/chenlulu/.env" ] || cp "$HOME/.claude/channels/chenlulu/.env.example" "$HOME/.claude/channels/chenlulu/.env"
 [ -f restart-bots.sh ] || cp restart-bots.example.sh restart-bots.sh
+# 上面那行不覆盖已存在的文件，所以老机器上可能留着旧版硬编码 BOTS 名单的 restart-bots.sh：
+# 它不读注册表 → 新加的 bot 永远起不来，而重启脚本本身照样"成功"退出。
+grep -q bots_registry restart-bots.sh 2>/dev/null || {
+  todo "restart-bots.sh 是旧版（硬编码 bot 名单，加 bot 不生效）→ cp restart-bots.example.sh restart-bots.sh"; left=1; }
 ok "configs/_global.yml、~/.claude/channels/chenlulu/、restart-bots.sh 就位"
+
+# 管理台凭据 ~/.claude-tgbot/hub.env。**必须独立于 ⑥ 的 cliproxy 安装**：
+# 它以前寄生在 install_cliproxy.sh 里，于是下载失败或 SKIP_CLIPROXY=1 时就没有 hub.env，
+# 而鉴权门读不到口令 = 整站放行 → 管理台 /hub 对能访问到 :8765 的人零鉴权。
+# 幂等：已有的键一个都不会被重写（见 hub_bootstrap.ensure_hub_env）。
+if python3 scripts/hub_bootstrap.py >/dev/null; then
+  ok "管理台口令已就位（~/.claude-tgbot/hub.env，600 权限，不进 git）"
+else
+  todo "hub.env 没生成 → 管理台 /hub 会零鉴权，先别把 :8765 暴露到公网；重试：python3 scripts/hub_bootstrap.py"; left=1
+fi
 
 # ── 手填项体检 ────────────────────────────────────────────
 say "④ 还需要你手填的密钥（脚本没法替你申请）"
-left=0
 if grep -q "YOUR_DEEPSEEK_API_KEY" configs/_global.yml 2>/dev/null; then
   todo "configs/_global.yml → jiwen.delta_llm.api_key 换成你的 DeepSeek key"; left=1
 else ok "_global.yml 的 api_key 已填"; fi
@@ -61,24 +92,33 @@ else
   # launchd 不展开 ~，模板里的 ~/.bun/bin 必须换成真实家目录，否则非 homebrew 装的 bun 找不到
   sed -e "s#{REPO_DIR}#$PWD#g" -e "s#~/.bun/bin#$HOME/.bun/bin#g" \
       plist-templates/autostart.plist.tmpl > "$tmp_plist"
-  if plutil -lint "$tmp_plist" >/dev/null 2>&1; then
-    mkdir -p "$HOME/Library/LaunchAgents"
-    mv -f "$tmp_plist" "$AUTOSTART_PLIST"
-    launchctl bootout "gui/$UID/$AUTOSTART_LABEL" >/dev/null 2>&1 || true
-    if launchctl bootstrap "gui/$UID" "$AUTOSTART_PLIST" >/dev/null 2>&1; then
-      ok "开机自启已注册（${AUTOSTART_LABEL}）"
-      autostart_on=1
-    else
-      todo "plist 已写好但没加载上（常见于 SSH，没有图形会话）。图形登录后手动跑：launchctl bootstrap gui/\$UID $AUTOSTART_PLIST"
-    fi
+  rc=0; load_agent "$AUTOSTART_LABEL" "$tmp_plist" || rc=$?
+  if [ "$rc" = 0 ]; then
+    ok "开机自启已注册（${AUTOSTART_LABEL}）"
+    autostart_on=1
+  elif [ "$rc" = 1 ]; then
+    todo "plist 已写好但没加载上（常见于 SSH，没有图形会话）。图形登录后手动跑：launchctl bootstrap gui/\$UID $AUTOSTART_PLIST"
   else
-    rm -f "$tmp_plist"
     todo "自启 plist 渲染后格式校验没过，已跳过（不影响手动 bash restart-bots.sh）"
   fi
   # 老版 README 手动挂过的自启，标签不同不会被上面覆盖 → 会起两次，提醒删掉
   old_plist="$HOME/Library/LaunchAgents/com.example.claudebotlife-autostart.plist"
   if [ -f "$old_plist" ]; then
     todo "检测到旧版自启，删掉免得开机起两次：launchctl bootout gui/\$UID/com.example.claudebotlife-autostart; rm $old_plist"
+  fi
+
+  # 朋友圈网页 :8765（管理台 /hub 跑在同一个进程里）——也是开机自启，跟着一起挂。
+  # 标签沿用模板里的老值：改名的话，照旧 README 手动挂过的用户会开机起两份。
+  MOMENTS_LABEL="com.example.claudebotlife-moments-web"
+  tmp_plist="$(mktemp "${TMPDIR:-/tmp}/claudebotlife-moments-web.XXXXXX")"
+  sed -e "s#{PROJECT_DIR}#$PWD#g" plist-templates/moments-web.plist.tmpl > "$tmp_plist"
+  rc=0; load_agent "$MOMENTS_LABEL" "$tmp_plist" || rc=$?
+  if [ "$rc" = 0 ]; then
+    ok "朋友圈网页 + 管理台已常驻：http://localhost:8765（管理台在 /hub）"
+  elif [ "$rc" = 1 ]; then
+    todo "moments-web 的 plist 写好了但没加载上（常见于 SSH）。图形登录后跑：launchctl bootstrap gui/\$UID $HOME/Library/LaunchAgents/$MOMENTS_LABEL.plist"
+  else
+    todo "moments-web plist 渲染后格式校验没过，已跳过（不影响手动 python3 -m moments.web）"
   fi
 fi
 
