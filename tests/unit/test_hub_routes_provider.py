@@ -56,11 +56,23 @@ def env(monkeypatch, tmp_path, stub):
     return monkeypatch
 
 
-def make_app():
-    """新建一个 app = 一次"门户启动"（蓝图注册时跑一次启动 reconcile）。"""
+def register_only():
+    """只挂蓝图，**不**跑自愈 —— 等价于 `import moments.web`（bot 进程走的就是这条）。"""
     app = Flask(__name__, template_folder=str(_ROOT / "moments" / "templates"))
     app.register_blueprint(hub_routes.hub_bp)
     app.config["TESTING"] = True
+    return app
+
+
+def make_app():
+    """新建一个 app + 跑一次启动自愈 = 一次"门户启动"。
+
+    BUG-24 后自愈不再挂在蓝图注册上（那会让每个 import moments.web 的 bot 进程
+    也去替门户改 cliproxy），改由 web.py 的 __main__ 在 app.run 前调一次。
+    这里按同样的顺序拼出来，"一次门户启动"的语义不变。
+    """
+    app = register_only()
+    hub_routes.reconcile()
     return app.test_client()
 
 
@@ -818,3 +830,28 @@ def test_改生效中的provider不会自己把自己锁死(c, stub):
     assert r.status_code == 200, r.get_json()
     assert r.get_json()["active"] is True
     assert settings_now()["env"]["ANTHROPIC_MODEL"] == ALIAS
+
+
+# ---------------- BUG-24：自愈不许挂在蓝图注册（= import）上 ----------------
+
+def test_只挂蓝图不跑自愈_import不得改cliproxy(env, stub, capfd):
+    """moments/post.py 也 import moments.web —— 挂在注册上等于每个 bot 进程
+    起来都替门户改一遍 cliproxy 的 prefix，多个 bot 同起还会互相盖。"""
+    stub.seed_openai_block(name="a", alias=ALIAS)
+    stub.seed_openai_block(name="b", base_url="https://gw.example.com/v1",
+                           upstream="glm-4.6", alias=ALIAS)
+    write_settings({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:%d" % stub.port,
+                            "ANTHROPIC_MODEL": ALIAS}})
+    register_only()                                   # = import moments.web
+    assert enabled_for(stub, ALIAS) == 2, "蓝图注册就把 cliproxy 改了"
+    assert "hub_reconcile" not in capfd.readouterr()[1]
+    hub_routes.reconcile()                            # 门户真起来时才收敛
+    assert enabled_for(stub, ALIAS) == 1
+
+
+def test_web入口在app_run前调一次自愈():
+    """光看 hub_routes 看不出这条线还接着 —— 断言 web.py 那一端也在。"""
+    src = (_ROOT / "moments" / "web.py").read_text(encoding="utf-8")
+    main = src[src.index('if __name__ == "__main__":'):]
+    assert "reconcile()" in main, "web.py 的 __main__ 没调 reconcile，自愈没人跑了"
+    assert main.index("reconcile()") < main.index("app.run("), "自愈要在开始服务之前"

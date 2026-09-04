@@ -478,7 +478,7 @@ def claude_native_activate():
     return jsonify({"ok": True, "active_kind": "claude_native"})
 
 
-def _reconcile():
+def reconcile():
     """启动自愈（[RA] F4，全方案唯一收住漂移的东西）。维护的是**两条**不变量：
 
       I1 主 alias（settings 的 ANTHROPIC_MODEL）下恰有一个条目不带 prefix，且是 active 条目
@@ -491,6 +491,12 @@ def _reconcile():
     自愈只写 prefix（§3.0d 禁写 cliproxy 的 disabled 键），只动 cliproxy、**不写 settings**
     —— 用哪个 alias 是用户的意图，以 settings 为准，我们只把运行时对齐到它。
     cliproxy 不可达/没配/settings 坏了一律跳过：启动路径不许把门户拦死（§2 铁律）。
+
+    🔴 BUG-24：**只许由 ``moments/web.py`` 的 ``__main__`` 在 ``app.run()`` 前调一次**，
+    不许再挂 ``hub_bp.record_once``。挂在蓝图注册上时它跑在 ``import moments.web`` 期间，
+    而 ``moments/post.py`` 也 import 那个模块 —— 于是每个 bot 进程一启动就去改 cliproxy
+    的 prefix：非门户进程写门户的状态，多个 bot 同时起还会互相盖，
+    且 import 会被 cliproxy 的网络往返拖住好几秒。
     """
     def log(*fields):
         # alias 来自 settings.json（用户数据），过一遍兜底脱敏再落日志
@@ -527,8 +533,10 @@ def _reconcile():
         log("skipped reason=%s" % type(e).__name__)
 
 
-# 每次 app 注册蓝图（= 每次门户启动）跑一次，比 before_request 早、也不拖慢首个请求。
-hub_bp.record_once(lambda _state: _reconcile())
+# BUG-24：这里原来挂着 `hub_bp.record_once(lambda _state: _reconcile())`。
+# 已挪去 moments/web.py 的 __main__ —— 蓝图注册发生在 import 期，而 bot 侧的
+# moments/post.py 也 import moments.web，等于每个 bot 进程起来都替门户改一遍 cliproxy。
+# 要在别处启动门户（wsgi、别的入口）的话，记得在开始服务前显式调一次 reconcile()。
 
 
 # ======================================================================

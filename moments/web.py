@@ -28,9 +28,10 @@ app.register_blueprint(styles_bp)
 
 # 管理台蓝图挂载点（M1 落地 moments/hub_routes.py 后自动生效）。
 # 用 find_spec 只判"模块在不在"，模块内部真出 ImportError 仍会照常抛出，不被吞掉。
+_hub_routes = None
 if importlib.util.find_spec("moments.hub_routes") is not None:
-    from moments.hub_routes import hub_bp
-    app.register_blueprint(hub_bp)
+    from moments import hub_routes as _hub_routes
+    app.register_blueprint(_hub_routes.hub_bp)
 
 # 鉴权门必须最先挂：它注册的 before_request 要跑在下面的体积闸之前
 hub_auth.install(app)
@@ -744,4 +745,10 @@ if __name__ == "__main__":
         sys.exit(_exit_code)          # 不 bind 端口，不初始化 db
     db.init()
     port = int(os.environ.get("MOMENTS_WEB_PORT", "8765"))
+    if _hub_routes is not None:
+        # BUG-24：管理台的启动自愈只在**真的要开门户**时跑一次。
+        # 原来挂在蓝图注册（= import 期）上，而 moments/post.py 也 import 本模块 ——
+        # 每个 bot 进程起来都会去改 cliproxy 的 prefix，还会被网络往返拖住 import。
+        # 它自己吞掉全部异常，起不来也不会拦住 app.run。
+        _hub_routes.reconcile()
     app.run(host=host, port=port, debug=False)
