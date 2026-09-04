@@ -184,7 +184,10 @@ def check_startup(host: str, out=None, err=None):
 # ---------- 挂门 ----------
 
 def _set_cookie(resp, name: str, value: str):
-    # Secure 只在 https 下设：本机 http://127.0.0.1 下设了浏览器根本不存，用户永远登不上
+    # Secure 只在 https 下设：本机 http://127.0.0.1 下设了浏览器根本不存，用户永远登不上。
+    # 隧道部署（浏览器侧 https、到本进程是明文 http）想拿到 Secure，设
+    # HUB_TRUST_PROXY=1 让 web.py 挂上 ProxyFix —— scheme 就会按 X-Forwarded-Proto 走。
+    # 这里不直接读转发头：那等于**无条件**信任一个任何人都能伪造的请求头。
     resp.set_cookie(name, value, max_age=COOKIE_TTL, httponly=True,
                     samesite="Lax", secure=(request.scheme == "https"), path="/")
 

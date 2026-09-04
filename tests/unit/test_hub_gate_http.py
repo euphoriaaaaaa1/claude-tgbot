@@ -157,3 +157,50 @@ def test_管理面判定的纯函数边界():
         assert A.is_admin_path(p), p
     for p in ("/", "/hubx", "/hub-secret", "/styles", "/api/moments", "/hub/../x", ""):
         assert not A.is_admin_path(p), p
+
+
+# ---------------- 安审 S4：隧道下的 cookie Secure（HUB_TRUST_PROXY，默认关）----------------
+
+def _web_app(monkeypatch, trust_proxy=None):
+    """按给定 env 重载真的 moments.web —— ProxyFix 挂在那边的模块顶层，照抄一份等于没测。"""
+    import importlib
+    monkeypatch.setenv("HUB_ACCESS_PASSWORD", PW)
+    if trust_proxy is None:
+        monkeypatch.delenv("HUB_TRUST_PROXY", raising=False)
+    else:
+        monkeypatch.setenv("HUB_TRUST_PROXY", trust_proxy)
+    mod = sys.modules.get("moments.web")
+    mod = importlib.reload(mod) if mod else importlib.import_module("moments.web")
+    mod.app.config["TESTING"] = True
+    return mod.app.test_client()
+
+
+def _login_cookies(c, **headers):
+    r = c.post("/login", data={"password": PW}, headers=headers)
+    got = [v for k, v in r.headers.items() if k == "Set-Cookie"]
+    assert got, "登录没签出 cookie（状态码 %s）" % r.status_code
+    return got
+
+
+def test_默认不信转发头_伪造的proto拿不到Secure(monkeypatch):
+    """直连 http://127.0.0.1:8765 时任何人都能塞 X-Forwarded-Proto，信了等于白送。"""
+    got = _login_cookies(_web_app(monkeypatch), **{"X-Forwarded-Proto": "https"})
+    assert all("Secure" not in v for v in got), got
+
+
+def test_开了HUB_TRUST_PROXY后按转发头给Secure(monkeypatch):
+    """隧道到本进程是明文 http，不认转发头的话公网 https 门户上 cookie 永远没有 Secure。"""
+    got = _login_cookies(_web_app(monkeypatch, "1"), **{"X-Forwarded-Proto": "https"})
+    assert all("Secure" in v for v in got), got
+    assert all("HttpOnly" in v and "SameSite=Lax" in v for v in got), got
+
+
+def test_开了开关但本机走http时仍不设Secure(monkeypatch):
+    """本机 http 访问下设了 Secure 浏览器根本不存 cookie，用户会永远登不上。"""
+    assert all("Secure" not in v for v in _login_cookies(_web_app(monkeypatch, "1"))), "误伤本机 http"
+
+
+def test_转发头只认proto一项(monkeypatch):
+    """X-Forwarded-For / Host 一并认了只是白送伪造面 —— 我们不按 IP 判权。"""
+    src = (Path(A.__file__).parent / "web.py").read_text(encoding="utf-8")
+    assert "x_for=0" in src and "x_host=0" in src, "ProxyFix 认了 IP/Host 转发头"

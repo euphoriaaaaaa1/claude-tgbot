@@ -33,6 +33,15 @@ if importlib.util.find_spec("moments.hub_routes") is not None:
     from moments import hub_routes as _hub_routes
     app.register_blueprint(_hub_routes.hub_bp)
 
+# 安审 S4：隧道（cloudflare tunnel / frp / nginx）到本进程是明文 http，Flask 默认不信
+# 转发头，于是 request.scheme 恒为 "http" —— 浏览器侧明明是 https，签出去的
+# hub_session / hub_admin 却一律不带 Secure，那道锁的凭据能被降级到明文信道带出去。
+# 默认关：直连 http://127.0.0.1:8765 时信转发头等于让任何人伪造 X-Forwarded-Proto。
+# 只认 x_proto 一跳，不认 X-Forwarded-For/Host（我们不按 IP 判权，认了只是白送伪造面）。
+if os.environ.get("HUB_TRUST_PROXY") == "1":
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_for=0, x_host=0, x_port=0, x_prefix=0)
+
 # 鉴权门必须最先挂：它注册的 before_request 要跑在下面的体积闸之前
 hub_auth.install(app)
 
