@@ -23,9 +23,19 @@ DEFAULT_HAIKU_ALIAS = "claude-3-5-haiku-20241022"
 # `anthropic-direct` 永不启用，route 恒 cliproxy，本模块不写 direct 分支。
 ROUTE = "cliproxy"
 
-# settings.json 里由本台账管的四个键（§3.6 形态表 / §5 四键全删）。
+# settings.json 里由本台账管的四个键（§3.6 形态表）。**也是 §3.2 active 判定的取样面**：
+# 一个都不在 = claude_native。
 ANTHROPIC_ENV_KEYS = ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
                       "ANTHROPIC_MODEL", "ANTHROPIC_API_KEY")
+
+# §5 / §12.9 ㊷（修订 11 · 安审裁定）：切回 Claude 官方订阅时删的是**五个**键 ——
+# 上面四个 + ANTHROPIC_SMALL_FAST_MODEL。BRIEF 的"三键"表述以 INTERFACE 为准。
+# 第 5 键残留会让官方态下的小模型仍指向第三方 alias（污染官方态）；
+# 而 dispatcher 侧 settingsEnv() 的放行前缀是 `^ANTHROPIC_`，会把它重新注入进 worker
+# 环境 —— worker-manager.ts:296-320 buildEnv() 那边的删除兜不住，必须在写盘时就清掉。
+# 判定面（上面那个元组）有意不含它：env 里只剩 ANTHROPIC_SMALL_FAST_MODEL 时，
+# 用户仍是在用官方订阅（只是留了个小模型覆盖），报 claude_native 比报 none 准。
+NATIVE_CLEAR_KEYS = ANTHROPIC_ENV_KEYS + ("ANTHROPIC_SMALL_FAST_MODEL",)
 
 # §3.0 KIND_SPEC —— 唯一真相表：kind → 承载块（= 管理 API 路径段）/ key 落在哪个字段 /
 # 该块有没有 `name` 字段。校验、互转、页面下拉三处全部从这张表派生（[RA] 建议2）。
@@ -387,10 +397,11 @@ def apply_cliproxy_env(settings, port, auth_token, model_alias):
 
 
 def apply_native_env(settings):
-    """§5 形态三（Claude 原生订阅）：四键全删，走 claude CLI 自己的 keychain/DPAPI 凭证。"""
+    """§5 形态三（Claude 原生订阅）：**五键全删**（§12.9 ㊷），
+    走 claude CLI 自己的 keychain/DPAPI 凭证。"""
     data = dict(settings or {})
     env = dict(data.get("env") or {})
-    for k in ANTHROPIC_ENV_KEYS:
+    for k in NATIVE_CLEAR_KEYS:
         env.pop(k, None)
     data["env"] = env
     return data

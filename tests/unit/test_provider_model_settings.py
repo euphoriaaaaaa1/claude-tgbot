@@ -189,3 +189,24 @@ def test_MODEL不是字符串时alias归null(bad):
     """BUG-13：alias 要往响应里回、还要拿去比对 provider，非字符串一律当没写。"""
     s = {"env": {"ANTHROPIC_BASE_URL": "https://other.example.com", "ANTHROPIC_MODEL": bad}}
     assert act(s, [_prov()])[0]["alias"] is None
+
+
+# ---------------- §12.9 ㊷：切回官方订阅删的是五键，不是四键 ----------------
+
+def test_切回官方订阅一并删ANTHROPIC_SMALL_FAST_MODEL():
+    """残留第 5 键会让官方态下的小模型仍指向第三方 alias，污染官方态；
+    而 dispatcher 的 settingsEnv() 放行前缀是 `^ANTHROPIC_`，会把它重新注入 worker ——
+    只靠那边 buildEnv() 的删除兜不住，必须在写盘时就清掉。"""
+    from moments.provider_model import NATIVE_CLEAR_KEYS
+    assert "ANTHROPIC_SMALL_FAST_MODEL" in NATIVE_CLEAR_KEYS and len(NATIVE_CLEAR_KEYS) == 5
+    src = {"env": dict({k: "x" for k in NATIVE_CLEAR_KEYS}, OTHER="留着")}
+    got = apply_native_env(src)
+    assert got["env"] == {"OTHER": "留着"}
+    assert src["env"].get("ANTHROPIC_SMALL_FAST_MODEL") == "x", "入参被改了（纯函数破了）"
+
+
+def test_只剩小模型覆盖时仍判官方态():
+    """判定面有意不含第 5 键：env 里只剩它时用户仍在用官方订阅（只是留了个小模型覆盖），
+    报 claude_native 比报 none 准。"""
+    act, warns = resolve_active({"env": {"ANTHROPIC_SMALL_FAST_MODEL": "haiku"}}, 8317, [])
+    assert (act["kind"], warns) == ("claude_native", [])
