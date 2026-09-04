@@ -27,6 +27,9 @@ def _no_real_settings(monkeypatch, tmp_path):
               "CLIPROXY_ANTHROPIC_COMPAT", "HUB_ALLOW_PRIVATE_BASE_URL"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("HUB_ENV_FILE", str(tmp_path / "hub.env"))       # 有意指向不存在的文件
+    # 安审 S3 起，写路径会去 chmod `<CLAUDE_TGBOT_HOME>/cliproxy/config.yaml`。
+    # 不钉死的话用例会去动机主真实的那份配置。
+    monkeypatch.setenv("CLAUDE_TGBOT_HOME", str(tmp_path / "tgbot-home"))
 
 
 def payload(**over):

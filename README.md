@@ -277,6 +277,7 @@ powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 网页版的「换 provider / 填 key / 切回官方订阅 / 重启 bot」。装过 `install.sh` 才有。
 
 - **口令写在 `~/.claude-tgbot/hub.env`**：`install.sh` 会生成一条随机 `HUB_ACCESS_PASSWORD` 写进去。这个文件是**门户自己去读的配置文件**（600 权限，不进 git），不是给 shell `source` 的——所以你改完它只要重启 moments-web 就生效，不用去动 plist / 计划任务。同一个文件里还放着 cliproxy 的端口和 key。
+- **上游 key 存在哪**：`~/.claude-tgbot/cliproxy/config.yaml`（明文，600）。目录本身是 700 兜底——**把这个目录拷给别人排障、或让备份工具带走之前，先把里面的 key 删掉**。
 - **想再加一道内锁**：文件里加一行 `HUB_ADMIN_PASSWORD=<另一个口令>`，`/hub` 之下就要两把口令都对（家人只给第一把，只能看不能改）。
 - 🔴 **公网暴露前先确认门是开的**：把 `:8765` 挂到 cloudflare tunnel / frp 这类隧道上之前，先无痕窗口开一次 `你的域名/hub` —— 必须跳到登录页。直接进得去就是没读到口令，**这时管理台对全互联网开放**：任何人都能改 key、把 bot 的对话引到自己的端点、一键重启你所有 bot。
 - 启动时若没读到口令，`moments-web` 的日志里会有一条 `WARN: 未设 HUB_ACCESS_PASSWORD`。

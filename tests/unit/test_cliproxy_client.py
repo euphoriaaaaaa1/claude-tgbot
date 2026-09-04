@@ -6,6 +6,7 @@
 真实 ``~/.claude-tgbot/hub.env``（红线）。
 """
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -508,3 +509,50 @@ def test_补偿路径的按下标读也不吃认不出的形状(stub, client, mo
     with pytest.raises(HubError) as ei:
         client.restore_prefixes([{"kind": "openai", "index": 0, "prefix": ""}])
     assert ei.value.error == "cliproxy_reject"
+
+
+# ---------------- 安审 S3：门户写完后把 config.yaml 收回 600 ----------------
+
+def _seed_config(tmp_path, monkeypatch, mode=0o644):
+    monkeypatch.setenv("CLAUDE_TGBOT_HOME", str(tmp_path))
+    cfg = tmp_path / "cliproxy" / "config.yaml"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text("api-keys: []\n", encoding="utf-8")
+    cfg.chmod(mode)
+    return cfg
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows 上 chmod 基本是空操作")
+def test_写路径跑完把config收回600(stub, client, tmp_path, monkeypatch):
+    """key 不是我们写的 —— cliproxy 自己按 umask 重写 config.yaml（通常 644）。
+    安装期设的 600 在门户写过一次之后就不成立了。"""
+    cfg = _seed_config(tmp_path, monkeypatch)
+    client.add_entry("openai", {"base-url": "https://x.example", "models": []})
+    assert oct(cfg.stat().st_mode & 0o777) == "0o600"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows 上 chmod 基本是空操作")
+def test_只读的GET不去动权限(stub, client, tmp_path, monkeypatch):
+    """列表页每次刷新都 chmod 一遍毫无意义，还会盖掉用户自己的选择。"""
+    cfg = _seed_config(tmp_path, monkeypatch)
+    client.providers()
+    assert oct(cfg.stat().st_mode & 0o777) == "0o644"
+
+
+def test_config不存在时收权限不抛错(stub, client, tmp_path, monkeypatch):
+    """还没跑过 install 的机器上没有这个文件 —— 不该因此让一次成功的写变成报错。"""
+    monkeypatch.setenv("CLAUDE_TGBOT_HOME", str(tmp_path / "根本没有"))
+    client.add_entry("openai", {"base-url": "https://x.example", "models": []})
+    assert len(stub.openai_compat) == 1
+
+
+def test_config路径口径与hub_bootstrap一致(tmp_path, monkeypatch):
+    """收紧了另一个文件的权限 = 等于没收紧。两处路径必须逐字一样。"""
+    import importlib.util
+    monkeypatch.setenv("CLAUDE_TGBOT_HOME", str(tmp_path / "家"))
+    root = Path(cc.__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("hb_for_path_check",
+                                                  root / "scripts" / "hub_bootstrap.py")
+    hb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hb)
+    assert str(hb.cliproxy_dir() / "config.yaml") == cc.config_path()
