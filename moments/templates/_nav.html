@@ -23,6 +23,7 @@ h1{font-size:19px;font-weight:600;}
   flex-wrap:wrap;align-items:center;}
 .chip{font-size:13px;padding:4px 11px;border-radius:14px;background:var(--soft-bg);color:var(--ink-soft);}
 .chip.on{background:var(--wxgreen);color:#fff;}
+.chip.warn{background:rgba(250,81,81,.14);color:var(--danger);font-weight:600;}
 .card{background:var(--card);border:1px solid var(--hairline);border-radius:12px;
   padding:16px;margin-bottom:14px;}
 .card h2{font-size:15px;font-weight:600;margin-bottom:8px;}
@@ -55,6 +56,7 @@ th{color:var(--ink-faint);font-weight:500;font-size:12.5px;}
     <a class="chip{% if nav_active == 'bots' %} on{% endif %}" href="/hub/bots">bot 状态</a>
     <a class="chip{% if nav_active == 'params' %} on{% endif %}" href="/hub/params">系统参数</a>
     <a class="chip{% if nav_active == 'addbot' %} on{% endif %}" href="/hub/addbot">添加 bot</a>
+    <a class="chip{% if nav_active == 'setup' %} on{% endif %}" id="nav-setup" href="/hub/setup">密钥</a>
     <a class="chip" href="/">朋友圈</a>
     <a class="chip" href="/styles">画风</a>
   </div>
@@ -73,4 +75,26 @@ async function hubApi(path, opts) {
           todo: r.status === 501 && !!body && body.error === 'not_implemented'};
 }
 function hubSay(el, text) { if (el) el.textContent = text; }
+
+// 密钥没填齐 → 导航里那颗「密钥」变红报数。装完不填这三把 bot 就是个死的，
+// 提示必须跟着人走，不能只躺在 /hub/setup 页面里等人自己想起来点进去。
+// /hub/setup 保存成功后也调这个函数刷新计数，免得同屏两个数字对不上。
+function hubPaintSetupChip(left) {
+  const chip = document.getElementById('nav-setup');
+  if (!chip) return;
+  chip.classList.toggle('warn', left > 0);
+  chip.textContent = left > 0 ? ('⚠️ 密钥待填 ' + left) : '密钥';
+}
+{# /hub/setup 页自己就在拉这份状态，由它来刷这颗计数：两边都拉的话，导航这次迟到的
+   响应会把用户刚保存完的新计数覆盖回旧值（同屏两个数字对不上）。用 Jinja 分流而不是
+   运行时探标志位 —— 本 include 在页面脚本之前执行，那会儿标志位还没来得及设上。 #}
+{% if nav_active != 'setup' %}
+// 只读接口、失败一律静默（导航绝不能因为这一下挂掉整页）。
+(async function () {
+  if (!document.getElementById('nav-setup')) return;
+  const r = await hubApi('/hub/api/setup/status');
+  if (r.status !== 200 || !r.body) return;
+  hubPaintSetupChip(['token', 'userid', 'deepseek'].filter((k) => !r.body[k]).length);
+})();
+{% endif %}
 </script>

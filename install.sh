@@ -86,6 +86,7 @@ say "④ 三把必填密钥（脚本没法替你申请，但会告诉你去哪�
 # 写文件交给 scripts/setup_keys.py 按 YAML/.env/JSON 各自格式写，不用 sed 猜行。
 bash scripts/setup_keys.sh || true
 if [ "$(python3 scripts/setup_keys.py status | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(all(d.values())))')" != 1 ]; then
+  printf '     %s\n' "不想在终端里填？装完开 http://127.0.0.1:8765/hub/setup，同样三项，网页里填一样生效"
   left=1
 fi
 
