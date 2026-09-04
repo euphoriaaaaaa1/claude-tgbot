@@ -250,9 +250,20 @@ def provider_list():
 @hub_bp.post("/hub/api/provider")
 @_api
 def provider_create():
-    """§3.3：校验 → 查重 → 写 cliproxy 一处（台账已删，没有第二个存储要对账）。"""
+    """§3.3：校验 → 查重 → 写 cliproxy 一处（台账已删，没有第二个存储要对账）。
+
+    与 activate 共用同一把锁（BUG-23）：新增走的是"读整块 → append → 整块 PUT"，
+    与并发的 activate/PATCH/DELETE 交错时，后写的那份基于**旧快照**，
+    能把对方刚写下去的整条覆盖掉（含它的上游明文 key）。校验放在锁外没意义，
+    真正要串起来的是读-改-写这一整段。
+    """
     p = _validated(request.get_json(silent=True))
     client = cliproxy_client.from_env()
+    with hold_activate_lock():
+        return _create_locked(client, p)
+
+
+def _create_locked(client, p):
     entries = client.entries()
     pid = provider_model.provider_id(p)
     if any(e.view["id"] == pid for e in entries):
@@ -271,8 +282,18 @@ def provider_create():
 @hub_bp.patch("/hub/api/provider/<pid>")
 @_api
 def provider_update(pid):
-    """§3.4：请求体是 §3.3 的子集，缺的字段取原值；改四元组 → **换 id**，响应里是新 id。"""
+    """§3.4：请求体是 §3.3 的子集，缺的字段取原值；改四元组 → **换 id**，响应里是新 id。
+
+    全段持锁（BUG-23）：``entries()`` 读到的 ``index`` 一旦被并发的写挪动，
+    后面的按下标替换就会打到**别人**那条上，把它整条覆盖掉（含明文 key）。
+    锁必须从读 entries 就开始，不能只护住写那一下。
+    """
     client = cliproxy_client.from_env()
+    with hold_activate_lock():
+        return _update_locked(client, pid)
+
+
+def _update_locked(client, pid):
     entries = client.entries()
     e = client.find(pid, entries)
     if e is None:
@@ -285,6 +306,8 @@ def provider_update(pid):
     if new_id != pid and any(x.view["id"] == new_id for x in entries):
         raise HubError(409, "duplicate_provider", "改成的来源与已有条目重复")
     was_active = _active_id(client.port, views) == pid       # 改之前判，改完再切（§3.4 末条）
+    # 注意：下面走 _activate_locked 而不是 _activate —— 锁已经在本函数外层拿着了，
+    # 再抢一次会撞上自己（threading.Lock 不可重入，非阻塞抢法下就是自己给自己回 409）。
     entry = provider_model.to_block_entry(p, disabled=e.view["disabled"])
     if p["kind"] == e.kind:
         # 按下标写是整条替换：把原条目里我们不管的字段（weight / 用户手改的 disabled /
@@ -302,7 +325,7 @@ def provider_update(pid):
         client.delete_entry(e.kind, e.index)
     view = provider_model.from_block_entry(p["kind"], entry)
     if was_active:
-        _activate(client, new_id)            # 不自动切的话 bot 会打到一个已经不存在的 alias
+        _activate_locked(client, new_id)     # 不自动切的话 bot 会打到一个已经不存在的 alias
         view["active"] = True
     return jsonify(view)
 
@@ -310,8 +333,17 @@ def provider_update(pid):
 @hub_bp.delete("/hub/api/provider/<pid>")
 @_api
 def provider_delete(pid):
-    """§3.5：只动 cliproxy 一处，不碰 settings.json（当前生效的先切走再删）。"""
+    """§3.5：只动 cliproxy 一处，不碰 settings.json（当前生效的先切走再删）。
+
+    全段持锁（BUG-23）：删除是"读整块 → pop(index) → 整块 PUT"，
+    基于旧快照的那份 PUT 会把并发写入的条目一并抹掉。
+    """
     client = cliproxy_client.from_env()
+    with hold_activate_lock():
+        return _delete_locked(client, pid)
+
+
+def _delete_locked(client, pid):
     entries = client.entries()
     e = client.find(pid, entries)
     if e is None:
