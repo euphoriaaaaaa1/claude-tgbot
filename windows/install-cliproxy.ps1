@@ -66,3 +66,11 @@ if ($LASTEXITCODE -ne 0) { throw "hub_bootstrap 失败" }
 Write-Host ""
 Write-Host "cliproxy 就绪。注册开机自启（含守护循环）："
 Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\register-tasks.ps1`""
+# 管理台已在跑的话直接弹给用户（口令在 %USERPROFILE%\.claude-tgbot\hub.env）
+try {
+    $probe = Invoke-WebRequest -Uri "http://127.0.0.1:8765/login" -Method Head -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
+    if ($probe.StatusCode -eq 200) {
+        Start-Process "http://127.0.0.1:8765/hub"
+        Write-Host "已在浏览器打开管理台（登录口令看 %USERPROFILE%\.claude-tgbot\hub.env）"
+    }
+} catch { }
