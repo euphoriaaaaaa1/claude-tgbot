@@ -436,6 +436,17 @@ def _activate_locked(client, pid):
     entry = client.find(pid)                                  # A1
     if entry is None:
         raise HubError(404, "not_found", "provider 不存在")
+    if entry.raw.get("disabled") is True:
+        # 抽查 15：用户在 config.yaml 里手写了 disabled: true。§3.0d 禁止门户写这个键
+        # （它只在 openai-compatibility 有，另两块会静默忽略），所以我们**改不动它** ——
+        # 照常往下走会 prefix 全清、settings 也写好，然后回 200 说切好了，
+        # 而 cliproxy 根本不路由这条，bot 每个请求 502。切不了就当场说切不了。
+        # ponytail: 借用 §7 已有的 409 delete_active（"目标当前状态挡住了这个操作，
+        # 先去改状态"是同一个形状），不新增契约码；detail 说清具体怎么改。
+        # §7 若补 entry_disabled 专码，改这一行即可。
+        raise HubError(409, "delete_active",
+                       "这条来源在 cliproxy 的 config.yaml 里被手写成 disabled: true，"
+                       "门户不改这个键（§3.0d）—— 请先把它改回 false 再切换")
     view = entry.view
     path, data = _settings_now()                              # A2
     if not settings_io.dir_writable(path):                    # A3
