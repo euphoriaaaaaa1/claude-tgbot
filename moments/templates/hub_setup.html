@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>密钥 · 管理台</title>
+</head>
+<body>
+{% include "_nav.html" %}
+<div class="wrap">
+  <h1>密钥</h1>
+  <div class="sub">装完必填的三把。不想开终端就在这儿填，等价于 <span class="mono">bash scripts/setup_keys.sh</span></div>
+
+  <div class="card" id="overview">
+    <h2>状态</h2>
+    <div class="muted" id="overview-msg">读取中…</div>
+    <div class="muted" style="margin-top:6px">
+      页面只显示「填了没」，从不回读已填的值；填过的想换，点「重新填写」覆盖即可。
+      填完 <b>重启 bot 才生效</b>（管理台「bot 状态」页可以重启）。
+    </div>
+  </div>
+
+  <div class="card" data-field="token">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">① Telegram bot token <span class="pill" data-pill>…</span></h2>
+      <button class="btn ghost mini" type="button" data-redo style="display:none">重新填写</button>
+    </div>
+    <div class="muted" style="margin-top:6px">没有它 bot 收发不了消息。</div>
+    <div class="muted">怎么拿：Telegram 里搜 <b>@BotFather</b> → 发 <span class="mono">/newbot</span> → 起个名字、再起个以 bot 结尾的用户名 → 它回你一串形如 <span class="mono">123456789:AAxxxxxxxx</span> 的东西，整串就是 token。</div>
+    <div class="muted">填哪：<span class="mono">~/.claude/channels/&lt;bot&gt;/.env</span> 的 <span class="mono">TELEGRAM_BOT_TOKEN=</span></div>
+    <div data-form>
+      <label>粘贴 bot token</label>
+      <div class="row">
+        <input type="password" data-input style="flex:1" autocomplete="off" spellcheck="false" placeholder="123456789:AA...">
+        <button class="btn mini" type="button" data-save>保存</button>
+      </div>
+    </div>
+    <div class="muted" data-msg style="margin-top:6px"></div>
+  </div>
+
+  <div class="card" data-field="userid">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">② 你的 Telegram user_id <span class="pill" data-pill>…</span></h2>
+      <button class="btn ghost mini" type="button" data-redo style="display:none">重新填写</button>
+    </div>
+    <div class="muted" style="margin-top:6px">白名单空着，bot 收到消息也不理。</div>
+    <div class="muted">怎么拿：Telegram 里搜 <b>@userinfobot</b>，随便发它一句，它回你的 <span class="mono">Id:</span> 一串数字（不是 @用户名）。</div>
+    <div class="muted">填哪：<span class="mono">~/.claude/channels/&lt;bot&gt;/access.json</span> 的 <span class="mono">allowFrom</span> 数组</div>
+    <div data-form>
+      <label>输入你的数字 user_id</label>
+      <div class="row">
+        <input type="password" data-input style="flex:1" inputmode="numeric" autocomplete="off" placeholder="123456789">
+        <button class="btn mini" type="button" data-save>保存</button>
+      </div>
+    </div>
+    <div class="muted" data-msg style="margin-top:6px"></div>
+  </div>
+
+  <div class="card" data-field="deepseek">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">③ DeepSeek API key <span class="pill" data-pill>…</span></h2>
+      <button class="btn ghost mini" type="button" data-redo style="display:none">重新填写</button>
+    </div>
+    <div class="muted" style="margin-top:6px">缺它私聊照样能跑，但情绪分、关系数值、群聊导演、主动消息都不工作。</div>
+    <div class="muted">怎么拿：浏览器开 <b>platform.deepseek.com</b> → 注册/登录 → 左侧 API keys → 创建 → 复制形如 <span class="mono">sk-xxxx</span> 的 key。</div>
+    <div class="muted">填哪：<span class="mono">configs/_global.yml</span> 的 <span class="mono">jiwen.delta_llm.api_key</span></div>
+    <div data-form>
+      <label>粘贴 DeepSeek key</label>
+      <div class="row">
+        <input type="password" data-input style="flex:1" autocomplete="off" spellcheck="false" placeholder="sk-...">
+        <button class="btn mini" type="button" data-save>保存</button>
+      </div>
+    </div>
+    <div class="muted" data-msg style="margin-top:6px"></div>
+  </div>
+</div>
+<script>
+// 结果区一律 textContent 渲染（同 hub_addbot.html §4.1 R2-3）：detail 是服务端可控字符串，
+// 用 innerHTML 就是一条 XSS 路径。整页没有一处 innerHTML。
+// 另一条红线：输入框里的密钥值只往 POST body 里送，绝不写进 URL、绝不回填、绝不打日志。
+const CARDS = Array.from(document.querySelectorAll('[data-field]'));
+const NAMES = {token: 'bot token', userid: 'user_id', deepseek: 'DeepSeek key'};
+const ERRS = {
+  bad_format: '格式不对', bad_field: '字段名不对（页面版本可能过旧）',
+  bad_body: '请求体不对', not_provisioned: '配置还没铺好',
+  write_failed: '写入失败', config_busy: '有别的写入在跑，稍后再试',
+};
+const q = (card, sel) => card.querySelector(sel);
+
+function paint(card, filled) {
+  const pill = q(card, '[data-pill]');
+  pill.textContent = filled ? '✅ 已填' : '⚠️ 待填';
+  pill.className = 'pill ' + (filled ? 'on' : 'off');
+  q(card, '[data-form]').style.display = filled ? 'none' : '';
+  q(card, '[data-redo]').style.display = filled ? '' : 'none';
+}
+
+function paintAll(st) {
+  let left = 0;
+  CARDS.forEach((card) => {
+    const filled = !!st[card.dataset.field];
+    if (!filled) left += 1;
+    paint(card, filled);
+  });
+  hubPaintSetupChip(left);            // 导航那颗计数跟着一起刷，别同屏两个数字对不上
+  const msg = document.getElementById('overview-msg');
+  msg.textContent = left === 0
+    ? '✅ 三把密钥都齐了。改了密钥记得重启 bot。'
+    : ('⚠️ 还有 ' + left + ' 项没填 —— 填齐之前 bot 不能正常工作。');
+}
+
+async function loadStatus() {
+  const r = await hubApi('/hub/api/setup/status');
+  if (r.status !== 200) {
+    document.getElementById('overview-msg').textContent = '读不到状态（HTTP ' + r.status + '）';
+    return;
+  }
+  paintAll(r.body);
+}
+
+async function save(card) {
+  const field = card.dataset.field;
+  const input = q(card, '[data-input]');
+  const btn = q(card, '[data-save]');
+  const msg = q(card, '[data-msg]');
+  const value = input.value.trim();
+  if (!value) { hubSay(msg, '还没填内容'); return; }
+  btn.disabled = true;
+  hubSay(msg, '写入中…');
+  const r = await hubApi('/hub/api/setup/keys',
+    {method: 'POST', body: JSON.stringify({field: field, value: value})});
+  btn.disabled = false;
+  if (r.status === 200 && r.body && r.body.ok) {
+    input.value = '';                       // 立刻清掉，别把密钥留在 DOM 里
+    hubSay(msg, NAMES[field] + ' 已写入。重启 bot 后生效。');
+    paintAll(r.body.filled || {});
+    return;
+  }
+  const e = (r.body && r.body.error) || ('HTTP ' + r.status);
+  const d = (r.body && r.body.detail) || '';
+  hubSay(msg, '没写成：' + (ERRS[e] || e) + (d ? '（' + d + '）' : ''));
+}
+
+CARDS.forEach((card) => {
+  q(card, '[data-save]').addEventListener('click', () => save(card));
+  q(card, '[data-input]').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') save(card); });
+  q(card, '[data-redo]').addEventListener('click', () => {
+    q(card, '[data-form]').style.display = '';
+    q(card, '[data-redo]').style.display = 'none';
+    q(card, '[data-input]').focus();
+  });
+});
+loadStatus();
+</script>
+</body>
+</html>

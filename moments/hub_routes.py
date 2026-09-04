@@ -1239,3 +1239,87 @@ def bots_create():
     with hub_addbot.hold_addbot_lock():
         body, code = hub_addbot.create(request.get_json(silent=True), _jobs())
     return jsonify(body), code
+
+
+# ======================================================================
+# 第 7 段 · 三把密钥的网页初始化向导（/hub/setup）
+#
+# 为什么有这一段：装完之后必填的三把密钥（Telegram bot token / 你的数字 user_id /
+# DeepSeek key）原本只能在终端里 `bash scripts/setup_keys.sh` 填。不想开终端的人
+# 就卡在这一步，bot 装好了也不会动。这段把同一件事搬到管理台网页上。
+#
+# 写盘逻辑**一行都不在这里**：全部复用 `scripts/setup_keys.py`（YAML 行级替换 /
+# dotenv 行替换 / JSON allowFrom 各按格式写，还保留原文件的注释）。格式校验用它的
+# FIELD_RE —— 那是从 `scripts/setup_keys.sh` 的 ask 正则逐字搬过去的，终端向导和
+# 网页向导一个口径。
+#
+# 🔴 本段红线（同 hub_addbot.py 顶部第 1 条）：**响应体、日志、异常文案里一个字节的
+#    密钥值都不许出现**。校验失败只回错误码 + FIELD_FMT 里的形状说明；意外异常只回
+#    `type(e).__name__`。页面也只显示"填了没"，从不回读已填的值。
+#
+# 鉴权不在这里写：`/hub/setup` 与 `/hub/api/setup/*` 都在 `/hub` 前缀下，
+# hub_auth.py 的 before_request 门自动管到（见 hub_auth._is_hub_path）。
+#
+# 段内辅助一律 `_sk` 前缀（段界规矩见第 6 段抬头）。
+# ======================================================================
+
+# scripts/ 是隐式命名空间包，仓库根在 sys.path 上才 import 得到。moments 本身就在
+# 仓库根下，正常启动一定满足；这里仍显式兜一手 —— 这个 import 在 `import moments.web`
+# 顶层执行，抛 ImportError 会把 bot 进程一起打死（同 hub_addbot 的 record_once 教训）。
+_SK_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # noqa: E402
+if _SK_REPO_ROOT not in sys.path:                                             # noqa: E402
+    sys.path.insert(0, _SK_REPO_ROOT)
+
+from scripts import setup_keys                       # noqa: E402  本段自己的依赖
+
+
+def _sk_paths():
+    """三把密钥的落点。单独包一层是为了单测能把它指到 tmp 沙箱——否则用例会去
+    改机主真实的 configs/_global.yml 和 ~/.claude/channels/。"""
+    return setup_keys.key_paths(setup_keys.DEFAULT_BOT)
+
+
+@hub_bp.get("/hub/setup")
+def hub_setup_page():
+    # §2 铁律：恒 200 HTML，"填了没"由前端调 /hub/api/setup/status 取 —— 这里不碰磁盘。
+    return render_template("hub_setup.html", nav_active="setup")
+
+
+@hub_bp.get("/hub/api/setup/status")
+@_api
+def setup_status():
+    """三项各自填了没。**只回布尔，不回值**。"""
+    return jsonify(setup_keys.status(_sk_paths()))
+
+
+@hub_bp.post("/hub/api/setup/keys")
+@_api
+def setup_write_key():
+    """`{"field": "token"|"userid"|"deepseek", "value": "…"}` → 校验 + 写进对应文件。
+
+    成功回 `{"ok": true, "filled": {…新的三项状态}}`；失败只回错误码与形状说明。
+    """
+    body = _require_json_object(request.get_json(silent=True))
+    field = body.get("field")
+    value = body.get("value")
+    if not isinstance(field, str) or field not in setup_keys.FIELD_RE:
+        raise HubError(400, "bad_field", "field 只能是 token / userid / deepseek")
+    if not isinstance(value, str):
+        raise HubError(400, "bad_body", "value 必须是字符串")
+    paths = _sk_paths()
+    try:
+        setup_keys.write_key(field, value, paths)
+    except FileNotFoundError as e:
+        # 只带路径，不带值。装到一半（没跑过 install.sh）时走这里。
+        raise HubError(409, "not_provisioned",
+                       "%s 还不存在，先跑一次 bash install.sh 铺配置" % e)
+    except ValueError as e:
+        code = str(e)
+        if code == "bad_format":
+            raise HubError(400, "bad_format", setup_keys.FIELD_FMT[field])
+        # set_deepseek 找不到 jiwen.delta_llm.api_key 那一行（文件结构被改过）
+        raise HubError(409, "write_failed", code)
+    except OSError as e:
+        # 权限/磁盘等意外：只报类型名，异常消息可能带上不该出站的东西
+        raise HubError(500, "write_failed", type(e).__name__)
+    return jsonify({"ok": True, "filled": setup_keys.status(paths)})

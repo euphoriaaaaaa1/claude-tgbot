@@ -26,15 +26,65 @@ from pathlib import Path
 DEEPSEEK_PLACEHOLDER = "YOUR_DEEPSEEK_API_KEY"
 TOKEN_PLACEHOLDER_RE = re.compile(r"^TELEGRAM_BOT_TOKEN=\s*$|your-telegram-bot-token|YOUR", re.M)
 USERID_PLACEHOLDER = "YOUR_TELEGRAM_USER_ID"
+DEFAULT_BOT = "chenlulu"
+
+#: 三把密钥的格式校验。**与 scripts/setup_keys.sh 里 ask 的正则逐字一致** —— 终端向导
+#: 和 /hub/setup 网页向导必须一个口径。tests/unit/test_hub_setup.py 有一条用例直接从
+#: .sh 源码里抠出这三条正则跟这里比对，两边改岔了就红。
+FIELD_RE = {
+    "token": re.compile(r"^[0-9]{6,}:[A-Za-z0-9_-]{25,}$"),
+    "userid": re.compile(r"^[0-9]{5,}$"),
+    "deepseek": re.compile(r"^sk-[A-Za-z0-9_-]{16,}$"),
+}
+#: 校验失败时回给用户的格式说明（同样抄自 .sh）。**只描述形状，绝不回显用户输入的值。**
+FIELD_FMT = {
+    "token": "形如 123456789:AAxxxxxxxx，冒号前是数字",
+    "userid": "纯数字，通常 8–10 位",
+    "deepseek": "以 sk- 开头的一串字母数字",
+}
 
 
-def _repo(args) -> Path:
-    return Path(args.repo or Path(__file__).resolve().parent.parent)
+def key_paths(bot: str = DEFAULT_BOT, repo=None, home=None) -> dict[str, Path]:
+    """三把密钥各自的落点。CLI 与 moments/hub_routes.py 的 /hub/setup 共用这一份，
+    别在调用方再算一遍——算岔了就是"网页说填好了、bot 读的还是空文件"。"""
+    repo_dir = Path(repo) if repo else Path(__file__).resolve().parent.parent
+    home_dir = Path(home) if home else Path(os.environ.get("HOME") or Path.home())
+    bot_dir = home_dir / ".claude" / "channels" / bot
+    return {"deepseek": repo_dir / "configs" / "_global.yml",
+            "token": bot_dir / ".env",
+            "userid": bot_dir / "access.json"}
 
 
-def _bot_dir(args) -> Path:
-    home = Path(args.home or os.environ.get("HOME") or Path.home())
-    return home / ".claude" / "channels" / args.bot
+def status(paths: dict[str, Path]) -> dict[str, bool]:
+    """三项各自填了没（true = 已填）。CLI 的 status 子命令与网页 API 同一个来源。"""
+    return {"deepseek": deepseek_filled(paths["deepseek"]),
+            "token": token_filled(paths["token"]),
+            "userid": userid_filled(paths["userid"])}
+
+
+def write_key(field: str, value: str, paths: dict[str, Path]) -> None:
+    """校验格式 → 写进对应文件。给 /hub/setup 用（CLI 的格式校验在 .sh 侧，路径不变）。
+
+    🔴 抛出的异常消息里**绝不能出现 value**：它会被翻成 HTTP 响应体和日志。
+    只抛错误码，人读文案由调用方从 FIELD_FMT 取。
+    """
+    if field not in FIELD_RE:
+        raise ValueError("bad_field")
+    v = (value or "").strip()
+    if not FIELD_RE[field].match(v):
+        raise ValueError("bad_format")
+    if field == "deepseek":
+        if not paths["deepseek"].exists():
+            raise FileNotFoundError(paths["deepseek"])
+        set_deepseek(paths["deepseek"], v)
+    elif field == "token":
+        if not paths["token"].parent.exists():        # .env 没有就建，bot 目录没有说明还没铺配置
+            raise FileNotFoundError(paths["token"].parent)
+        set_token(paths["token"], v)
+    else:
+        if not paths["userid"].exists():
+            raise FileNotFoundError(paths["userid"])
+        set_userid(paths["userid"], v)
 
 
 # ── DeepSeek key：YAML 行级替换，只动 delta_llm 块里的 api_key 那一行 ─────────────
@@ -59,7 +109,9 @@ def set_deepseek(path: Path, key: str) -> None:
                 done = True
                 break
     if not done:
-        raise SystemExit("configs/_global.yml 里没找到 jiwen.delta_llm.api_key 这一行（文件被改过结构？）")
+        # 不用 SystemExit：它是 BaseException，在 Flask 请求线程里抛会绕过所有 except Exception，
+        # 把 /hub/setup 的一次写入失败升级成整个 web 进程的意外退出。
+        raise ValueError("configs/_global.yml 里没找到 jiwen.delta_llm.api_key 这一行（文件被改过结构？）")
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -124,15 +176,14 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("cmd", choices=["status", "set-deepseek", "set-token", "set-userid"])
     p.add_argument("value", nargs="?")
-    p.add_argument("--bot", default="chenlulu")
+    p.add_argument("--bot", default=DEFAULT_BOT)
     p.add_argument("--repo")
     p.add_argument("--home")
     a = p.parse_args(argv)
-    yml = _repo(a) / "configs" / "_global.yml"
-    env = _bot_dir(a) / ".env"
-    acc = _bot_dir(a) / "access.json"
+    paths = key_paths(a.bot, a.repo, a.home)
+    yml, env, acc = paths["deepseek"], paths["token"], paths["userid"]
     if a.cmd == "status":
-        print(json.dumps({"deepseek": deepseek_filled(yml), "token": token_filled(env), "userid": userid_filled(acc)}))
+        print(json.dumps(status(paths)))
         return 0
     # value 传 "-" = 从 stdin 读：密钥放 argv 会进 `ps` 进程列表（多用户机上他人可见），
     # setup_keys.sh 一律走 stdin；argv 直传只留给单用户机手动救急。
@@ -154,7 +205,7 @@ def main(argv=None) -> int:
             if not acc.exists():
                 print(f"{acc} 不存在，先跑 bash install.sh 铺配置", file=sys.stderr); return 3
             set_userid(acc, v)
-    except SystemExit as e:
+    except ValueError as e:
         print(str(e), file=sys.stderr)
         return 3
     return 0
