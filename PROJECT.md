@@ -133,3 +133,12 @@
   红基线 411/8 双序一致；§13 八裁决落文。
 - N2 交付 @7ad16ca：289/289 绿，unit 754，一期 406 冻结基线无损。集成待办：①web.py:685 老接口 safe_dump
   改调 hub_config.set_scalar（F2 同病一期路径）②test_pages_hub2 未登录 302 用例补 Accept 头（用例侧，归出题人）。
+- **二期发布 @a331064（2026-09-04，master 已推 GitHub）**：N3 加bot+两集成针合并后，判官初审 FAIL
+  （锁前移吞掉终局用例改动=构造性恒真）→ 整改为修订账本式锁（BASE e4655ff + R1~R5 带裁决号入库，
+  .devflow/LOCK-hub2 纳入版本管理）→ 复核 PASS。终局：hub2 验收 420 绿 / 一期 406绿3skip / unit 891 绿。
+- 发布前双专项：①安全审计 2高3中4低全修+复核抓漏 splice 根因去重（别名 YAML 写坏密钥）；
+  ②部署链路 11 项（install.sh 口令引导独立化防零鉴权、README Windows 段补 install-cliproxy.ps1、
+  emoji×cp936 编码链、.env 串味防双 bot 抢 token、HUB_TRUST_PROXY 走 env_file、moments-web plist 注册等）
+  ＋ UTF-8 两批（subprocess/open 显式 encoding、ps1 PYTHONUTF8 根治层）。
+- 遗留（非阻断）：moments-web plist Label 沿用 com.example.*（改名需旧标签检测防双起）；
+  Windows ps1 无 pwsh 本机语法验证，仅人工比对；一期人工清单 5 条仍待用户。
