@@ -1,5 +1,5 @@
 # LOCK-hub2 —— 修订账本式锁（判官初审 FAIL 后整改，替代单指纹）
-# 验证规则：git diff <BASE> -- tests/ 的全部差异必须逐一对应下方修订条目；
+# 验证规则：git diff <BASE> -- tests/acceptance/ 的全部差异（实现期可增 tests/unit，不入此账）必须逐一对应下方修订条目；
 # 每条修订须有裁决编号（INTERFACE-hub2.md §13）并经判官复核，静默移锁无效。
 
 BASE: e4655ff        # 原始冻结点：验收锁定 419 条（红基线 411/8），实现开工前
