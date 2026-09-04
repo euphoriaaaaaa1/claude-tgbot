@@ -41,7 +41,7 @@ if has token; then ok "bot token 已填（~/.claude/channels/$BOT/.env）"; else
   info "        形如 123456789:AAxxxxxxxx 的东西，整串就是 token"
   info "填哪：~/.claude/channels/$BOT/.env 里的 TELEGRAM_BOT_TOKEN=（或下面直接输入）"
   if [ "$interactive" = 1 ] && ask "粘贴 bot token" '^[0-9]{6,}:[A-Za-z0-9_-]{25,}$' '形如 123456789:AAxxxxxxxx，冒号前是数字'; then
-    $FS set-token "$REPLY" --bot "$BOT" && ok "已写入 ~/.claude/channels/$BOT/.env"
+    printf '%s\n' "$REPLY" | $FS set-token - --bot "$BOT" && ok "已写入 ~/.claude/channels/$BOT/.env"
   else left=1; fi
 fi
 
@@ -51,7 +51,7 @@ if has userid; then ok "允许私聊的 user_id 已填（~/.claude/channels/$BOT
   info "怎么拿：Telegram 里搜 @userinfobot，随便发它一句，它回你的 Id: 一串数字（不是 @用户名）"
   info "填哪：~/.claude/channels/$BOT/access.json 的 allowFrom 数组（或下面直接输入）"
   if [ "$interactive" = 1 ] && ask "输入你的数字 user_id" '^[0-9]{5,}$' '纯数字，通常 8–10 位'; then
-    $FS set-userid "$REPLY" --bot "$BOT" && ok "已写入 access.json 的 allowFrom"
+    printf '%s\n' "$REPLY" | $FS set-userid - --bot "$BOT" && ok "已写入 access.json 的 allowFrom"
   else left=1; fi
 fi
 
@@ -61,7 +61,7 @@ if has deepseek; then ok "DeepSeek key 已填（configs/_global.yml）"; else
   info "怎么拿：浏览器开 platform.deepseek.com → 注册/登录 → 左侧 API keys → 创建 → 复制形如 sk-xxxx 的 key"
   info "填哪：configs/_global.yml 的 jiwen.delta_llm.api_key（或下面直接输入）"
   if [ "$interactive" = 1 ] && ask "粘贴 DeepSeek key" '^sk-[A-Za-z0-9_-]{16,}$' '以 sk- 开头的一串字母数字'; then
-    $FS set-deepseek "$REPLY" && ok "已写入 configs/_global.yml"
+    printf '%s\n' "$REPLY" | $FS set-deepseek - && ok "已写入 configs/_global.yml"
   else left=1; fi
 fi
 
