@@ -103,8 +103,11 @@ elif bash scripts/install_cliproxy.sh; then
   elif [ -f "$svc" ]; then
     unit="$svc"
     # -x 整行匹配：子串匹配会被 WorkingDirectory=$dir/logs、=$dir-old、
-    # 以及 `#WorkingDirectory=$dir` 这种注释掉的行骗过去
-    if grep -qxF "WorkingDirectory=$cliproxy_dir" "$svc"; then wd_ok=1; fi
+    # 以及 `#WorkingDirectory=$dir` 这种注释掉的行骗过去。
+    # 两种写法都认：install_cliproxy.sh 现在写带引号的那种（路径含空格才不会被
+    # systemd 切开），老机器上留着的是不带引号的旧单元 —— 只认一种会把它误报成没钉住。
+    if grep -qxF "WorkingDirectory=$cliproxy_dir" "$svc" \
+       || grep -qxF "WorkingDirectory=\"$cliproxy_dir\"" "$svc"; then wd_ok=1; fi
   fi
   if [ -z "$cliproxy_dir" ]; then
     todo "读不到 cliproxy 的安装目录，重跑：bash scripts/install_cliproxy.sh"

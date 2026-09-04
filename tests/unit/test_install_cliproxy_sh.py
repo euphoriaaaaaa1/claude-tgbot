@@ -201,8 +201,14 @@ def test_plist里只是恰好出现过这个路径不算数(tmp_path):
     assert "OK:" not in out and "没钉在" in out
 
 
-def test_systemd_unit同样按工作目录那行判(tmp_path):
-    assert "OK:" in _run_section6(tmp_path, SVC, "[Service]\nWorkingDirectory={DIR}\n")
+@pytest.mark.parametrize("line", [
+    'WorkingDirectory={DIR}',                              # 老机器上留着的旧单元
+    'WorkingDirectory="{DIR}"',                            # BUG-28 后写出来的形状
+])
+def test_systemd_unit带不带引号都按工作目录那行判(tmp_path, line):
+    """单元现在写带引号的形状（路径含空格才不会被 systemd 按 shell 词法切开）。
+    体检只认一种的话，要么把新单元误报成没钉住，要么放过老单元 —— 两种都得认。"""
+    assert "OK:" in _run_section6(tmp_path, SVC, "[Service]\n%s\n" % line)
 
 
 @pytest.mark.parametrize("unit", [
@@ -210,6 +216,7 @@ def test_systemd_unit同样按工作目录那行判(tmp_path):
     "[Service]\nWorkingDirectory={DIR}/logs\n",            # 子串：钉到子目录去了
     "[Service]\nWorkingDirectory={DIR}-old\n",             # 子串：钉到隔壁旧目录
     "[Service]\n#WorkingDirectory={DIR}\n",                # 被注释掉了
+    '[Service]\nWorkingDirectory="{DIR}/logs"\n',          # 带引号也不许放过子目录
 ])
 def test_systemd_工作目录必须整行精确匹配(tmp_path, unit):
     """子串匹配的三种假绿：钉到子目录、钉到同前缀的别的目录、整行被注释。"""

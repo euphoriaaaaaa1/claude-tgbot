@@ -83,7 +83,14 @@ if [ "$(uname -s)" = "Darwin" ]; then
   LABEL="com.claudebotlife.cliproxy"
   PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
   tmp_plist="$(mktemp "${TMPDIR:-/tmp}/claudebotlife-cliproxy.XXXXXX")"
-  sed -e "s#{CLIPROXY_BIN}#$BIN#g" -e "s#{CLIPROXY_DIR}#$CLIPROXY_DIR#g" \
+  # sed 的**替换串**里 `&` 是"整个匹配"、`\` 是转义引导、`|` 是本行的分隔符 ——
+  # 路径里出现任意一个都会渲染出错误内容（`~/a&b/` 会被展开成 `~/a{CLIPROXY_DIR}b/`）。
+  # 三者一律先转义再塞进去。分隔符从 `#` 换成 `|`：`#` 在路径里比 `|` 常见得多。
+  # ponytail: 路径含换行仍会渲染出坏 plist —— 那一步由下面的 WorkingDirectory
+  # 校验 + plutil -lint 挡掉（渲染坏了就拒绝注册，不会写进 LaunchAgents）。
+  sed_esc() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
+  sed -e "s|{CLIPROXY_BIN}|$(sed_esc "$BIN")|g" \
+      -e "s|{CLIPROXY_DIR}|$(sed_esc "$CLIPROXY_DIR")|g" \
       plist-templates/cliproxy.plist.tmpl > "$tmp_plist"
   # 🔴 A11b：v7 启动会往**进程 CWD** 下载 static/management.html（2.7 MB）。
   # 模板一旦漂了就是往用户仓库里拉 2.7 MB，所以渲染完必须验一遍 WorkingDirectory 钉住了没。
@@ -112,7 +119,9 @@ Description=claude-tgbot cliproxy (CLIProxyAPI $VER)
 [Service]
 Type=simple
 # 与 plist 的 WorkingDirectory 同义：不钉死就会往当时的 CWD 拉 2.7 MB static/
-WorkingDirectory=$CLIPROXY_DIR
+# 必须加引号：systemd 按 shell 词法切这一行，路径里一个空格（"~/Library/Mobile
+# Documents/…"、中文用户名带空格）就会被切成两个参数 → 单元起不来或钉错目录。
+WorkingDirectory="$CLIPROXY_DIR"
 # 不给它注 hub.env：cliproxy 一个门户变量都不读，注进来只是把门户口令多摊一份到
 # 它的进程环境里（/proc/<pid>/environ）。它自己的 key 在 config.yaml（600）。
 ExecStart="$BIN" -config "$CLIPROXY_DIR/config.yaml"
