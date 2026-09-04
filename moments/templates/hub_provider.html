@@ -31,6 +31,26 @@
     <div class="empty" id="provider-empty">读取中…</div>
   </div>
 
+  <div class="card" id="preset-card">
+    <h2>DeepSeek 官方（推荐）</h2>
+    <div class="muted">
+      DeepSeek 官方自己就提供 Anthropic 格式的兼容端点，不用中转站。下面这几格已经替你填好，
+      你只要粘一把 key：接口地址 <span class="mono" id="preset-base-url">{{ deepseek_preset.base_url }}</span>
+      · 上游模型 <span class="mono" id="preset-upstream">{{ deepseek_preset.upstream_model }}</span>
+      · 对外模型名 <span class="mono" id="preset-alias">{{ deepseek_preset.model_alias }}</span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <input id="preset-key" type="password" style="flex:1" autocomplete="off" spellcheck="false"
+             placeholder="粘贴 DeepSeek key（sk-…），只上传这一次">
+      <button class="btn" type="button" id="preset-save">一键启用</button>
+    </div>
+    <div class="muted" id="preset-msg" style="margin-top:6px"></div>
+    <div class="muted">
+      想用更强的 <span class="mono">deepseek-v4-pro[1m]</span>（方括号是官方文档里的字面写法）：
+      用下面「新增来源」自己填，其余三格照抄上面这几个值。
+    </div>
+  </div>
+
   <div class="card">
     <h2>新增来源</h2>
     <form id="provider-form" autocomplete="off">
@@ -182,6 +202,37 @@ $('provider-rows').addEventListener('click', async (e) => {
                          {method: act === 'delete' ? 'DELETE' : 'POST', body: '{}'});
   b.disabled = false;
   alert(r.todo ? TODO_TEXT : JSON.stringify(r.body));
+  loadProviders();
+});
+
+// 预置模板卡：值全从服务端那份 DEEPSEEK_PRESET 来（页面不自己抄一遍端点），
+// 提交走的是**既有的**创建 + 激活两个端点，没有第三条后端路径。
+const DEEPSEEK_PRESET = {{ deepseek_preset | tojson }};
+
+$('preset-save').addEventListener('click', async () => {
+  const input = $('preset-key'), msg = $('preset-msg'), btn = $('preset-save');
+  const key = input.value.trim();
+  if (!key) { hubSay(msg, '还没粘 key'); return; }
+  btn.disabled = true;
+  hubSay(msg, '创建中…');
+  const r = await hubApi('/hub/api/provider',
+      {method: 'POST', body: JSON.stringify(Object.assign({api_key: key}, DEEPSEEK_PRESET))});
+  input.value = '';                         // 立刻清掉，别把 key 留在 DOM 里
+  if (r.status !== 201) {
+    btn.disabled = false;
+    hubSay(msg, r.body.error === 'duplicate_provider'
+      ? '这条来源已经有了，在上面的列表里点「切换到它」即可（要换 key 就先删了再来）'
+      : ('没建成：' + (r.body.error || ('HTTP ' + r.status)) + ' ' + (r.body.detail || '')));
+    loadProviders();
+    return;
+  }
+  // 新建的条目多半是 disabled（haiku alias 人人默认同名，第二个起必然创建即停用），
+  // 所以建完必须再切一次才真的生效。
+  const a = await hubApi('/hub/api/provider/' + encodeURIComponent(r.body.id) + '/activate',
+                         {method: 'POST', body: '{}'});
+  btn.disabled = false;
+  hubSay(msg, a.body.ok ? '已启用，重启 bot 后生效'
+        : ('已建好但没切过去：' + (a.body.error || ('HTTP ' + a.status)) + ' ' + (a.body.detail || '')));
   loadProviders();
 });
 

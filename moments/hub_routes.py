@@ -29,6 +29,30 @@ OAUTH_CALLBACK_PORTS = {"codex": 1455, "antigravity": 51121}
 OAUTH_PROVIDER_LABELS = {"codex": "ChatGPT", "antigravity": "Google（Antigravity）"}
 OAUTH_WAIT_SECONDS = 300        # §4.4 服务端授权等待窗口，页面按它显示倒计时
 
+# DeepSeek 官方（Anthropic 兼容）的预置值 —— **/hub/provider 的快捷卡与 /hub/setup 的
+# 「同一把 key 也当对话模型」联动共用这一份**，两处各写各的就会漂移成两套端点。
+# 它只是一份模板常量：cliproxy 配置里**不预埋半残 entry**（一期契约禁止无 key 残留），
+# 用户填了 key 才走 §3.3 创建 + §3.6 激活这两个既有端点。
+#
+# 端点与模型名的出处（2026-09 查证 DeepSeek 官方文档，不是拍脑袋）：
+#   https://api-docs.deepseek.com/guides/anthropic_api
+#       → base_url 就是 https://api.deepseek.com/anthropic
+#   https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code
+#       → Claude Code 主模型 `deepseek-v4-pro[1m]`、haiku 位 `deepseek-v4-flash`
+#   https://api-docs.deepseek.com/quick_start/pricing
+#       → 现存模型只有 flash / pro / flash-vision-exp，`deepseek-chat` 已下线
+# 取 flash 而不是 pro：§3.0c 的一条 entry 只有一个 upstream_model，主 alias 与 haiku
+# alias 共用它 —— 选 pro 等于让后台摘要也走 pro，既慢又贵；且 `[1m]` 后缀官方没解释含义，
+# 而 anthropic_api 页明写"模型名不认识会**静默降级**到 flash"，写错了不会报错只会悄悄变慢变笨。
+# 想用 pro 的人在「新增来源」表单里自己填，其余三格照抄这里。
+DEEPSEEK_PRESET = {
+    "label": "DeepSeek 官方",
+    "kind": "anthropic",                            # §3.0：走 claude-api-key 块 + base-url
+    "base_url": "https://api.deepseek.com/anthropic",
+    "upstream_model": "deepseek-v4-flash",
+    "model_alias": "claude-sonnet-4-5-20250929",
+}
+
 
 def _api(fn):
     """把 HubError 翻成 §0.1 形状的 ``{"error","detail"}`` + 状态码；
@@ -89,6 +113,7 @@ def hub_provider_page():
         nav_active="provider",
         kinds=provider_model.SUPPORTED_KINDS,
         default_haiku_alias=provider_model.DEFAULT_HAIKU_ALIAS,
+        deepseek_preset=DEEPSEEK_PRESET,        # 预置模板卡，纯前端预填，见常量处出处注释
         oauth_providers=[{"id": pid,
                           "label": OAUTH_PROVIDER_LABELS[pid],
                           "callback_port": port}
