@@ -556,3 +556,48 @@ def test_config路径口径与hub_bootstrap一致(tmp_path, monkeypatch):
     hb = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hb)
     assert str(hb.cliproxy_dir() / "config.yaml") == cc.config_path()
+
+
+# ---------------- 抽查 14：列表端点的聚合读要有总预算 ----------------
+
+def test_单次超时按LIST_TIMEOUT传到传输层(stub, client, monkeypatch):
+    """默认 MGMT_TIMEOUT 是 10s，三个块逐个算最坏 30s —— 页面在那儿干转。"""
+    seen = []
+    real = client._request
+
+    def spy(method, path, data=None, headers=None, timeout=None):
+        seen.append(timeout)
+        return real(method, path, data, headers, timeout)
+    monkeypatch.setattr(client, "_request", spy)
+    client.providers(timeout=cc.LIST_TIMEOUT, budget=cc.LIST_BUDGET)
+    assert seen and set(seen) == {cc.LIST_TIMEOUT}, seen
+
+
+def test_读超总预算时抛cliproxy_slow(stub, client, monkeypatch):
+    import time as _t
+    real = client.mgmt_get
+    monkeypatch.setattr(client, "mgmt_get",
+                        lambda path, timeout=None: (_t.sleep(0.05), real(path))[1])
+    with pytest.raises(HubError) as ei:
+        client.providers(timeout=cc.LIST_TIMEOUT, budget=0.06)
+    assert (ei.value.status, ei.value.error) == (504, "cliproxy_slow")
+    assert ei.value.timed_out is True
+
+
+def test_预算够用时照常读全三个块(stub, client):
+    stub.seed_openai_block()
+    assert len(client.providers(timeout=cc.LIST_TIMEOUT, budget=cc.LIST_BUDGET)) == 1
+
+
+def test_写路径不吃预算(stub, client):
+    """宁可等，也不能读一半就去改 —— 整块 PUT 拿的是读到的那份当全量。"""
+    import inspect
+    assert inspect.signature(cc.CliproxyClient.entries).parameters["budget"].default is None
+    assert inspect.signature(cc.CliproxyClient._block).parameters["timeout"].default \
+        == cc.MGMT_TIMEOUT
+
+
+def test_预算与单次超时的数量级(stub):
+    """单次与 healthz 同档、总预算留得下三个块。改大了等于没封顶。"""
+    assert cc.LIST_TIMEOUT == cc.HEALTH_TIMEOUT
+    assert cc.LIST_TIMEOUT < cc.LIST_BUDGET < cc.MGMT_TIMEOUT
