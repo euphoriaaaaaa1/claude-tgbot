@@ -855,3 +855,68 @@ def test_web入口在app_run前调一次自愈():
     main = src[src.index('if __name__ == "__main__":'):]
     assert "reconcile()" in main, "web.py 的 __main__ 没调 reconcile，自愈没人跑了"
     assert main.index("reconcile()") < main.index("app.run("), "自愈要在开始服务之前"
+
+
+# ---------------- BUG-25：自愈中途失败必须补偿，不许留 0-enabled ----------------
+
+def test_自愈第二轮失败要回滚到自愈前(env, stub, monkeypatch, capfd):
+    """主 alias 那轮改完、haiku 那轮炸了 —— 原地不动的话当选条目已经被清了 prefix、
+    haiku 仍是两家轮询，或更糟：某个 alias 下 0 个条目接裸模型名，bot 全线 502。"""
+    a = stub.seed_openai_block(name="a", alias=ALIAS)
+    a["prefix"] = "deadbeef"                          # 唯一候选却带着 prefix = 需要自愈
+    b = stub.seed_openai_block(name="b", base_url="https://gw.example.com/v1",
+                               upstream="glm-4.6", alias="claude-opus-4-1-20250805")
+    write_settings({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:%d" % stub.port,
+                            "ANTHROPIC_MODEL": ALIAS}})
+    before = json.loads(json.dumps(stub.all_blocks))
+    real = cliproxy_client.CliproxyClient.set_alias_exclusive
+
+    def flaky(self, alias, target_id):                # 只让 haiku 那轮炸
+        if alias == HAIKU:
+            raise HubError(502, "cliproxy_reject", "boom")
+        return real(self, alias, target_id)
+    monkeypatch.setattr(cliproxy_client.CliproxyClient, "set_alias_exclusive", flaky)
+
+    hub_routes.reconcile()
+    assert stub.all_blocks == before, "自愈半途而废，cliproxy 停在中间态"
+    assert a.get("prefix") == "deadbeef" and b.get("prefix") is None
+    assert "hub_reconcile skipped reason=cliproxy_reject" in capfd.readouterr()[1]
+
+
+def test_自愈补偿本身也失败时如实记日志不拦启动(env, stub, monkeypatch, capfd):
+    a = stub.seed_openai_block(name="a", alias=ALIAS)
+    a["prefix"] = "deadbeef"
+    stub.seed_openai_block(name="b", base_url="https://gw.example.com/v1",
+                           upstream="glm-4.6", alias="claude-opus-4-1-20250805")
+    write_settings({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:%d" % stub.port,
+                            "ANTHROPIC_MODEL": ALIAS}})
+
+    real = cliproxy_client.CliproxyClient.set_alias_exclusive
+
+    def flaky(self, alias, target_id):                # 主 alias 那轮写成了，haiku 那轮炸
+        if alias == HAIKU:
+            raise HubError(502, "cliproxy_reject", "boom")
+        return real(self, alias, target_id)
+    monkeypatch.setattr(cliproxy_client.CliproxyClient, "set_alias_exclusive", flaky)
+    monkeypatch.setattr(cliproxy_client.CliproxyClient, "restore_prefixes",
+                        lambda self, records: (_ for _ in ()).throw(
+                            HubError(502, "cliproxy_reject", "补偿也炸")))
+    hub_routes.reconcile()                            # 不抛 = 没拦住启动
+    assert "hub_reconcile skipped reason=activate_partial" in capfd.readouterr()[1]
+
+
+def test_自愈第一轮就失败时没有可补偿的东西(env, stub, monkeypatch, capfd):
+    """一个字节都没写就炸 = 状态本就没动，别为了"有补偿"去空跑一次写。"""
+    a = stub.seed_openai_block(name="a", alias=ALIAS)
+    a["prefix"] = "deadbeef"
+    write_settings({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:%d" % stub.port,
+                            "ANTHROPIC_MODEL": ALIAS}})
+    calls = []
+    monkeypatch.setattr(cliproxy_client.CliproxyClient, "set_alias_exclusive",
+                        lambda self, alias, tid: (_ for _ in ()).throw(
+                            HubError(502, "cliproxy_reject", "boom")))
+    monkeypatch.setattr(cliproxy_client.CliproxyClient, "restore_prefixes",
+                        lambda self, records: calls.append(records))
+    hub_routes.reconcile()
+    assert calls == [], "没写过东西却跑了补偿"
+    assert "hub_reconcile skipped reason=cliproxy_reject" in capfd.readouterr()[1]
