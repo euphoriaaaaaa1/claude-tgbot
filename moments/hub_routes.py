@@ -1180,12 +1180,26 @@ from moments import hub_addbot                        # noqa: E402  本段自己
 
 @hub_bp.record_once
 def _ab_check_base(state):
-    """§7 R2-1：`HUB_TELEGRAM_API_BASE` 形状非法 → **蓝图注册期直接炸**。
+    """§7 R2-1 修订：`HUB_TELEGRAM_API_BASE` 形状非法 → 注册期**记下**错误，
+    _ab 的 API 端点一律 503，一个字节的 token 都不外送（R2-1 的安全语义保住）。
 
-    它是环境变量不是请求参数，配错要在启动期暴露；留到运行时才 4xx，
-    中间每一次「测试 token」都在往一个陌生主机送 token 明文。
+    不在这里直接 raise：register_blueprint 在 `import moments.web` 顶层执行，
+    炸 import 会把 bot 进程一并打死（moments/post.py 同链）——一期为同类问题
+    专门把启动闸从 sys.exit 降成 503（见 hub_auth.py），BUG-24 也明令
+    record_once 不得带副作用。配错 env 是门户的错，不该连累 bot。
     """
-    hub_addbot.api_base()
+    try:
+        hub_addbot.api_base()
+        state.app.extensions["hub_addbot_base_error"] = None
+    except RuntimeError as e:
+        state.app.extensions["hub_addbot_base_error"] = str(e)
+
+
+def _ab_guard():
+    """API 端点前置：base 配错 → 503，绝不带着坏 base 外呼。"""
+    err = current_app.extensions.get("hub_addbot_base_error")
+    if err:
+        raise provider_model.HubError(503, "addbot_misconfigured", err)
 
 
 @hub_bp.get("/hub/addbot")
@@ -1206,6 +1220,7 @@ def bots_templates():
 def bots_test_token():
     """§4.1：**HTTP 恒 200**，getMe 的业务失败放 body 的 `stage`。
     只有"我们这边坏了"才用非 200：缺字段/非字符串/空串 → `400 bad_body`。"""
+    _ab_guard()
     token = _require_json_object(request.get_json(silent=True)).get("telegram_token")
     if not isinstance(token, str) or not token.strip():
         raise HubError(400, "bad_body", "缺少 telegram_token")
@@ -1220,6 +1235,7 @@ def bots_create():
     锁在最外层是有意的：A 段的端口 bind 试探与 B 段的写盘之间必须没有窗口，
     否则两个同端口请求会双双通过校验（用例⑦ 盯的就是这个）。
     """
+    _ab_guard()
     with hub_addbot.hold_addbot_lock():
         body, code = hub_addbot.create(request.get_json(silent=True), _jobs())
     return jsonify(body), code

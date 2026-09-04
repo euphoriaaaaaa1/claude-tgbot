@@ -451,6 +451,7 @@ def lay_down(fields):
     注册表查不到它），然后把异常原样抛给调用方定码。
     """
     bot_id = fields["bot_id"]
+    os.makedirs(channels_dir(), exist_ok=True)   # 首次部署父目录还不存在，move 会 500
     target = os.path.join(channels_dir(), bot_id)
     yml = os.path.join(configs_dir(), bot_id + ".yml")
     made = []                                  # 精确回滚清单：(是否整棵树, 路径)，按创建顺序

@@ -280,11 +280,18 @@ def mask_secrets(text, root):
     敏感判定沿用 [I1] §0.2 的字段名族（`key|token|secret|password|credential|auth`），
     与出站脱敏共用一份 `redact.is_secret_field`，不另立一套正则。
     """
-    spans, paths = [], []
+    spans, paths, seen = [], [], set()
     for path, name, node in scalars(root):
         if not is_secret_field(name):
             continue
-        spans.append((node.start_mark.index, node.end_mark.index, PLACEHOLDER))
+        # YAML 别名（*alias）让 compose 返回同一个节点对象，同一段字节会被产出多次；
+        # 重复 span 叠加替换会错位吃掉后续字节（占位符长度≠原值长度）。按位置去重，
+        # 保留首见路径（锚点定义处），别名引用处报的路径本就不是实际改动位置。
+        pos = (node.start_mark.index, node.end_mark.index)
+        if pos in seen:
+            continue
+        seen.add(pos)
+        spans.append((pos[0], pos[1], PLACEHOLDER))
         paths.append(path)
     return splice(text, spans), paths
 
@@ -399,7 +406,10 @@ def _atomic_write(text):
 def rotate_saves():
     """§2.4 第 5 步：**必须在写盘成功之后**跑。按文件名时间戳排序删最老的，不看 mtime。"""
     try:
-        names = sorted(n for n in os.listdir(configs_dir()) if n.startswith(SAVE_PREFIX))
+        # 过 BACKUP_ID_RE：不然本地放一个 _global.yml.bak.zzz 就能把真备份逐个挤掉，
+        # 而 list_backups 过滤了正则、页面上还看不到这个占位的
+        names = sorted(n for n in os.listdir(configs_dir())
+                       if n.startswith(SAVE_PREFIX) and BACKUP_ID_RE.match(n[len(SAVE_PREFIX):]))
     except OSError:
         return
     for name in names[:-SAVE_KEEP] if len(names) > SAVE_KEEP else []:
@@ -465,8 +475,15 @@ def check_version(version):
         raise HubError(409, "config_stale", "配置已被他人修改，请刷新后重试")
 
 
-def commit(new_text, kind="save"):
-    """备份 → 原子写 → 轮转。返回本次备份 id。调用方须已持锁并过完版本校验。"""
+def commit(new_text, kind="save", backup=True):
+    """备份 → 原子写 → 轮转。返回本次备份 id（backup=False 时 None）。调用方须已持锁并过完版本校验。
+
+    backup=False 给低权面的单枚举翻转用（如 /api/image_provider 切生图 provider）：
+    行级编辑器 + 原子写本身保真，改错了再切回即可；若照常备份，低权用户高频切换
+    会把 admin 参数页的 5 份 save 备份全部挤掉（跨权限副作用）。"""
+    if not backup:
+        _atomic_write(new_text)
+        return None
     current = read_global()
     bid = make_backup(kind, current if current is not None else "")
     _atomic_write(new_text)
