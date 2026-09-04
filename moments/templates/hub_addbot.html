@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>添加 bot · 管理台</title>
+</head>
+<body>
+{% include "_nav.html" %}
+<div class="wrap">
+  <h1>添加 bot</h1>
+  <div class="sub">填完点创建：建好 configs/&lt;id&gt;.yml 与频道目录、注册主动开口、重启带上它</div>
+
+  <div class="card">
+    <h2>基本信息</h2>
+    <label for="bot_id">bot id（小写字母开头，2-32 位小写字母/数字/下划线）</label>
+    <input id="bot_id" placeholder="xiaoyu" autocomplete="off" spellcheck="false">
+    <label for="display_name">显示名</label>
+    <input id="display_name" placeholder="小雨" autocomplete="off">
+    <label for="telegram_token">Telegram token（只写进 channels/&lt;id&gt;/.env，配置文件里不留）</label>
+    <div class="row">
+      <input id="telegram_token" type="password" style="flex:1" autocomplete="off"
+             spellcheck="false" placeholder="123456789:AA...">
+      <button class="btn ghost mini" type="button" id="test">测试 token</button>
+    </div>
+    <div class="muted" id="test-msg" style="margin-top:6px"></div>
+    <label for="dispatcher_port">dispatcher 端口</label>
+    <input id="dispatcher_port" inputmode="numeric" placeholder="17802">
+    <label for="chat_id">你的 Telegram chat id</label>
+    <input id="chat_id" inputmode="numeric" placeholder="123456789">
+  </div>
+
+  <div class="card">
+    <h2>人设（二选一）</h2>
+    <label for="persona_mode">来源</label>
+    <select id="persona_mode">
+      <option value="text">粘贴人设正文</option>
+      <option value="template">照抄已有模板</option>
+    </select>
+    <div id="tmpl-box" style="display:none">
+      <label for="persona_template">模板</label>
+      <select id="persona_template"><option value="">读取中…</option></select>
+    </div>
+    <div id="text-box">
+      <label for="persona_text">人设正文（最多 64 KiB）</label>
+      <textarea id="persona_text" rows="8"
+        style="width:100%;padding:9px 11px;font-size:14px;font-family:var(--font-body);
+               color:var(--ink);background:transparent;border:1px solid var(--hairline-strong);
+               border-radius:8px"></textarea>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">创建</h2>
+      <button class="btn" type="button" id="create">创建</button>
+    </div>
+    <div class="muted" id="create-msg" style="margin-top:6px"></div>
+    <table id="steps" style="display:none">
+      <thead><tr><th>步骤</th><th>状态</th><th>说明</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="muted" id="hint" style="margin-top:8px"></div>
+  </div>
+</div>
+<script>
+// 结果区一律 textContent 渲染（§4.1 R2-3）：description / detail 是**上游可控字符串**，
+// 用 innerHTML 就是一条"配了个恶意 base → XSS"的路径。整页没有一处 innerHTML。
+const $ = (id) => document.getElementById(id);
+const STAGE = {
+  malformed: 'token 格式不对（应形如 123456789:AA…）', blocked_base: '接口地址是明文 http 且非回环，已拒绝发送',
+  invalid_token: 'token 无效或已被撤销', rejected: 'Telegram 拒绝了这次请求',
+  upstream: 'Telegram 服务端出错', network: '连不上 Telegram（代理/网络）',
+  timeout: '10 秒没等到响应', bad_response: '响应不是预期的 Telegram 格式',
+};
+function stageText(b) {
+  let s = STAGE[b.stage] || ('失败：' + (b.stage || '未知'));
+  if (b.error_code) s += '（' + b.error_code + '）';
+  if (b.description) s += ' ' + b.description;
+  if (b.detail) s += ' ' + b.detail;
+  return s;
+}
+async function loadTemplates() {
+  const r = await hubApi('/hub/api/bots/templates');
+  const sel = $('persona_template');
+  sel.textContent = '';
+  ((r.body && r.body.templates) || []).forEach((t) => {
+    const o = document.createElement('option');
+    o.value = t.id; o.textContent = t.display_name + '（' + t.id + '）';
+    sel.appendChild(o);
+  });
+  if (!sel.firstChild) { const o = document.createElement('option');
+    o.value = ''; o.textContent = '（没有可用模板）'; sel.appendChild(o); }
+}
+$('persona_mode').addEventListener('change', () => {
+  const tmpl = $('persona_mode').value === 'template';
+  $('tmpl-box').style.display = tmpl ? '' : 'none';
+  $('text-box').style.display = tmpl ? 'none' : '';
+});
+$('test').addEventListener('click', async () => {
+  hubSay($('test-msg'), '测试中…');
+  const r = await hubApi('/hub/api/bots/test_token', {method: 'POST',
+    body: JSON.stringify({telegram_token: $('telegram_token').value})});
+  const b = r.body || {};
+  if (r.status !== 200) { hubSay($('test-msg'), '请求没发出去：' + (b.detail || r.status)); return; }
+  hubSay($('test-msg'), b.ok ? ('通了：@' + b.username + '　' + (b.token_masked || ''))
+                             : stageText(b));
+});
+function num(v) { return /^-?\d+$/.test((v || '').trim()) ? parseInt(v, 10) : v.trim(); }
+function payload() {
+  const body = {bot_id: $('bot_id').value.trim(), display_name: $('display_name').value.trim(),
+                telegram_token: $('telegram_token').value,
+                dispatcher_port: num($('dispatcher_port').value), chat_id: num($('chat_id').value)};
+  if ($('persona_mode').value === 'template') body.persona_template = $('persona_template').value;
+  else body.persona_text = $('persona_text').value;
+  return body;
+}
+function renderSteps(steps) {
+  const tb = $('steps').querySelector('tbody');
+  tb.textContent = '';
+  (steps || []).forEach((s) => {
+    const tr = document.createElement('tr');
+    [s.name, s.state, s.detail || ''].forEach((cell, i) => {
+      const td = document.createElement('td');
+      if (i === 1) { const p = document.createElement('span');
+        p.className = 'pill ' + (s.state === 'done' ? 'on' : 'off');
+        p.textContent = s.state; td.appendChild(p); } else { td.textContent = cell; }
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  $('steps').style.display = (steps && steps.length) ? '' : 'none';
+}
+$('create').addEventListener('click', async () => {
+  $('create').disabled = true;
+  hubSay($('create-msg'), '创建中…（要等重启后探活，最多半分钟）');
+  hubSay($('hint'), '');
+  const r = await hubApi('/hub/api/bots', {method: 'POST', body: JSON.stringify(payload())});
+  const b = r.body || {};
+  $('create').disabled = false;
+  renderSteps(b.steps);
+  if (r.status === 201) {
+    hubSay($('create-msg'), '创建成功：' + b.bot_id + '（@' + b.username + '）');
+    hubSay($('hint'), '朋友圈/门户进程也持有 bot 列表，重启它新 bot 才可见：'
+      + 'launchctl kickstart -k gui/$UID/com.claudebotlife.moments-web');
+  } else if (r.status === 207) {
+    hubSay($('create-msg'), '文件都建好了，但有步骤没走完 —— 按下面的命令自己补一下');
+    hubSay($('hint'), b.manual_hint || '');
+  } else if (r.status === 200 && b.ok === false) {
+    hubSay($('create-msg'), stageText(b));   // getMe 的业务失败：没落盘，改完再试
+  } else {
+    hubSay($('create-msg'), '失败（' + r.status + '）：' + (b.detail || b.error || ''));
+  }
+});
+loadTemplates();
+</script>
+</body>
+</html>

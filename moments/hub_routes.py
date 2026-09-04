@@ -1163,3 +1163,63 @@ def params_restore(bid):
         pre = hub_config.commit(content, kind="restore")
     return jsonify({"ok": True, "backup": pre, "version": hub_config.version_of(),
                     "restart_hint": {"bot": True, "moments_web": True}})
+
+
+# ======================================================================
+# 第 6 段 · 加 bot（N3 填）
+#
+# 契约：INTERFACE-hub2 §1（页面）、§4（三段流程 + 分型表 + 207）、§5（生效提示）、§13 A1-A8。
+# 机器全在 moments/hub_addbot.py：getMe 分型、落盘与精确回滚、常驻注册、探活判成。
+# 本段只做「取请求体 + 持锁 + 翻码 + 组响应」，文件与网络操作一律不写回这里。
+# 段内辅助一律 `_ab` 前缀 —— 第 2/3 段各写过一个同名 `_compensate` 互顶，
+# 把 provider activate 顶成了 404，那是这条规矩的来历。
+# ======================================================================
+
+from moments import hub_addbot                        # noqa: E402  本段自己的依赖
+
+
+@hub_bp.record_once
+def _ab_check_base(state):
+    """§7 R2-1：`HUB_TELEGRAM_API_BASE` 形状非法 → **蓝图注册期直接炸**。
+
+    它是环境变量不是请求参数，配错要在启动期暴露；留到运行时才 4xx，
+    中间每一次「测试 token」都在往一个陌生主机送 token 明文。
+    """
+    hub_addbot.api_base()
+
+
+@hub_bp.get("/hub/addbot")
+def hub_addbot_page():
+    # §2 铁律：恒 200 HTML，状态全由前端调 /hub/api/bots* 呈现 —— 这里不碰磁盘、不发网络。
+    return render_template("hub_addbot.html", nav_active="addbot")
+
+
+@hub_bp.get("/hub/api/bots/templates")
+@_api
+def bots_templates():
+    """§4.4：目录读不到 → `200 {"templates": []}`（正常态，不是错误）。"""
+    return jsonify({"templates": hub_addbot.templates()})
+
+
+@hub_bp.post("/hub/api/bots/test_token")
+@_api
+def bots_test_token():
+    """§4.1：**HTTP 恒 200**，getMe 的业务失败放 body 的 `stage`。
+    只有"我们这边坏了"才用非 200：缺字段/非字符串/空串 → `400 bad_body`。"""
+    token = _require_json_object(request.get_json(silent=True)).get("telegram_token")
+    if not isinstance(token, str) or not token.strip():
+        raise HubError(400, "bad_body", "缺少 telegram_token")
+    return jsonify(hub_addbot.test_token(token))
+
+
+@hub_bp.post("/hub/api/bots")
+@_api
+def bots_create():
+    """§4.2：整个创建流程持一把进程内锁（R4），抢不到 → `409 config_busy`。
+
+    锁在最外层是有意的：A 段的端口 bind 试探与 B 段的写盘之间必须没有窗口，
+    否则两个同端口请求会双双通过校验（用例⑦ 盯的就是这个）。
+    """
+    with hub_addbot.hold_addbot_lock():
+        body, code = hub_addbot.create(request.get_json(silent=True), _jobs())
+    return jsonify(body), code
