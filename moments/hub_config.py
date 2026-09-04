@@ -22,6 +22,7 @@
 import contextlib
 import dataclasses
 import datetime
+import json
 import os
 import re
 import stat
@@ -242,6 +243,12 @@ def _literal(value, typ):
         return "true" if value else "false"
     if typ == "int":
         return str(int(value))
+    if typ == "str":
+        # 表单里没有字符串旋钮（FIELD_META 只有 bool/int/float），这一格是给
+        # 老的 /api/image_provider 用的：它原来把整表 dump 回去，一次切生图 provider
+        # 就把 _global.yml 的注释与锚点全展平。json.dumps 的双引号串是 YAML 的
+        # 合法子集 —— 引号/换行/emoji 都不用自己转义，也就没有"漏一种转义"的洞。
+        return json.dumps(str(value), ensure_ascii=False)
     return repr(float(value))
 
 
