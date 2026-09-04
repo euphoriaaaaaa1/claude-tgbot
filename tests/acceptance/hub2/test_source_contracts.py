@@ -120,15 +120,20 @@ def test_dispatcher侧TS保留BOT_NAMESPACE环境变量接缝():
 
 
 def test_源码里不再散落chenlulu硬编码():
-    """legacy 兜底表只允许待在 bots_registry 一处（§6 明写它是兜底）。"""
+    """§13 A9：病灶是「bot名→namespace 映射表」散落，判据定为映射值 uuid 的
+    出现位置 —— 只许在 bots_registry（唯一源）和 dispatcher/worker-manager.ts
+    （A6 裁决的 legacy 兜底，env 已优先于表）。注释/docstring/默认参数值里
+    出现 chenlulu 名字不是病；映射表被复制到新文件时 uuid 必然跟着走，此判据照样红。"""
+    legacy_uuid = "550e8400-e29b-41d4-a716-446655440001"
+    allowed = {"bots_registry.py", "dispatcher/worker-manager.ts"}
     hits = []
     for p in _iter_sources("*.py", "*.ts", "*.sh", "*.ps1"):
         rel = str(p.relative_to(REPO_ROOT))
-        if rel.startswith("bots_registry") or "example" in rel:
+        if rel in allowed:
             continue
-        if "chenlulu" in _read(p):
+        if legacy_uuid in _read(p):
             hits.append(rel)
-    assert hits == [], f"这些文件还写死了 chenlulu：{hits}"
+    assert hits == [], f"legacy 映射值散落到了唯一源之外：{hits}"
 
 
 def test_注册表CLI失败时重启脚本非零退出(tmp_path):
