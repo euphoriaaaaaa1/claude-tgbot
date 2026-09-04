@@ -208,6 +208,16 @@ def test_anthropic条目也按cliproxy形态写settings(api, stub, settings_path
     assert env["ANTHROPIC_MODEL"] == p["model_alias"], "走 cliproxy 就该填官方 alias"
 
 
+def _startup_reconcile():
+    """启动自愈的触发点：门户进程**显式调用**，不再由蓝图注册副作用触发。
+
+    改动理由是架构级的：注册即连管理端口会让每个 import 门户模块的 bot 进程
+    都去连 8317。契约随之变成"谁启动谁调"，用例照此显式调一次。
+    """
+    from moments import hub_routes
+    hub_routes.reconcile()
+
+
 def test_启动reconcile把0个不带prefix的主alias自愈(make_client, settings_path, stub):
     """§3.6 断言点 1（㊶ 按 prefix 口径改写）：构造"主 alias 下 0 个不带 prefix" → 重启门户 → 自愈。"""
     from conftest import _Api
@@ -215,7 +225,8 @@ def test_启动reconcile把0个不带prefix的主alias自愈(make_client, settin
     write_settings(settings_path, {"env": {
         "ANTHROPIC_BASE_URL": "http://127.0.0.1:%d" % stub.port,
         "ANTHROPIC_MODEL": ALIAS}})
-    c, _ = make_client()                               # 一次 make_client = 一次门户启动
+    c, _ = make_client()
+    _startup_reconcile()                               # 自愈由门户进程显式触发，不再挂在蓝图注册上
     code, body = _Api(c).get("/hub/api/provider")
     assert code == 200
     assert "alias_disabled" not in body.get("warnings", []), \
@@ -237,6 +248,7 @@ def test_启动reconcile把haiku双抢也修掉(make_client, settings_path, stub
         "ANTHROPIC_MODEL": ALIAS}})
     assert stub.aliases_enabled(HAIKU) == 2, "前置条件：两条都不带 prefix 抢同一个 haiku"
     c, _ = make_client()
+    _startup_reconcile()
     code, body = _Api(c).get("/hub/api/provider")
     assert code == 200
     assert "haiku_conflict" not in body.get("warnings", []), \
