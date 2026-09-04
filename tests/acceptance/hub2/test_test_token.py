@@ -177,10 +177,17 @@ def test_测token_上游描述里的控制字符被剔除且截到200字(apif, t
     pytest.param("https://api.telegram.org/?x=1", id="带query"),
     pytest.param("https://api.telegram.org/bot", id="带路径"),
 ])
-def test_getMe基址形状非法_进程启动即失败(make_client, base):
-    """§7 R2-1：base 是环境变量不是请求参数，配错必须在启动期炸，不是运行时 4xx。"""
-    with pytest.raises(Exception):
-        make_client(HUB_TELEGRAM_API_BASE=base)
+def test_getMe基址形状非法_启动不炸_API一律503且零外呼(make_client, base):
+    """§13 A12（安全审计 M2，修订 R2-1）：注册期炸 import 会把 bot 进程连坐打死
+    （一期 hub_auth 有同类 sys.exit→503 降级先例；BUG-24 明令 record_once 无副作用）。
+    改为：启动**不炸**，_ab API 一律 503 addbot_misconfigured，一个字节 token 都不外送
+    —— R2-1「绝不把 token 送往陌生主机」的安全语义原样保住。"""
+    c, _ = make_client(HUB_TELEGRAM_API_BASE=base)   # 启动必须成活
+    r = c.post("/hub/api/bots/test_token", json={"telegram_token": "123:AAxxxx"})
+    assert r.status_code == 503
+    assert r.get_json()["error"] == "addbot_misconfigured"
+    r2 = c.post("/hub/api/bots", json={})
+    assert r2.status_code == 503, "create 也必须被同一道闸拦住"
 
 
 def test_getMe基址是https的第三方域名_形状合法允许启动(make_client):

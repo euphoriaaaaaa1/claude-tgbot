@@ -3,7 +3,8 @@
 *.env
 !*.env.example
 # configs/_global.yml 含 DeepSeek key，只提交 _global.example.yml（gitignore 不支持行内注释，注释须独占一行）
-configs/_global.yml
+# 通配符还罩住 hub 参数页产生的备份副本 .bak.*/.pre-restore.*，它们是全文副本、同样含明文 key
+configs/_global.yml*
 **/token*
 **/*secret*
 

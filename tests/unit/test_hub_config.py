@@ -323,3 +323,35 @@ def test_生效提示_逐键求值后按位或(cfg):
 def test_关键顶层键缺失能被点名():
     root = hc.compose("moments: {}\njiwen: {}\n")
     assert hc.missing_top_keys(root) == ["user_display_name", "max_calls_per_5h"]
+
+
+def test_遮蔽_YAML别名不产生重复span不吃字节():
+    """审计 H2 回归：*alias 让 compose 返回同一节点对象，重复 span 叠加替换会错位
+    吃掉后续字节（占位符长度≠原值长度），产出语法已坏的遮蔽文本。"""
+    text = "llm: &llm\n  api_key: SUPERSECRET-REAL-KEY\nbackup_llm: *llm\n"
+    root = hc.compose(text)
+    masked, paths = hc.mask_secrets(text, root)
+    assert "backup_llm: *llm" in masked, "别名行被吃掉了"
+    assert "SUPERSECRET" not in masked
+    hc.compose(masked)                      # 遮蔽后必须仍是合法 YAML
+    assert paths.count("llm.api_key") == 1  # L4：首见路径只报一次
+
+
+def test_提交_backup为False不产生备份不轮转(cfg):
+    d = os.path.dirname(hc.global_path())
+    before = set(os.listdir(d))
+    assert hc.commit("a: 1\n", backup=False) is None
+    assert set(os.listdir(d)) == before, "backup=False 不该多出任何备份文件"
+    assert hc.read_global() == "a: 1\n"
+
+
+def test_轮转_不认BACKUP_ID_RE之外的占位文件(cfg):
+    d = os.path.dirname(hc.global_path())
+    fake = os.path.join(d, hc.SAVE_PREFIX + "zzz")
+    open(fake, "w").write("junk")
+    for i in range(hc.SAVE_KEEP + 2):
+        hc.commit("k: %d\n" % i)
+    names = [n for n in os.listdir(d) if n.startswith(hc.SAVE_PREFIX)]
+    real = [n for n in names if hc.BACKUP_ID_RE.match(n[len(hc.SAVE_PREFIX):])]
+    assert len(real) == hc.SAVE_KEEP, "真备份没保住 SAVE_KEEP 份"
+    assert os.path.exists(fake), "占位文件不该被当成备份删掉（它压根不是备份）"

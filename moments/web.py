@@ -649,7 +649,12 @@ def api_image_provider():
 
     持久化方式：直接改 _global.yml 的 image_generation 下三个字段之一。
     """
-    g = config_loader.load_global()
+    # 读写都走 hub_config 认的路径（HUB_CONFIGS_DIR 接缝）：原来 GET 读
+    # config_loader.GLOBAL_CFG_PATH（钉死仓库 configs/）、POST 写 hub_config 路径，
+    # 设了该 env 就读写分离，页面显示与磁盘不一致。
+    import yaml
+    from moments import hub_config, provider_model
+    g = yaml.safe_load(hub_config.read_global() or "") or {}
     img = g.setdefault("moments", {}).setdefault("image_generation", {})
 
     if request.method == "GET":
@@ -678,8 +683,6 @@ def api_image_provider():
     # 注释、锚点、merge key、键序、数值格式全展平，用户手写的配置面目全非。
     # 改走 hub_config 的行级编辑器：只替换那一个标量的那几个字节，其余逐字节不动。
     # 顺带拿到备份 + 原子写 + 与参数页共用的写锁（两边写的是同一个文件）。
-    import yaml
-    from moments import hub_config, provider_model
     try:
         with hub_config.hold_config_lock():
             text = hub_config.read_global()
@@ -690,7 +693,9 @@ def api_image_provider():
                 text = hub_config.set_scalar(text, root,
                                              "moments.image_generation." + name,
                                              new_provider, "str")
-            hub_config.commit(text)
+            # backup=False：单枚举翻转不留备份 —— 本端点在低权面（仅 access 门），
+            # 照常备份会让低权用户挤掉 admin 参数页的 5 份 save 配额
+            hub_config.commit(text, backup=False)
     except provider_model.HubError as e:
         return jsonify({"error": e.error, "detail": e.detail}), e.status
     except yaml.YAMLError:
