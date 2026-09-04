@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 """管理台蓝图（PLAN M1 空壳骨架 / INTERFACE §2 §3 §4 §5 §6）。
 
-四段固定顺序，段界就是并行分工线，改自己那段别越界：
+段固定顺序，段界就是并行分工线，改自己那段别越界：
 
   第 1 段  页面路由        M1 已实现，其余模块只读不改
   第 2 段  provider CRUD   M3 填（§3 + §5 claude-native）
   第 3 段  OAuth 账户      M5 填（§4）
   第 4 段  bots 状态与重启 M7 填（§6）
+  第 5 段  系统参数        二期 N2 填（INTERFACE-hub2 §1–§3、§5）
 
-四段均已填完，占位用的 ``_todo()`` / 501 施工态已随之删除（501 本就不在 §7 总表里）。
+一期四段均已填完，占位用的 ``_todo()`` / 501 施工态已随之删除（501 本就不在 §7 总表里）。
+二期新段一律**往后加**，不插进既有段中间 —— 一期契约一字不改（[hub2] §8）。
 
 鉴权由 ``moments/hub_auth.py`` 的 before_request 统管（``/hub`` 及其子路径全锁），
 本模块不写任何鉴权判断。``/hub/healthz`` 已在 ``hub_auth.install()`` 注册，**不要在这里重复注册**。
@@ -981,3 +983,183 @@ def bots_restart_status(job_id):
     if st is None:
         return jsonify({"error": "not_found"}), 404
     return jsonify(st)
+
+
+# ======================================================================
+# 第 5 段 · 系统参数（N2 填）
+#
+# 契约：INTERFACE-hub2 §1（页面）、§2（表单）、§3（高级模式/备份/回滚）、§5（生效提示）。
+# 机器全在 moments/hub_config.py：行级 YAML 编辑器、遮蔽/回填、备份轮转、两把锁。
+# 本段只做「校验顺序 + 翻码 + 组响应」，别把文件操作写回这里。
+# 段内辅助一律 `_cfg` 前缀 —— 第 2/3 段各写过一个同名 `_compensate` 互顶，
+# 把 provider activate 顶成了 404，那是这条规矩的来历。
+# ======================================================================
+
+import yaml                                             # noqa: E402  本段自己的依赖
+
+from moments import hub_config                          # noqa: E402
+
+
+@hub_bp.get("/hub/params")
+def hub_params_page():
+    # §2 铁律：页面恒 200，状态全由前端调 /hub/api/params* 呈现，这里不碰磁盘。
+    return render_template("hub_config.html", nav_active="params",
+                           placeholder=hub_config.PLACEHOLDER)
+
+
+def _cfg_body():
+    """§0.1 通则：请求体必须是 JSON 对象。"""
+    return _require_json_object(request.get_json(silent=True))
+
+
+def _cfg_version(body):
+    """三个写端点的 `version` 都必填且必须是字符串（F1）。"""
+    version = body.get("version")
+    if not isinstance(version, str):
+        raise HubError(400, "bad_body", "缺少 version（请先 GET 拿当前版本）")
+    return version
+
+
+def _cfg_readable():
+    """表单写端点要的"磁盘上的文件是好的"。坏在磁盘上 → 409，与用户提交坏文本的
+    `bad_yaml` 拆开：一个用户改不了、另一个改了就好，状态码与下一步动作都不同。"""
+    data, text = hub_config.load_global()
+    if data is None or text is None:
+        raise HubError(409, "global_yml_unreadable",
+                       "configs/_global.yml 读不出来，先用高级模式修复原文")
+    return data, text
+
+
+@hub_bp.get("/hub/api/params")
+@_api
+def params_get():
+    """§2.1：**恒 200**。文件坏/不在 → 值全回落默认，advanced_available=false，页面据此禁用保存。"""
+    data, text = hub_config.load_global()
+    if data is None:
+        values, _ = hub_config.form_values(None)
+        return jsonify({"values": values, "schema": hub_config.schema_list(),
+                        "version": hub_config.version_of(), "advanced_available": False,
+                        "warnings": ["global_yml_unreadable"]})
+    values, warnings = hub_config.form_values(data)
+    return jsonify({"values": values, "schema": hub_config.schema_list(),
+                    "version": hub_config.version_of(), "advanced_available": True,
+                    "warnings": warnings})
+
+
+@hub_bp.post("/hub/api/params")
+@_api
+def params_save():
+    """§2.3 校验顺序照表：body → 未知键/类型/范围 → 空操作 200 → version →
+    磁盘可读 → 版本乐观锁 → 写。**纯输入错优先于冲突错**，用户先看到真正该改的东西。"""
+    body = _cfg_body()
+    values = body.get("values")
+    if not isinstance(values, dict):
+        raise HubError(400, "bad_body", "缺少 values 或它不是 JSON 对象")
+    hub_config.validate_values(values)
+    if not values:      # 空操作：不写盘、不备份，也不是错误
+        return jsonify({"ok": True, "changed": [], "backup": None,
+                        "version": hub_config.version_of(),
+                        "restart_hint": hub_config.restart_hint([])})
+    version = _cfg_version(body)
+    data, text = _cfg_readable()
+    changed, new_text = hub_config.apply_form(values, data, text)
+    if not changed:     # 提交了但与磁盘同值 → 同样不写盘、不备份
+        return jsonify({"ok": True, "changed": [], "backup": None,
+                        "version": hub_config.version_of(),
+                        "restart_hint": hub_config.restart_hint([])})
+    with hub_config.hold_config_lock():
+        hub_config.check_version(version)
+        backup = hub_config.commit(new_text)
+    return jsonify({"ok": True, "changed": changed, "backup": backup,
+                    "version": hub_config.version_of(),
+                    "restart_hint": hub_config.restart_hint(changed)})
+
+
+@hub_bp.get("/hub/api/params/raw")
+@_api
+def params_raw_get():
+    """§3.1：行级遮蔽，其余字节逐字原样。坏 YAML 时**不回显任何原文** ——
+    定位不了敏感路径，吐原文就等于吐明文 key，宁可让用户走备份回滚。"""
+    text = hub_config.read_global()
+    if text is None:
+        raise HubError(404, "not_found", "configs/_global.yml 不存在")
+    try:
+        root = hub_config.compose(text)
+    except yaml.YAMLError as e:
+        raise HubError(409, "global_yml_unreadable",
+                       hub_config.yaml_error_detail(e, "configs/_global.yml 解析失败"))
+    if not isinstance(root, yaml.MappingNode):
+        raise HubError(409, "global_yml_unreadable", "configs/_global.yml 顶层不是映射：第 1 行")
+    masked, paths = hub_config.mask_secrets(text, root)
+    return jsonify({"text": masked, "sensitive_paths": paths,
+                    "placeholder": hub_config.PLACEHOLDER,
+                    "version": hub_config.version_of()})
+
+
+@hub_bp.post("/hub/api/params/raw")
+@_api
+def params_raw_post():
+    """§3.2 的固定校验顺序（0 锁 / 1 body / 2 体积 / 3 YAML / 4 顶层 / 5 关键键 /
+    6 占位符 / 7 版本 / 8 写盘），任一失败均不写盘、不备份。"""
+    body = _cfg_body()
+    text = body.get("text")
+    if not isinstance(text, str):
+        raise HubError(400, "bad_body", "缺少 text 或它不是字符串")
+    version = _cfg_version(body)
+    if len(text.encode("utf-8")) > hub_config.MAX_RAW_BYTES:
+        raise HubError(413, "payload_too_large", "配置原文超过 1 MiB")
+    try:
+        root = hub_config.compose(text)
+    except yaml.YAMLError as e:
+        # detail 只给行号：回显用户提交的原文等于把他刚粘进去的 key 又吐回响应里
+        raise HubError(400, "bad_yaml", hub_config.yaml_error_detail(e, "YAML 解析失败"))
+    if not isinstance(root, yaml.MappingNode):
+        raise HubError(400, "bad_yaml", "第 1 行：配置顶层必须是一个映射（key: value）")
+    missing = hub_config.missing_top_keys(root)
+    if missing:
+        raise HubError(400, "schema_missing_key", "缺少关键顶层键：%s" % "、".join(missing))
+    filled, unresolved = hub_config.resolve_placeholders(text, root)
+    if unresolved:
+        raise HubError(400, "placeholder_unresolved",
+                       "这些路径上的占位符在现配置里找不到对应的原值：%s" % "、".join(unresolved))
+    with hub_config.hold_config_lock():
+        hub_config.check_version(version)
+        backup = hub_config.commit(filled)
+    # §5：高级模式无法逐键归因，两个都提示重启
+    return jsonify({"ok": True, "backup": backup, "version": hub_config.version_of(),
+                    "restart_hint": {"bot": True, "moments_web": True}})
+
+
+@hub_bp.get("/hub/api/params/backups")
+@_api
+def params_backups():
+    """§3.4：新到旧，**不含备份内容**（内容里有明文 key）。目录读不到 = 空列表，不是错误。"""
+    return jsonify({"backups": hub_config.list_backups()})
+
+
+@hub_bp.post("/hub/api/params/backups/<bid>/restore")
+@_api
+def params_restore(bid):
+    """§3.5：回滚 = 一次新的写盘 —— 先给当前文件留一份 `pre-restore` 备份再写回，
+    所以回滚本身也可回滚，且不挤占 save 的 5 份配额（R3-3）。"""
+    body = _cfg_body()
+    version = _cfg_version(body)
+    path = hub_config.backup_path(bid)
+    if path is None or not os.path.isfile(path):
+        raise HubError(404, "backup_not_found", "没有这份备份")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except (OSError, UnicodeDecodeError) as e:
+        raise HubError(404, "backup_not_found", "备份读不出来：%s" % type(e).__name__)
+    try:
+        root = hub_config.compose(content)
+    except yaml.YAMLError as e:
+        raise HubError(400, "bad_yaml", hub_config.yaml_error_detail(e, "备份内容解析失败"))
+    if not isinstance(root, yaml.MappingNode):
+        raise HubError(400, "bad_yaml", "第 1 行：备份内容顶层不是映射")
+    with hub_config.hold_config_lock():
+        hub_config.check_version(version)
+        pre = hub_config.commit(content, kind="restore")
+    return jsonify({"ok": True, "backup": pre, "version": hub_config.version_of(),
+                    "restart_hint": {"bot": True, "moments_web": True}})
