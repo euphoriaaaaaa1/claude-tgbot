@@ -120,3 +120,8 @@
 | BUG-26 | 重要：unwrap 空默认喂给写路径整块 PUT，升级换形状会静默抹全部 provider | 修复中 | 抽查 / dev-int | |
 | BUG-27 | 重要：重启线程 start 失败 _running 永卡 409 | 修复中 | 抽查 / dev-int | |
 | BUG-28 | 重要：systemd WorkingDirectory 无引号+体检照样绿；sed 未防 #/& | 修复中 | 抽查 / dev-int | |
+- **第六次落锁·停点 @035ec83**：双审合并批+追针批全清（BUG-21~28+安审S2-S4+抽查9-15），
+  验收 406绿/0红/3skip、unit 702 全绿。两遗留采纳：①手写disabled暂复用 delete_active 409（专码留补丁版）
+  ②启动闸在 install() 内 503 化、exit 仍归 __main__。**按用户指示停在卡点 4 之前，不发布**；
+  发布时人工清单 5 条见 ACCEPT-REPORT。
+| BUG-21~28 | 双审八缺陷 | 已修复 | 双审 / dev-int | bc7e30c..1fc4d34 |
