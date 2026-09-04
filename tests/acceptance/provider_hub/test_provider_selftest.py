@@ -71,14 +71,17 @@ def test_上游4xx回显请求头时不得把原始响应体端出来(api, stub)
     assert "Bearer" not in text
 
 
-def test_cliproxy回未知模型时stage是routing(api, stub):
+@pytest.mark.parametrize("status", [400, 502])
+def test_未知模型按message文本判routing_与状态码无关(api, stub, status):
+    """㉓：真机回 400、[CPX] 写的是 502。按状态码归类会在上游一改版就把"配置缺失"误报成"上游报错"。"""
     p = _mk(api)
     _activate(api, p["id"])
     stub.messages_mode = "unknown_model"
+    stub.unknown_model_status = status
     code, body = api.post("/hub/api/provider/%s/test" % p["id"])
     assert code == 200
     assert body["ok"] is False
-    assert body["stage"] == "routing"
+    assert body["stage"] == "routing", "上游回 %d 时没判成 routing：%s" % (status, body)
 
 
 def test_未激活的cliproxy条目自测返回stage_disabled(api, stub):
@@ -123,43 +126,7 @@ def test_上游不响应时30秒后返回stage_timeout(api, stub):
     assert body["ok"] is False and body["stage"] == "timeout"
 
 
-# ---- direct 形态：门户自己打真上游（这里"上游"就是桩），路径拼接是重点 ----
-
-def _direct_api_and_provider(make_client, stub, base_url):
-    a = _Api(make_client(CLIPROXY_ANTHROPIC_COMPAT="0",
-                         HUB_ALLOW_PRIVATE_BASE_URL="1")[0])
-    code, body = a.post("/hub/api/provider", provider_payload(
-        kind="anthropic", label="直连网关", base_url=base_url, upstream_model="glm-4.6"))
-    assert code == 201, "anthropic 恒可建（§3.0 修订 3），实得 %s %s" % (code, body)
-    return a, body
-
-
-def test_direct自测_base_url不带v1时补上(make_client, stub):
-    a, p = _direct_api_and_provider(make_client, stub, "http://127.0.0.1:%d" % stub.port)
-    code, body = a.post("/hub/api/provider/%s/test" % p["id"])
-    assert code == 200, body
-    assert [r["path"] for r in stub.requests if r["path"].endswith("messages")][-1:] \
-        == ["/v1/messages"]
-
-
-def test_direct自测_base_url已带v1时不重复拼(make_client, stub):
-    a, p = _direct_api_and_provider(make_client, stub, "http://127.0.0.1:%d/v1" % stub.port)
-    code, body = a.post("/hub/api/provider/%s/test" % p["id"])
-    assert code == 200, body
-    paths = [r["path"] for r in stub.requests if "messages" in r["path"]]
-    assert paths[-1] == "/v1/messages", "路径拼成了 %s（§3.7 明说带了就不重复拼）" % paths[-1:]
-
-
-def test_direct自测用的是用户填的key与第三方模型名(make_client, stub):
-    a, p = _direct_api_and_provider(make_client, stub, "http://127.0.0.1:%d" % stub.port)
-    a.post("/hub/api/provider/%s/test" % p["id"])
-    hit = [r for r in stub.requests if "messages" in r["path"]][-1]
-    assert json.loads(hit["body"])["model"] == "glm-4.6"
-    assert hit["headers"].get("authorization", "").startswith("Bearer sk-test-")
-
-
-def test_direct条目在cliproxy里恒disabled但自测不返回stage_disabled(make_client, stub):
-    """§3.7 表倒数第三行：direct 条目不适用 disabled 那一行。"""
-    a, p = _direct_api_and_provider(make_client, stub, "http://127.0.0.1:%d" % stub.port)
-    code, body = a.post("/hub/api/provider/%s/test" % p["id"])
-    assert body.get("stage") != "disabled"
+# ⑩（修订 4）：`anthropic-direct` fallback 永不启用 —— install 直接写
+# CLIPROXY_ANTHROPIC_COMPAT=1，运行时探测已删。原先 4 条 direct 自测用例（路径拼接、
+# 用户 key、不适用 stage:"disabled"）随之删除，INTERFACE 明标"当前不可达、不写用例"。
+# 保留的回归护栏是 test_provider_crud.py 里"route 恒 cliproxy"那条。

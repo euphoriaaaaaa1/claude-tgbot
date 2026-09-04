@@ -5,7 +5,6 @@
 - generate_novelai_image.py 通过 apply_active_style() 在生图前读取该文件生效
 """
 import os
-import re
 import sys
 import json
 import time
@@ -14,6 +13,9 @@ import subprocess
 from pathlib import Path
 from flask import Blueprint, render_template, request, jsonify
 
+from moments import redact
+from moments.redact import mask as _mask
+
 styles_bp = Blueprint("styles", __name__)
 
 # 保护 styles.json 的 read-modify-write：并发生成示例图时，各请求生图耗时长(30-60s)，
@@ -21,12 +23,10 @@ styles_bp = Blueprint("styles", __name__)
 _SAVE_LOCK = threading.Lock()
 _SAMPLING_IDS = set()  # 正在生成示例图的 style_id，由 _SAVE_LOCK 保护
 
-# 生图脚本的 stderr 可能带上 NovelAI 令牌（请求头回显、异常里的 curl 命令等），回给页面前先抹掉
-_SECRET_RE = re.compile(r"pst-[\w-]+|Bearer\s+\S+|Authorization[^\n]*", re.I)
-
-
+# 生图脚本的 stderr 可能带上 NovelAI 令牌（请求头回显、异常里的 curl 命令等），回给页面前先抹掉。
+# 正则本体已迁到 moments/redact.py（[RA] M1：脱敏是核心能力，不该让核心反向依赖本模块）。
 def _scrub_secrets(text: str) -> str:
-    return _SECRET_RE.sub("***", text or "")[-2000:]
+    return redact.scrub_text(text)[-2000:]
 
 
 # 路径可用 NOVELAI_SKILL_ROOT 覆盖：验收测试通过真实 HTTP 接口读写 styles.json，
@@ -249,7 +249,7 @@ def api_delete_style(style_id):
 
 @styles_bp.route("/api/styles/active", methods=["POST"])
 def api_set_active():
-    body = request.get_json(force=True) or {}
+    body = request.get_json(silent=True) or {}
     style_id = (body.get("id") or "").strip()
     # bot 不做 strip：" mybot" 被 strip 成 "mybot" 会让一个笔误静默改掉真实绑定，必须报错
     bot = body.get("bot") or ""
@@ -350,10 +350,6 @@ def _current_novelai_token() -> str:
     return ""
 
 
-def _mask(tok: str) -> str:
-    return ("****" + tok[-4:]) if len(tok) >= 4 else ("****" if tok else "")
-
-
 def _write_novelai_token(token: str) -> None:
     """把 token 写进 .env.local 的 NOVELAI_BEARER_TOKEN，删掉旧的 JWT/TOKEN 行
     （否则读取优先级 JWT>BEARER 会让旧 key 盖过新设的）。保留其它无关行。文件权限 600。"""
@@ -378,7 +374,7 @@ def api_get_novelai_key():
 
 @styles_bp.route("/api/novelai_key", methods=["POST"])
 def api_set_novelai_key():
-    body = request.get_json(force=True) or {}
+    body = request.get_json(silent=True) or {}
     token = (body.get("token") or "").strip()
     if not token:
         return jsonify({"error": "token required"}), 400

@@ -32,9 +32,11 @@ def _text(rel):
 
 
 def test_A1_版本号单行且不带v():
+    """⑮：上游两天一版（7.2.147→7.2.148），**不断言具体数字**，只断言格式与一致性。"""
     raw = _text("configs/cliproxy.version")
     assert raw.strip().count("\n") == 0
-    assert re.fullmatch(r"\d+\.\d+\.\d+", raw.strip()), "版本串形如 7.2.147（不带 v）"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", raw.strip()), \
+        "版本串形如 7.2.148（不带 v），实得 %r" % raw.strip()
 
 
 def test_A2_校验和文件首行是版本注释其余是hash与资产名():
@@ -143,6 +145,12 @@ def test_A6_A8_生成的config骨架字段齐全且host是回环(tmp_path, stub)
     assert re.search(r"error-logs-max-files:\s*0", cfg)
     assert re.search(r"logging-to-file:\s*false", cfg)
     assert re.search(r"request-log:\s*false", cfg)
+    assert re.search(r"debug:\s*false", cfg), \
+        "A8b：debug:true 会把半掩码上游 key（sk-9...7093）打进日志"
+    assert re.search(r"force-model-prefix:\s*true", cfg), \
+        "A8：alias 互斥依赖它（§3.0d）—— 关着的话带 prefix 的条目照样响应裸模型名"
+    m = re.search(r"secret-key:\s*(\S+)", cfg)
+    assert m and m.group(1).strip('"\''), "secret-key 必须非空"
 
 
 def test_A7_目录与文件权限(tmp_path, stub):
@@ -166,26 +174,16 @@ def test_A9_hub_env五个键齐全且口令够长(tmp_path, stub):
     assert "HUB_ADMIN_PASSWORD" not in kv, "§8.1 A9：管理口令不由 install 生成"
 
 
-def test_A9b_探测标志只能是0或1且探测条目已删干净(tmp_path, stub):
+def test_A9b_兼容标志直接写1且不得有探测残留(tmp_path, stub):
+    """§8.1 A9b 修订 4：S0-B 已实证，**运行时探测逻辑删除**，install 直接写 1。"""
     r, root = _run_bootstrap(tmp_path, stub)
     assert r.returncode == 0, r.stderr[-600:]
     kv = dict(l.split("=", 1) for l in (root / "hub.env").read_text(encoding="utf-8").splitlines()
               if "=" in l)
-    assert kv["CLIPROXY_ANTHROPIC_COMPAT"].strip().strip('"') in ("0", "1")
-    left = [b for b in stub.claude_api_key
-            if "__hubprobe__" in str(b)] + [b for b in stub.openai_compat
-                                            if "__hubprobe__" in str(b)]
-    assert left == [], "探测用的 __hubprobe__ 临时条目没删干净：%s" % left
-
-
-def test_A9b_cliproxy不可达时探测标志保守取0(tmp_path, stub):
-    """§3.0b：宁可多一条直连，也不要让用户配好的 provider 报 502。"""
-    stub.set_down(True)
-    r, root = _run_bootstrap(tmp_path, stub)
-    assert r.returncode == 0, "cliproxy 不可达不该让 bootstrap 整体失败：%s" % r.stderr[-400:]
-    kv = dict(l.split("=", 1) for l in (root / "hub.env").read_text(encoding="utf-8").splitlines()
-              if "=" in l)
-    assert kv["CLIPROXY_ANTHROPIC_COMPAT"].strip().strip('"') == "0"
+    assert kv["CLIPROXY_ANTHROPIC_COMPAT"].strip().strip('"') == "1", \
+        "探测已删，该键恒为 1"
+    blob = str(stub.all_blocks) + str(stub.requests)
+    assert "__hubprobe__" not in blob, "出现了探测临时条目 —— 探测逻辑该删没删"
 
 
 def test_A10_口令值不进stdout(tmp_path, stub):
@@ -230,3 +228,63 @@ def test_B4_计划任务跑的是守护循环脚本而不是二进制():
 def test_B6_卸载脚本的通配能摘掉新任务():
     t = _text("windows/unregister-tasks.ps1")
     assert "claude-tgbot-*" in t or "claude-tgbot*" in t
+
+
+def test_A8b_重跑install会把误开的debug改回false(tmp_path, stub):
+    """§8.1 A8b：debug 属骨架字段，不受 A5b「provider 块不动」保护。
+
+    实测 debug:true 时每次路由都打半掩码上游 key（`sk-9...7093`），属泄漏面。
+    """
+    r, root = _run_bootstrap(tmp_path, stub)
+    assert r.returncode == 0, r.stderr[-600:]
+    cfg = root / "cliproxy" / "config.yaml"
+    cfg.write_text(re.sub(r"debug:\s*false", "debug: true", cfg.read_text(encoding="utf-8")),
+                   encoding="utf-8")
+    r2, _ = _run_bootstrap(tmp_path, stub)
+    assert r2.returncode == 0, r2.stderr[-400:]
+    assert re.search(r"debug:\s*false", cfg.read_text(encoding="utf-8")), \
+        "重跑没把用户误开的 debug:true 改回 false"
+
+
+@pytest.mark.parametrize("rel,pat", [
+    ("install.sh", r"WorkingDirectory"),
+    ("scripts/install_cliproxy.sh", r"WorkingDirectory"),
+    ("windows/register-tasks.ps1", r"WorkingDirectory"),
+])
+def test_A11b_三平台常驻单元必须钉死工作目录(rel, pat):
+    """§8.1 A11b（新增红线）：v7 启动会往**进程 CWD** 写 static/management.html（2.7 MB）。
+
+    脚本里必须出现 WorkingDirectory 且指向 ~/.claude-tgbot/cliproxy。
+    """
+    p = REPO_ROOT / rel
+    if not p.exists():
+        pytest.fail("§8 要求的文件不存在：%s" % rel)
+    t = p.read_text(encoding="utf-8", errors="replace")
+    if "WorkingDirectory" not in t:
+        pytest.fail("%s 没钉死 WorkingDirectory，cliproxy 会往当时的 CWD 拉 2.7 MB" % rel)
+    assert "claude-tgbot" in t and "cliproxy" in t
+
+
+def test_A11b_仓库根不得出现cliproxy拉下来的static目录():
+    """CWD 没钉住的直接症状：用户仓库根多出一个 static/management.html。"""
+    stray = REPO_ROOT / "static" / "management.html"
+    assert not stray.exists(), "仓库根出现了 cliproxy 的 static/management.html（CWD 没钉住）"
+
+
+def test_A5b_重跑不比对secret_key只看它仍非空(tmp_path, stub):
+    """㉙：cliproxy 启动会把明文 bcrypt 成 `$2a$...` 写回该键，字面比对必假红。
+
+    幂等断言的正确口径：重跑后该键**仍非空**，且 hub.env 里的明文没被改动。
+    """
+    r1, root = _run_bootstrap(tmp_path, stub)
+    assert r1.returncode == 0, r1.stderr[-600:]
+    cfg = root / "cliproxy" / "config.yaml"
+    cfg.write_text(re.sub(r"secret-key:\s*\S+", 'secret-key: "$2a$10$bcryptedbycliproxy"',
+                          cfg.read_text(encoding="utf-8")), encoding="utf-8")
+    env_before = (root / "hub.env").read_text(encoding="utf-8")
+    r2, _ = _run_bootstrap(tmp_path, stub)
+    assert r2.returncode == 0, r2.stderr[-400:]
+    m = re.search(r"secret-key:\s*(\S+)", cfg.read_text(encoding="utf-8"))
+    assert m and m.group(1).strip('"\''), "重跑后 secret-key 变空了"
+    assert (root / "hub.env").read_text(encoding="utf-8") == env_before, \
+        "重跑改动了 hub.env 里的明文管理密钥，客户端会认不上"

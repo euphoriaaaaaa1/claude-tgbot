@@ -112,7 +112,11 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
 
 <div class="topbar">
   <h1>NovelAI 画风预设</h1>
-  <button class="btn btn-primary" onclick="openModal()">+ 新建预设</button>
+  <div>
+    <a class="btn btn-ghost" href="/hub" title="模型来源与 bot 状态"
+       style="text-decoration:none;display:inline-block;">← 管理台</a>
+    <button class="btn btn-primary" onclick="openModal()">+ 新建预设</button>
+  </div>
 </div>
 
 <div class="bot-tabs" id="botTabs"></div>
