@@ -39,8 +39,10 @@ def test_hub首页_导航含两个新入口(client):
 
 
 def test_开了访问门_未登录访问参数页_302到login且带HubGate头(make_client):
+    # §13 A10：浏览器导航必带 Accept: text/html；一期 §1.4 冻结契约是
+    # 「非 HTML 导航一律 401」，用例补头还原真实场景，不松安全语义。
     c, _ = make_client(HUB_ACCESS_PASSWORD="pw-access")
-    r = c.get("/hub/params")
+    r = c.get("/hub/params", headers={"Accept": "text/html"})
     assert r.status_code == 302
     assert "/login" in r.headers.get("Location", "")
     assert r.headers.get("Hub-Gate") == "1"
@@ -48,7 +50,7 @@ def test_开了访问门_未登录访问参数页_302到login且带HubGate头(ma
 
 def test_开了访问门_未登录访问加bot页_302到login(make_client):
     c, _ = make_client(HUB_ACCESS_PASSWORD="pw-access")
-    r = c.get("/hub/addbot")
+    r = c.get("/hub/addbot", headers={"Accept": "text/html"})
     assert r.status_code == 302
     assert "/login" in r.headers.get("Location", "")
 
