@@ -774,3 +774,47 @@ def test_换kind成功后旧块不留残条(c, stub):
     assert r.status_code == 200, r.get_json()
     assert stub.openai_compat == [] and len(stub.claude_api_key) == 1
     assert stub.claude_api_key[0]["api-key"] == "sk-test-aaaabbbbcccc"
+
+
+# ---------------- BUG-23：CRUD 三端点必须与 activate 共用同一把锁 ----------------
+
+def _hold_activate_lock(c):
+    """从外面把那把锁抢走 —— 等价于"另一个请求正在写"，且不用 sleep 赌时序。"""
+    import threading
+    lock = c.application.extensions.setdefault("hub_activate", threading.Lock())
+    assert lock.acquire(blocking=False)
+    return lock
+
+
+def test_有写在进行时CRUD三端点一律409_activate_busy(c, stub):
+    """不持锁的话，两个并发的读-改-写各自基于旧快照整块 PUT，
+    后写的能把对方刚落地的整条覆盖掉（含它的上游明文 key）。"""
+    code, created = create(c)
+    assert code == 201, created
+    lock = _hold_activate_lock(c)
+    try:
+        probes = [
+            c.post("/hub/api/provider", json=payload(base_url=PUBLIC2)),
+            c.patch("/hub/api/provider/%s" % created["id"], json={"label": "改名"}),
+            c.delete("/hub/api/provider/%s" % created["id"]),
+            c.post("/hub/api/provider/%s/activate" % created["id"]),
+            c.post("/hub/api/claude-native/activate"),
+        ]
+        for r in probes:
+            assert (r.status_code, r.get_json()["error"]) == (409, "activate_busy"), r.get_json()
+    finally:
+        lock.release()
+    # 锁放开后同样的请求照常成功：409 是"正忙"不是"坏了"
+    assert c.patch("/hub/api/provider/%s" % created["id"],
+                   json={"label": "改名"}).status_code == 200
+
+
+def test_改生效中的provider不会自己把自己锁死(c, stub):
+    """PATCH 内部要接着做一次 activate。锁不可重入，写成再抢一次就是自己给自己回 409。"""
+    code, created = create(c)
+    assert code == 201, created
+    assert c.post("/hub/api/provider/%s/activate" % created["id"]).status_code == 200
+    r = c.patch("/hub/api/provider/%s" % created["id"], json={"upstream_model": "deepseek-v5"})
+    assert r.status_code == 200, r.get_json()
+    assert r.get_json()["active"] is True
+    assert settings_now()["env"]["ANTHROPIC_MODEL"] == ALIAS
