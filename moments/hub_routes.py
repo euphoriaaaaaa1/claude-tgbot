@@ -292,8 +292,14 @@ def provider_update(pid):
         entry = dict(e.raw, **entry)
         client.replace_entry(e.kind, e.index, entry)
     else:
-        client.delete_entry(e.kind, e.index)                 # 换 kind = 换承载块，只能删了重建
+        # 换 kind = 换承载块，只能删了重建。**顺序必须是先加后删**（BUG-22）：
+        # 先删的话 add 一失败（cliproxy 重启、管理 API 抖动、块形状认不出）用户的条目
+        # 连同上游明文 key 就永久没了 —— 那份 key 只存在 cliproxy 的 config.yaml 里，
+        # 我们手上没有第二份可回滚，属不可恢复的数据丢失。
+        # 反过来 add 成功、delete 失败只会多出一条重复条目：用户看得见、自己删得掉。
+        # 两块不同名，所以 add 不会挪动旧块的下标，e.index 到这里仍然有效。
         client.add_entry(p["kind"], entry)
+        client.delete_entry(e.kind, e.index)
     view = provider_model.from_block_entry(p["kind"], entry)
     if was_active:
         _activate(client, new_id)            # 不自动切的话 bot 会打到一个已经不存在的 alias
