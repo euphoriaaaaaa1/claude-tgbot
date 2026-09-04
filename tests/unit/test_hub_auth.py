@@ -115,5 +115,57 @@ def test_爆破滑窗_达阈值后拦截且窗口过期自动恢复():
     assert not g.blocked()
 
 
+# ---------------- BUG-21 / 安审 F1：口令必须逐键回落 hub.env ----------------
+
+def _hub_env(tmp_path, monkeypatch, text):
+    f = tmp_path / "hub.env"
+    f.write_text(text, encoding="utf-8")
+    monkeypatch.setenv("HUB_ENV_FILE", str(f))
+    for k in ("HUB_ACCESS_PASSWORD", "HUB_ADMIN_PASSWORD"):
+        monkeypatch.delenv(k, raising=False)
+    return f
+
+
+def test_环境变量没有但hub_env里有口令时门是开的(tmp_path, monkeypatch):
+    """三条自启路径都不 source hub.env —— 只读 os.environ 的话出货机器上整站零鉴权。"""
+    _hub_env(tmp_path, monkeypatch, "# 注释\nCLIPROXY_PORT=8317\nHUB_ACCESS_PASSWORD=%s\n" % PW)
+    assert A.access_password() == PW
+    assert A.gate_open() is True
+
+
+def test_hub_env里的管理口令同样回落(tmp_path, monkeypatch):
+    _hub_env(tmp_path, monkeypatch, 'HUB_ADMIN_PASSWORD="quoted-admin-pw"\n')
+    assert A.admin_password() == "quoted-admin-pw"      # 值两侧的引号要剥掉
+    assert A.access_password() == ""                    # 没写的键仍然是空
+
+
+def test_环境变量优先于hub_env(tmp_path, monkeypatch):
+    _hub_env(tmp_path, monkeypatch, "HUB_ACCESS_PASSWORD=from-file\n")
+    monkeypatch.setenv("HUB_ACCESS_PASSWORD", "from-env")
+    assert A.access_password() == "from-env"
+
+
+def test_hub_env不存在时不抛错(tmp_path, monkeypatch):
+    monkeypatch.setenv("HUB_ENV_FILE", str(tmp_path / "根本没有这个文件.env"))
+    monkeypatch.delenv("HUB_ACCESS_PASSWORD", raising=False)
+    assert A.access_password() == "" and A.gate_open() is False
+
+
+def test_回落到的口令能让启动闸放行非回环绑定(tmp_path, monkeypatch):
+    """闸门读的也是同一个函数：回落没接上时这里会 REFUSE 掉一台配置正确的机器。"""
+    _hub_env(tmp_path, monkeypatch, "HUB_ACCESS_PASSWORD=%s\n" % PW)
+    out, err = io.StringIO(), io.StringIO()
+    assert A.check_startup("0.0.0.0", out=out, err=err) is None
+    assert PW not in out.getvalue() + err.getvalue(), "口令值不许出现在启动输出里"
+
+
+def test_无口令绑回环仍放行但必须出声(tmp_path, monkeypatch):
+    """隧道暴露前唯一的可发现路径 —— 静默放行等于把裸奔态藏起来。"""
+    _hub_env(tmp_path, monkeypatch, "\n")
+    out, err = io.StringIO(), io.StringIO()
+    assert A.check_startup("127.0.0.1", out=out, err=err) is None
+    assert "HUB_ACCESS_PASSWORD" in err.getvalue()
+
+
 if __name__ == "__main__":
     sys.exit(__import__("pytest").main([__file__, "-q"]))
