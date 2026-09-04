@@ -649,7 +649,6 @@ def api_image_provider():
 
     持久化方式：直接改 _global.yml 的 image_generation 下三个字段之一。
     """
-    global_path = config_loader.GLOBAL_CFG_PATH
     g = config_loader.load_global()
     img = g.setdefault("moments", {}).setdefault("image_generation", {})
 
@@ -669,21 +668,33 @@ def api_image_provider():
     if new_provider not in ("novelai", "comfyui"):
         return jsonify({"error": "provider must be novelai|comfyui"}), 400
 
-    if scope == "moment":
-        img["provider_moment"] = new_provider
-    elif scope == "telegram":
-        img["provider_telegram"] = new_provider
-    elif scope == "":
-        # 兼容：不传 scope 同时切两个 + 兼容字段
-        img["provider"] = new_provider
-        img["provider_moment"] = new_provider
-        img["provider_telegram"] = new_provider
-    else:
+    # 兼容：不传 scope 同时切两个 + 兼容字段
+    fields = {"moment": ("provider_moment",), "telegram": ("provider_telegram",),
+              "": ("provider", "provider_moment", "provider_telegram")}.get(scope)
+    if fields is None:
         return jsonify({"error": "scope must be moment|telegram or omitted"}), 400
 
+    # F2：原来这里是把整表 dump 回去 —— 切一次生图 provider 就把 _global.yml 的
+    # 注释、锚点、merge key、键序、数值格式全展平，用户手写的配置面目全非。
+    # 改走 hub_config 的行级编辑器：只替换那一个标量的那几个字节，其余逐字节不动。
+    # 顺带拿到备份 + 原子写 + 与参数页共用的写锁（两边写的是同一个文件）。
     import yaml
-    with open(global_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(g, f, allow_unicode=True, sort_keys=False, width=4096)
+    from moments import hub_config, provider_model
+    try:
+        with hub_config.hold_config_lock():
+            text = hub_config.read_global()
+            if text is None:
+                return jsonify({"error": "_global.yml 读不出来"}), 500
+            for name in fields:
+                root = hub_config.compose(text)      # 上一轮可能插了行，下标要重新算
+                text = hub_config.set_scalar(text, root,
+                                             "moments.image_generation." + name,
+                                             new_provider, "str")
+            hub_config.commit(text)
+    except provider_model.HubError as e:
+        return jsonify({"error": e.error, "detail": e.detail}), e.status
+    except yaml.YAMLError:
+        return jsonify({"error": "_global.yml 解析失败，先用管理台的高级模式修好"}), 500
     return jsonify({"provider": new_provider, "scope": scope or "all", "ok": True})
 
 
