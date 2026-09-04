@@ -109,6 +109,18 @@ def test_python侧的bot表必须来自注册表(marker, why):
     assert bad == [], f"{why} 还是硬编码的（没读注册表）：{bad}"
 
 
+def test_workerManager里env命名空间优先于legacy表():
+    """判官整改单第 2 条：A9 放行 worker-manager.ts 保留 legacy 表的前提，是
+    env 注入真的压过表（BRIEF 需求 4「加 bot 零代码改动」的成立条件）。
+    锁住优先级结构：process.env.BOT_NAMESPACE 在 || 左侧，表在右侧兜底。"""
+    ts = list(_iter_sources("worker-manager.ts"))
+    if not ts:
+        pytest.skip("仓库里没有 worker-manager.ts")
+    pat = re.compile(r"process\.env\.BOT_NAMESPACE\s*\|\|\s*BOT_NAMESPACES\[")
+    assert any(pat.search(_read(p)) for p in ts), \
+        "env BOT_NAMESPACE 不再优先于 legacy 表 —— A9 的豁免前提失效，加 bot 零改动承诺破产"
+
+
 def test_dispatcher侧TS保留BOT_NAMESPACE环境变量接缝():
     """§8 承诺 dispatcher/ 全部 TS 零改动，靠的就是这个 env 接缝。
     §13 A6 裁决：与 BRIEF 需求 4 不是冲突 —— env 已优先于表，收敛动作落在启动脚本

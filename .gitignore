@@ -55,3 +55,4 @@ voicecall/.devflow/
 state.db
 state.db-shm
 state.db-wal
+!.devflow/LOCK-hub2
