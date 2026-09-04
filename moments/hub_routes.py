@@ -281,9 +281,11 @@ def _create_locked(client, p):
                                              [p["model_alias"], p["haiku_alias"]])
     entry = provider_model.to_block_entry(p, disabled=disabled)
     client.add_entry(p["kind"], entry)
-    # 响应由刚写下去的条目现算：from_block_entry 只带出安全字段 + key_masked，
-    # 明文 key 不进响应体（§3.1「没有 api_key 字段」）。省一次回读往返。
-    return jsonify(provider_model.from_block_entry(p["kind"], entry)), 201
+    # 响应由刚写下去的条目现算（省一次回读往返），但**必须走与列表同一个投影出口**
+    # （安审 2）：直接 from_block_entry(entry) 会绕过白名单与 userinfo 打码 ——
+    # `https://user:pass@api.example.com/` 过得了入参校验（那里取的是 hostname），
+    # 于是密码原样回显在 201 响应里。
+    return jsonify(cliproxy_client.to_view(p["kind"], entry)), 201
 
 
 @hub_bp.patch("/hub/api/provider/<pid>")
@@ -330,7 +332,7 @@ def _update_locked(client, pid):
         # 两块不同名，所以 add 不会挪动旧块的下标，e.index 到这里仍然有效。
         client.add_entry(p["kind"], entry)
         client.delete_entry(e.kind, e.index)
-    view = provider_model.from_block_entry(p["kind"], entry)
+    view = cliproxy_client.to_view(p["kind"], entry)      # 同上：出站必过投影（安审 2）
     if was_active:
         _activate_locked(client, new_id)     # 不自动切的话 bot 会打到一个已经不存在的 alias
         view["active"] = True
