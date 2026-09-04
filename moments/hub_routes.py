@@ -13,6 +13,8 @@
 鉴权由 ``moments/hub_auth.py`` 的 before_request 统管（``/hub`` 及其子路径全锁），
 本模块不写任何鉴权判断。``/hub/healthz`` 已在 ``hub_auth.install()`` 注册，**不要在这里重复注册**。
 """
+import functools                              # 模块公共区的 _api 要用
+
 from flask import Blueprint, jsonify, render_template
 
 from moments import provider_model
@@ -24,6 +26,23 @@ hub_bp = Blueprint("hub", __name__)
 OAUTH_CALLBACK_PORTS = {"codex": 1455, "antigravity": 51121}
 OAUTH_PROVIDER_LABELS = {"codex": "ChatGPT", "antigravity": "Google（Antigravity）"}
 OAUTH_WAIT_SECONDS = 300        # §4.4 服务端授权等待窗口，页面按它显示倒计时
+
+
+def _api(fn):
+    """把 HubError 翻成 §0.1 形状的 ``{"error","detail"}`` + 状态码；
+    其余异常照旧冒泡给 500 internal 处理器。
+
+    **三段共用**（抽查 10：第 2 段的 ``_api`` 与第 3 段的 ``_json_errors`` 原来一字不差
+    地各写了一份）。``detail`` 是人读文案，出站还会再过一遍 §0.2 第二层兜底
+    （web.py 的 after_request）。
+    """
+    @functools.wraps(fn)
+    def wrapper(*a, **kw):
+        try:
+            return fn(*a, **kw)
+        except provider_model.HubError as e:
+            return jsonify({"error": e.error, "detail": e.detail}), e.status
+    return wrapper
 
 
 def _require_json_object(body):
@@ -95,7 +114,6 @@ def hub_bots_page():
 
 
 import contextlib                             # noqa: E402  第 2 段自己的依赖，段界即分工线
-import functools                              # noqa: E402
 import os                                     # noqa: E402
 import sys                                    # noqa: E402
 import threading                              # noqa: E402
@@ -125,20 +143,6 @@ def _installed_version():
             return f.read().strip() or None
     except OSError:
         return None
-
-
-def _api(fn):
-    """把 HubError 翻成 §0.1 形状的错误响应；其余异常照旧冒泡给 500 internal 处理器。
-
-    `detail` 是人读文案，出站还会再过一遍 §0.2 第二层兜底（web.py 的 after_request）。
-    """
-    @functools.wraps(fn)
-    def wrapper(*a, **kw):
-        try:
-            return fn(*a, **kw)
-        except HubError as e:
-            return jsonify({"error": e.error, "detail": e.detail}), e.status
-    return wrapper
 
 
 @contextlib.contextmanager
@@ -373,15 +377,26 @@ def _sole(views, alias, target_id):
 
 
 def _compensate(client, records):
-    """§3.6：把 B 阶段改过的 prefix 还原。**补偿本身失败 = 不一致态**（cliproxy 已切、
-    settings 未切）→ 500 activate_partial，如实说，不假装成功也不假装回退。重试可收敛。"""
+    """§3.6 / §4.6 的补偿，**三段共用一份**（抽查 10：原来第 2/3 段各有一个）。
+
+    把 B 阶段改过的东西还原：``{"kind","index","prefix"}`` 的记录写回 prefix，
+    ``{"account"}`` 的记录把被我们启用的 OAuth 账户再禁回去（§4.6 的 B2）。
+    两种形状按键区分 —— provider 那条路只会产出前一种，行为与合并前逐字节一致。
+
+    **补偿本身失败 = 不一致态**（cliproxy 已改、settings 未改）→ 500 activate_partial，
+    如实说，不假装成功也不假装回退。重试可收敛。
+    """
     if not records:
         return
     try:
-        client.restore_prefixes(records)
+        client.restore_prefixes([r for r in records if "kind" in r])
+        for r in records:
+            if "account" in r:
+                client.mgmt_patch("auth-files/status",
+                                  {"name": r["account"], "disabled": True})
     except HubError:
         raise HubError(500, "activate_partial",
-                       "cliproxy 已切换但 settings.json 未更新，请重试；仍失败请手动检查 cliproxy")
+                       "cliproxy 已改但 settings.json 未更新，请重试；仍失败请手动检查 cliproxy")
 
 
 def _activate(client, pid):
@@ -551,7 +566,6 @@ def reconcile():
 # ======================================================================
 # 段内 import：段界就是并行分工线（见文件顶注），各段各带各的依赖，
 # 谁也不用改文件顶部那几行 —— 并行 worktree 合并时零冲突。
-import functools                                              # noqa: E402
 import hashlib                                                # noqa: E402
 import threading                                              # noqa: E402
 import time                                                   # noqa: E402
@@ -575,20 +589,6 @@ _STATE_EXPIRED_TEXT = "授权会话已过期或已被新的登录取代，请重
 #: §4.6：detail 必须指出修复路径，否则用户拿到 409 完全无从下手。
 _NO_ALIAS_TEXT = ("该账户尚未配置模型映射，请在 cliproxy 的 oauth-model-alias（按渠道）"
                   "或该账户 auth JSON 的 model_aliases 里加一条")
-
-
-def _json_errors(fn):
-    """HubError -> §0.1 的 ``{"error","detail"}`` + 状态码。
-
-    M3/M7 落地时如果也要，提到文件顶部共用即可（现在提上去只会跟并行分支抢同一行）。
-    """
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        try:
-            return fn(*args, **kwargs)
-        except HubError as e:
-            return jsonify({"error": e.error, "detail": e.detail}), e.status
-    return wrapper
 
 
 def _json_body():
@@ -711,7 +711,7 @@ def oauth_accounts():
 
 
 @hub_bp.post("/hub/api/oauth/start")
-@_json_errors
+@_api
 def oauth_start():
     body = _json_body()
     provider = _provider_or_400(body.get("provider"))
@@ -749,7 +749,7 @@ def _split_callback(raw):
 
 
 @hub_bp.post("/hub/api/oauth/submit")
-@_json_errors
+@_api
 def oauth_submit():
     body = _json_body()
     provider = _provider_or_400(body.get("provider"))
@@ -778,7 +778,7 @@ def oauth_submit():
 
 
 @hub_bp.get("/hub/api/oauth/status")
-@_json_errors
+@_api
 def oauth_status():
     state = (request.args.get("state") or "").strip()
     if not state:
@@ -821,7 +821,7 @@ def _is_active(port, aliases):
 
 
 @hub_bp.delete("/hub/api/oauth/accounts/<provider>/<email_hash>")
-@_json_errors
+@_api
 def oauth_account_delete(provider, email_hash):
     client = cliproxy_client.from_env()
     acc = _find_account(_auth_files(client), provider, email_hash)
@@ -852,43 +852,18 @@ def _claim_aliases(client, aliases, undo):
         undo.append({"kind": e.kind, "index": e.index, "prefix": old})
 
 
-# 段内辅助必须带段前缀（此前与第 2 段同名互顶导致 provider activate 404）
-def _oauth_compensate(client, undo):
-    """§3.6 的补偿：prefix 原样写回、被我们启用的账户再禁回去。补偿本身失败 = 不一致态。"""
-    try:
-        client.restore_prefixes([r for r in undo if "kind" in r])
-        for r in undo:
-            if "account" in r:
-                client.mgmt_patch("auth-files/status",
-                                  {"name": r["account"], "disabled": True})
-    except HubError:
-        raise HubError(500, "activate_partial",
-                       "cliproxy 已改、settings.json 未改，请重试或手动检查")
-
-
-def _activate_lock():
-    """§12.8 ㊴：三个写 settings.json 的入口（§3.6 / §4.6 / §5）共用的一把非阻塞锁。
-
-    键名与对象都定死在 ``app.extensions["hub_activate"]``（与 §6.2 重启锁同款作用域）：
-    第 2 段的模块级辅助落地后，同键 ``setdefault`` 拿到的就是同一把锁，天然合一。
-    ``dict.setdefault`` 在 GIL 下原子，两个并发请求不会各造一把。
-    """
-    return current_app.extensions.setdefault("hub_activate", threading.Lock())
-
-
 @hub_bp.post("/hub/api/oauth/accounts/<provider>/<email_hash>/activate")
-@_json_errors
+@_api
 def oauth_account_activate(provider, email_hash):
-    """§4.6 = §3.6 的 cliproxy 形态，阶段顺序照抄：A0 抢锁 / A 只读 / B 可补偿 / C 不可回退。"""
-    # A0：拿不到就 409，**不排队**（§12.8 ㊴）—— 切换是秒级人工操作，排队只会把
-    # "两个标签页各点一次"变成"看起来都成了、实际后一次覆盖前一次"。
-    lock = _activate_lock()
-    if not lock.acquire(blocking=False):
-        raise HubError(409, "activate_busy", "另一个切换正在进行，请稍后再试")
-    try:
+    """§4.6 = §3.6 的 cliproxy 形态，阶段顺序照抄：A0 抢锁 / A 只读 / B 可补偿 / C 不可回退。
+
+    §12.8 ㊴：与 §3.6 / §5 共用**同一把**非阻塞锁（抽查 10：本段原来另写了一个
+    只是取同一个 app.extensions 键的 _activate_lock）。抢不到就 409、不排队 ——
+    切换是秒级人工操作，排队只会把"两个标签页各点一次"变成
+    "看起来都成了、实际后一次覆盖前一次"。
+    """
+    with hold_activate_lock():                                # A0
         return _oauth_activate_locked(provider, email_hash)
-    finally:
-        lock.release()
 
 
 def _oauth_activate_locked(provider, email_hash):
@@ -918,7 +893,7 @@ def _oauth_activate_locked(provider, email_hash):
             path, provider_model.apply_cliproxy_env(settings, client.port,
                                                     client.api_key, aliases[0]))
     except HubError:
-        _oauth_compensate(client, undo)       # 补偿再失败会抛 500 activate_partial 顶掉原错
+        _compensate(client, undo)             # 补偿再失败会抛 500 activate_partial 顶掉原错
         raise
     return jsonify({"ok": True, "active_kind": "cliproxy"})
 
