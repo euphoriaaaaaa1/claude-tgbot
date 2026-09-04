@@ -75,6 +75,7 @@ ok "configs/_global.yml、~/.claude/channels/chenlulu/、restart-bots.sh 就位"
 # 幂等：已有的键一个都不会被重写（见 hub_bootstrap.ensure_hub_env）。
 if python3 scripts/hub_bootstrap.py >/dev/null; then
   ok "管理台口令已就位（~/.claude-tgbot/hub.env，600 权限，不进 git）"
+  info2() { printf '     %s\n' "$*"; }; info2 "登录口令看这里：cat ~/.claude-tgbot/hub.env（HUB_ACCESS_PASSWORD 进门、HUB_ADMIN_PASSWORD 管操作）"
 else
   todo "hub.env 没生成 → 管理台 /hub 会零鉴权，先别把 :8765 暴露到公网；重试：python3 scripts/hub_bootstrap.py"; left=1
 fi
@@ -125,6 +126,7 @@ else
   rc=0; load_agent "$MOMENTS_LABEL" "$tmp_plist" || rc=$?
   if [ "$rc" = 0 ]; then
     ok "朋友圈网页 + 管理台已常驻：http://127.0.0.1:8765（管理台在 /hub）"
+    printf '     %s\n' "浏览器打开 /hub 会要口令：cat ~/.claude-tgbot/hub.env 查看"
   elif [ "$rc" = 1 ]; then
     todo "moments-web 的 plist 写好了但没加载上（常见于 SSH）。图形登录后跑：launchctl bootstrap gui/\$UID $HOME/Library/LaunchAgents/$MOMENTS_LABEL.plist"
   else
