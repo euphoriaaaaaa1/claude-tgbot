@@ -16,6 +16,8 @@ import os
 import socket
 from urllib.parse import urlsplit
 
+from moments import redact          # 纯函数模块，只 import re；不会成环
+
 # §3.0c：claude CLI 一次会话只请求两个 model id，haiku 名没注册 → 后台摘要请求 502。
 DEFAULT_HAIKU_ALIAS = "claude-3-5-haiku-20241022"
 
@@ -259,10 +261,14 @@ def provider_id(p):
 
 
 def mask_key(key):
-    """§0.2 的合规形态：`****`+末 4 位。与 styles_routes._mask 同口径（那个是私有的，
-    且所在模块导入 flask + 在导入期算路径，纯函数层不该反向依赖它）。"""
-    key = _s(key)                           # 手写 config.yaml 里的纯数字 key 是 int
-    return ("****" + key[-4:]) if len(key) >= 4 else ("****" if key else "")
+    """§0.2 的合规形态：`****`+末 4 位。
+
+    掩码格式只在 :func:`redact.mask` 一处定义（抽查 10：这里原来又照抄了一份 ——
+    两份各自演化的话，同一个 key 在列表页和别处会掩成两个样子）。
+    这里只多做一步 ``_s()``：手写 config.yaml 里的纯数字 key 是 int，
+    dict/list 当成没填（``str()`` 出来是垃圾，不如空）。
+    """
+    return redact.mask(_s(key))
 
 
 def entry_api_key(kind, entry):
