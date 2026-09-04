@@ -218,7 +218,27 @@ def _eq(supplied, expected) -> bool:
 
 
 def install(app):
-    """挂 before_request 门 + /login 两个方法 + 免鉴权的 /hub/healthz。"""
+    """挂 before_request 门 + /login 两个方法 + 免鉴权的 /hub/healthz。
+
+    顺带跑一次 :func:`check_startup`（抽查 13）：原来只有 ``web.py`` 的 ``__main__``
+    调它，于是 ``gunicorn moments.web:app`` / waitress 这类起法完全绕过拒绝闸 ——
+    无口令 + 绑 0.0.0.0 照样把管理台端出去。闸挪进这里，谁来 serve 都受同一道保护。
+
+    **判定不通过时这里不 exit，改成整站 503**：本模块会被 ``import moments.web`` 拖起来，
+    而 ``moments/post.py`` 也走那条链 —— 在这里 ``sys.exit`` 会把 bot 进程一并打死
+    （门户配错不该连累 bot）。真正的 ``exit(2)`` 仍由 ``web.py`` 的 ``__main__`` 做
+    （§1.1 契约：拒绝启动、退出码 2、不 bind 端口），它读下面存进 extensions 的那个码。
+    """
+    refused = check_startup(os.environ.get("MOMENTS_WEB_HOST", "127.0.0.1"))
+    app.extensions["hub_startup_refused"] = refused
+    if refused is not None:
+        @app.before_request
+        def _hub_startup_refused():
+            # 全站拒绝，不留 /login 之类的口子：这台机器现在的配置本来就不该对外服务。
+            return jsonify({"error": "startup_refused",
+                            "detail": "未设 HUB_ACCESS_PASSWORD 却监听非回环地址，"
+                                      "门户已拒绝服务；见启动日志的 REFUSE 行"}), 503
+
     guard = LoginGuard()
     # 管理口令的失败自成一窗。合用一个窗时，"只填 access 的正常登录"会顺手把 admin 的
     # 失败计数一并清掉 —— 持 access 口令的人（家人）交替 [猜 admin, 正常登录] 就能无限猜。

@@ -204,3 +204,52 @@ def test_转发头只认proto一项(monkeypatch):
     """X-Forwarded-For / Host 一并认了只是白送伪造面 —— 我们不按 IP 判权。"""
     src = (Path(A.__file__).parent / "web.py").read_text(encoding="utf-8")
     assert "x_for=0" in src and "x_host=0" in src, "ProxyFix 认了 IP/Host 转发头"
+
+
+# ---------------- 抽查 13：拒绝闸挪进 install()，非 __main__ 起法同样受保护 ----------------
+
+def _wsgi_app(monkeypatch, host, pw=None):
+    """模拟 gunicorn/waitress：只 import 拿 app 对象，永远不跑 __main__。"""
+    import importlib
+    monkeypatch.setenv("MOMENTS_WEB_HOST", host)
+    monkeypatch.setenv("HUB_ACCESS_PASSWORD", pw) if pw else \
+        monkeypatch.delenv("HUB_ACCESS_PASSWORD", raising=False)
+    mod = sys.modules.get("moments.web")
+    mod = importlib.reload(mod) if mod else importlib.import_module("moments.web")
+    mod.app.config["TESTING"] = True
+    return mod.app
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.7", "not-a-real-host.invalid"])
+def test_gunicorn起法_无口令绑非回环时整站503(monkeypatch, host):
+    """原来闸只在 __main__ 里，`gunicorn moments.web:app` 完全绕过它 ——
+    无口令 + 绑 0.0.0.0 照样把管理台端给全网。"""
+    app = _wsgi_app(monkeypatch, host)
+    assert app.extensions["hub_startup_refused"] == 2
+    c = app.test_client()
+    for path in ("/hub", "/hub/api/provider", "/login", "/hub/healthz", "/"):
+        r = c.get(path)
+        assert r.status_code == 503, "%s 实得 %s，配置被拒时还在对外服务" % (path, r.status_code)
+        assert r.get_json()["error"] == "startup_refused"
+
+
+def test_install不许直接exit掉进程(monkeypatch):
+    """moments/post.py 也 import moments.web —— 在 install() 里 sys.exit
+    会把 bot 进程一并打死。门户配错不该连累 bot。"""
+    app = _wsgi_app(monkeypatch, "0.0.0.0")          # 没抛 SystemExit 就是没 exit
+    assert app is not None
+
+
+@pytest.mark.parametrize("host,pw", [("127.0.0.1", None), ("0.0.0.0", PW)])
+def test_闸放行时照常服务(monkeypatch, host, pw):
+    """回环无口令（老用户零改造）与非回环有口令，两条都必须能正常起。"""
+    app = _wsgi_app(monkeypatch, host, pw)
+    assert app.extensions["hub_startup_refused"] is None
+    assert app.test_client().get("/hub/healthz").status_code == 200
+
+
+def test_main分支只取判定结果不重跑闸():
+    """重跑一遍会把 REFUSE 行打两次，也会把闸的判定散成两处。"""
+    src = (Path(A.__file__).parent / "web.py").read_text(encoding="utf-8")
+    main = src[src.index('if __name__ == "__main__":'):]
+    assert "check_startup" not in main and "hub_startup_refused" in main

@@ -23,8 +23,11 @@ def _no_real_settings(monkeypatch, tmp_path):
     不钉死 `HUB_ENV_FILE`，任何挂了蓝图的用例都可能连上机主真实的 8317 并改它的配置。
     """
     monkeypatch.setenv("CLAUDE_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    # MOMENTS_WEB_HOST：抽查 13 起 hub_auth.install() 会据它跑拒绝闸，
+    # 继承外部环境的话用例会莫名整站 503。
     for k in ("CLIPROXY_PORT", "CLIPROXY_MGMT_KEY", "CLIPROXY_API_KEY",
-              "CLIPROXY_ANTHROPIC_COMPAT", "HUB_ALLOW_PRIVATE_BASE_URL"):
+              "CLIPROXY_ANTHROPIC_COMPAT", "HUB_ALLOW_PRIVATE_BASE_URL",
+              "MOMENTS_WEB_HOST"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("HUB_ENV_FILE", str(tmp_path / "hub.env"))       # 有意指向不存在的文件
     # 安审 S3 起，写路径会去 chmod `<CLAUDE_TGBOT_HOME>/cliproxy/config.yaml`。

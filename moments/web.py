@@ -749,7 +749,9 @@ if __name__ == "__main__":
     # 默认监听改回环（原来是 0.0.0.0）：绑定地址和隧道 ingress 是两个独立开关，
     # 只关一个等于没关。想让局域网访问就显式设 MOMENTS_WEB_HOST + HUB_ACCESS_PASSWORD。
     host = os.environ.get("MOMENTS_WEB_HOST", "127.0.0.1")
-    _exit_code = hub_auth.check_startup(host)
+    # 闸本身已在 hub_auth.install() 里跑过（抽查 13：gunicorn/waitress 那类起法也得受保护），
+    # 这里只取它的判定结果 —— 不重跑，免得 REFUSE 行打两遍。
+    _exit_code = app.extensions.get("hub_startup_refused")
     if _exit_code is not None:
         sys.exit(_exit_code)          # 不 bind 端口，不初始化 db
     db.init()
