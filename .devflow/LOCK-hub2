@@ -1,0 +1,11 @@
+# LOCK-hub2 —— 修订账本式锁（判官初审 FAIL 后整改，替代单指纹）
+# 验证规则：git diff <BASE> -- tests/ 的全部差异必须逐一对应下方修订条目；
+# 每条修订须有裁决编号（INTERFACE-hub2.md §13）并经判官复核，静默移锁无效。
+
+BASE: e4655ff        # 原始冻结点：验收锁定 419 条（红基线 411/8），实现开工前
+R1:   56bea54        # A9 散落判据窄化为 legacy uuid 定位；A10 302 用例补 Accept: text/html
+R2:   ed7ba13        # A10 补充：Hub-Gate 是 401 JSON 分支判别位，删 302 上的误挂断言
+R3:   1702efd        # 判官整改单第 2 条：补 env BOT_NAMESPACE 优先于 legacy 表的正向断言
+
+# 判官轨迹：初审 FAIL（锁前移吞改动=构造性恒真；R1/R2 实质站得住但程序失守）
+# → 本账本 + R3 为整改，待同一判官复核。
