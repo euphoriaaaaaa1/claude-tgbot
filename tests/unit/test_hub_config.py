@@ -355,3 +355,16 @@ def test_轮转_不认BACKUP_ID_RE之外的占位文件(cfg):
     real = [n for n in names if hc.BACKUP_ID_RE.match(n[len(hc.SAVE_PREFIX):])]
     assert len(real) == hc.SAVE_KEEP, "真备份没保住 SAVE_KEEP 份"
     assert os.path.exists(fake), "占位文件不该被当成备份删掉（它压根不是备份）"
+
+
+def test_写侧_别名密钥roundtrip逐字节保真(cfg):
+    """审计复核抓的整改遗漏：resolve_placeholders 与 mask_secrets 同吃 scalars()
+    的别名重复节点，只修读侧不修写侧，「取原文→原样提交」会静默写坏密钥。
+    根因修在 splice 区间去重，这里锁 round-trip 全程。"""
+    disk = "llm: &llm\n  api_key: sk-REALSECRET-0123456789\nbackup_llm: *llm\ntail: 1\n"
+    with open(hc.global_path(), "w") as f:
+        f.write(disk)
+    masked, _ = hc.mask_secrets(disk, hc.compose(disk))
+    filled, unresolved = hc.resolve_placeholders(masked, hc.compose(masked))
+    assert unresolved == [], unresolved
+    assert filled == disk, "round-trip 后与磁盘不逐字节相等：\n%r" % filled
