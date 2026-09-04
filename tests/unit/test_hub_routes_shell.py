@@ -108,6 +108,32 @@ def test_bot状态页有重启入口与状态列(client):
         assert col in body, "bot 状态表缺列 %s" % col
 
 
+def test_预置卡渲染的是服务端那份DEEPSEEK_PRESET(client):
+    """页面不许自己抄一份端点/模型名：三个值都必须从 hub_routes.DEEPSEEK_PRESET 渲染出来。
+
+    抄一份的代价是漂移 —— DeepSeek 换端点时改了常量、页面还显示旧地址，
+    而用户是照页面上显示的值去手填的。
+    """
+    from moments import hub_routes
+    body = page(client, "/hub/provider")
+    for k in ("base_url", "upstream_model", "model_alias"):
+        assert hub_routes.DEEPSEEK_PRESET[k] in body, "预置卡没渲染 %s" % k
+    assert 'id="preset-key"' in body and 'id="preset-save"' in body
+    assert "https://api.deepseek.com/anthropic" in body       # 官方 Anthropic 兼容端点
+    tpl = (TEMPLATES / "hub_provider.html").read_text(encoding="utf-8")
+    for k in ("base_url", "upstream_model", "model_alias"):
+        assert "deepseek_preset.%s" % k in tpl or "deepseek_preset | tojson" in tpl
+
+
+def test_预置卡不预埋key且走既有两个端点(client):
+    """一期契约禁止无 key 残留：卡片只是模板，提交打的是既有的创建 + 激活端点。"""
+    from moments import hub_routes
+    body = page(client, "/hub/provider")
+    assert "api_key" not in hub_routes.DEEPSEEK_PRESET
+    assert hub_routes.DEEPSEEK_PRESET["kind"] == "anthropic"
+    assert "'/hub/api/provider'" in body and "'/activate'" in body
+
+
 def test_kind下拉从KIND_SPEC派生(client):
     """[RA] 建议2：校验、互转、页面下拉三处同源，页面不许自己硬编码一份枚举。"""
     from moments import provider_model
