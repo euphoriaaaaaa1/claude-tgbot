@@ -114,7 +114,7 @@ else
   sed -e "s#{PROJECT_DIR}#$PWD#g" plist-templates/moments-web.plist.tmpl > "$tmp_plist"
   rc=0; load_agent "$MOMENTS_LABEL" "$tmp_plist" || rc=$?
   if [ "$rc" = 0 ]; then
-    ok "朋友圈网页 + 管理台已常驻：http://localhost:8765（管理台在 /hub）"
+    ok "朋友圈网页 + 管理台已常驻：http://127.0.0.1:8765（管理台在 /hub）"
   elif [ "$rc" = 1 ]; then
     todo "moments-web 的 plist 写好了但没加载上（常见于 SSH）。图形登录后跑：launchctl bootstrap gui/\$UID $HOME/Library/LaunchAgents/$MOMENTS_LABEL.plist"
   else
