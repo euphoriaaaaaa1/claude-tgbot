@@ -131,3 +131,5 @@
   （版本乐观锁/yaml.compose 行级替换保真/端口legacy兜底+最小空闲/C段探活判成/token唯一落点.env 0600）。
 - 卡点2 锁定 @e4655ff：hub2 验收 419 条（保存参数174/加bot 63/高级26/备份16/保真14/CLI15/其余），
   红基线 411/8 双序一致；§13 八裁决落文。
+- N2 交付 @7ad16ca：289/289 绿，unit 754，一期 406 冻结基线无损。集成待办：①web.py:685 老接口 safe_dump
+  改调 hub_config.set_scalar（F2 同病一期路径）②test_pages_hub2 未登录 302 用例补 Accept 头（用例侧，归出题人）。
