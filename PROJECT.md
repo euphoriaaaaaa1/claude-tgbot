@@ -110,3 +110,13 @@
   字段整缺也过）→ 实现补齐+锁 1 条恒等断言，crud 123 全绿。第五次落锁。裁判判定：合格（附人工清单）。
 - **卡点3 已确认 @bf1ac05 2026-09-04**：裁判合格（附 5 条人工验证清单）；
   S5/S8 离线达成，S1-S4/S6/S7 终点动作归人工清单。进入 05.5 安全审计 + 质量抽查。
+- 质量抽查（05 Step5）：致命 2 / 重要 6 / 建议 7（报告以正文归档于本表下列编号；正文另存
+  .devflow/CODE-REVIEW-provider-hub.md 由主会话转存）：
+| BUG-21 | 致命：出货三启动路径均不 source hub.env → HUB_ACCESS_PASSWORD 恒空 → gate 恒关 → 全裸奔 | 修复中 | 抽查 / dev-int | |
+| BUG-22 | 致命：PATCH 换 kind 先删后加，中途失败丢用户 key 无补偿 | 修复中 | 抽查 / dev-int | |
+| BUG-23 | 重要：CRUD 三端点不持锁+过期 index，可把 A 整条覆盖到 B（含 key） | 修复中 | 抽查 / dev-int | |
+| BUG-24 | 重要：reconcile 挂蓝图注册，bot 进程 import 即触发+可被拖秒+双进程互写 | 修复中 | 抽查 / dev-int | |
+| BUG-25 | 重要：reconcile 中途失败无补偿，留 0 enabled 更坏态 | 修复中 | 抽查 / dev-int | |
+| BUG-26 | 重要：unwrap 空默认喂给写路径整块 PUT，升级换形状会静默抹全部 provider | 修复中 | 抽查 / dev-int | |
+| BUG-27 | 重要：重启线程 start 失败 _running 永卡 409 | 修复中 | 抽查 / dev-int | |
+| BUG-28 | 重要：systemd WorkingDirectory 无引号+体检照样绿；sed 未防 #/& | 修复中 | 抽查 / dev-int | |
