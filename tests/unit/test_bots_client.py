@@ -79,9 +79,15 @@ def test_端口优先取环境变量且拒绝垃圾值(monkeypatch, env, expect)
     assert bots_client.bot_port("chenlulu") == expect
 
 
-def test_端口回落到BOT_PORTS表(monkeypatch):
-    monkeypatch.delenv("DISPATCHER_PORT_CHENLULU", raising=False)
-    assert bots_client.bot_port("chenlulu") == bots_client.BOT_PORTS["chenlulu"]
+def test_端口回落到注册表(monkeypatch, tmp_path):
+    """原来回落的是模块里写死的 BOT_PORTS，现在回落注册表（configs/*.yml，加 bot 零改代码）。"""
+    monkeypatch.delenv("DISPATCHER_PORT_XIAOYU", raising=False)
+    d = tmp_path / "configs"
+    d.mkdir()
+    (d / "xiaoyu.yml").write_text("id: xiaoyu\ndispatcher_port: 17888\n", encoding="utf-8")
+    monkeypatch.setenv("HUB_CONFIGS_DIR", str(d))
+    assert bots_client.bot_ports() == {"xiaoyu": 17888}
+    assert bots_client.bot_port("xiaoyu") == 17888
     assert bots_client.bot_port("ghostbot") is None
 
 
