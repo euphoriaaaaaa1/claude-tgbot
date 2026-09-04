@@ -24,8 +24,14 @@ while IFS="$TAB" read -r bot port ns; do
     echo "跳过 $bot：$chan/.env 不存在（先 cp .env.example .env 填 token）" >&2
     continue
   fi
+  # 先 unset 再 source：`.env` 里没写 token 时，上一轮 bot 的值会留在环境里被这一轮拿走
+  # → 两个 dispatcher 用同一个 token 长轮询，Telegram 只发给其中一个（409），消息随机丢。
+  unset TELEGRAM_BOT_TOKEN
   # shellcheck disable=SC1091
   set -a; . "$chan/.env"; set +a
+  # `set -u` 下直接引用未定义变量会整脚本崩掉，所以带 `:-` 判空后跳过这一个 bot
+  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || {
+    echo "跳过 $bot：$chan/.env 里缺 TELEGRAM_BOT_TOKEN" >&2; continue; }
 
   tmux kill-session -t "$session" 2>/dev/null || true
   # BOT_NAMESPACE 必须注进去：worker-manager.ts 是 env 优先，注了它新 bot 才认得自己的

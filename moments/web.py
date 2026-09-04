@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import db
 import config_loader
 from moments.styles_routes import styles_bp
+from moments import env_file
 from moments import hub_auth
 from moments import redact
 
@@ -38,7 +39,10 @@ if importlib.util.find_spec("moments.hub_routes") is not None:
 # hub_session / hub_admin 却一律不带 Secure，那道锁的凭据能被降级到明文信道带出去。
 # 默认关：直连 http://127.0.0.1:8765 时信转发头等于让任何人伪造 X-Forwarded-Proto。
 # 只认 x_proto 一跳，不认 X-Forwarded-For/Host（我们不按 IP 判权，认了只是白送伪造面）。
-if os.environ.get("HUB_TRUST_PROXY") == "1":
+# 经 env_file 读：三条自启路径（launchd plist / systemd unit / Windows 计划任务）都不 source
+# hub.env，只读 os.environ 的话，README 让人写进 hub.env 的这一行在出货机器上恒为空
+# —— 口径与 hub_auth 读两把口令、cliproxy 三键完全一致（INTERFACE §0.3）。
+if env_file.get("HUB_TRUST_PROXY") == "1":
     from werkzeug.middleware.proxy_fix import ProxyFix
     app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_for=0, x_host=0, x_port=0, x_prefix=0)
 
