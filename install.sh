@@ -80,16 +80,13 @@ else
 fi
 
 # ── 手填项体检 ────────────────────────────────────────────
-say "④ 还需要你手填的密钥（脚本没法替你申请）"
-if grep -q "YOUR_DEEPSEEK_API_KEY" configs/_global.yml 2>/dev/null; then
-  todo "configs/_global.yml → jiwen.delta_llm.api_key 换成你的 DeepSeek key"; left=1
-else ok "_global.yml 的 api_key 已填"; fi
-if grep -qE "^TELEGRAM_BOT_TOKEN=\s*$|your-telegram-bot-token|YOUR" "$HOME/.claude/channels/chenlulu/.env" 2>/dev/null; then
-  todo "~/.claude/channels/chenlulu/.env → TELEGRAM_BOT_TOKEN 填 @BotFather 给你的 token"; left=1
-else ok "chenlulu/.env 的 bot token 已填"; fi
-if grep -q "YOUR_TELEGRAM_USER_ID" "$HOME/.claude/channels/chenlulu/access.json" 2>/dev/null; then
-  todo "~/.claude/channels/chenlulu/access.json → allowFrom 填你的数字 user_id（@userinfobot 可查）"; left=1
-else ok "access.json 的白名单已填"; fi
+say "④ 三把必填密钥（脚本没法替你申请，但会告诉你去哪拿、填哪，能当场填）"
+# 逐项：缺什么 → 怎么拿 → 填哪 → 终端里直接粘贴就写进文件（非交互时只打说明）。
+# 写文件交给 scripts/setup_keys.py 按 YAML/.env/JSON 各自格式写，不用 sed 猜行。
+bash scripts/setup_keys.sh || true
+if [ "$(python3 scripts/setup_keys.py status | python3 -c 'import json,sys; d=json.load(sys.stdin); print(int(all(d.values())))')" != 1 ]; then
+  left=1
+fi
 
 # ── ⑤ 注册开机自启 ────────────────────────────────────────
 # 幂等：每次都重新渲染 plist、先 bootout 再 bootstrap，重复跑结果一致。

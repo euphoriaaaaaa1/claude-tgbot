@@ -145,3 +145,4 @@
 
 ## 2026-09-04 install.sh 第②步在 Homebrew Python 上报 externally-managed-environment（另一台 Mac 实测）
 - 根因：PEP 668 标记（Homebrew/Debian 的 python3 自带 `EXTERNALLY-MANAGED`）禁止 `pip install` 往系统 site-packages 装。本项目十几处入口直接调 `python3` 不走 venv，故改为按标记文件判断后装到用户 site（`--user --break-system-packages`），装完立刻 `import yaml, feedparser, requests, flask` 自检。本机用 /opt/homebrew/bin/python3 + 临时 PYTHONUSERBASE 复现并验证通过；相关 55 条测试绿。README 两处手动 pip 命令同步加注。
+- 2026-09-04 install.sh 第④步改为向导：三把密钥逐项说明"缺什么 → 怎么拿(@BotFather / @userinfobot / platform.deepseek.com) → 填哪(文件+键)"，终端里当场粘贴即写进文件（格式校验，错了重问，回车跳过）；写文件走 scripts/setup_keys.py（YAML 行级替换保留注释 / .env 替换或追加 + chmod 600 / JSON 保留其余键）；可单独重跑 `bash scripts/setup_keys.sh`（`--check` 只查不问）。测试 tests/unit/test_setup_keys.py 7 条 + expect 真 TTY 驱动验证（错一次再填对、三项全写入）。restart-bots.sh/stop-bots.sh 进 .gitignore（install 复制出的本机文件不再让工作区显示 ✗）。（文件名不能含 secret：.gitignore 的 `**/*secret*` 会把它忽略，故叫 setup_keys）

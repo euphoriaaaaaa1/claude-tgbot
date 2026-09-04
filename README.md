@@ -139,7 +139,7 @@ notepad $env:USERPROFILE\.claude\channels\myrole\CLAUDE.md
 git clone https://github.com/euphoriaaaaaa1/claude-tgbot.git ~/claudebotlife && cd ~/claudebotlife && bash install.sh
 ```
 
-按提示把 3 个密钥填完（DeepSeek key / bot token / 你的 user_id），跑 `bash restart-bots.sh` 就上线了。脚本可重复运行（复查用），不会覆盖你填过的配置。
+脚本第 ④ 步会逐项告诉你**去哪拿、填哪**，并让你当场粘贴写进文件（bot token / 你的 user_id / DeepSeek key；漏填的随时 `bash scripts/setup_keys.sh` 补），然后跑 `bash restart-bots.sh` 就上线了。脚本可重复运行（复查用），不会覆盖你填过的配置。
 
 `install.sh` 还会顺手把**开机自启**注册好（launchd，以后每次登录自动起 bot），不用再手动填 plist。不想要就卸掉：
 
