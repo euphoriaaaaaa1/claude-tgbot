@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>系统参数 · 管理台</title>
+</head>
+<body>
+{% include "_nav.html" %}
+<div class="wrap">
+  <h1>系统参数</h1>
+  <div class="sub">改的是 configs/_global.yml。每次保存自动留一份备份，最多 5 份，随时可回滚</div>
+
+  <div class="card" id="warn-card" style="display:none">
+    <h2>提示</h2>
+    <div class="muted" id="warn-text"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">参数表单</h2>
+      <div class="row">
+        <button class="btn ghost mini" type="button" id="reload">刷新</button>
+        <button class="btn" type="button" id="save">保存</button>
+      </div>
+    </div>
+    <div class="muted" id="save-msg" style="margin-top:6px"></div>
+    <div id="groups"><div class="empty">读取中…</div></div>
+  </div>
+
+  <div class="card" id="hint-card" style="display:none">
+    <h2>改动要生效，还差一步</h2>
+    <div class="muted" id="hint-text"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" type="button" id="restart-bot" style="display:none">重启 bot</button>
+      <span class="muted" id="restart-msg"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">高级模式（直接改原文）</h2>
+      <button class="btn ghost mini" type="button" id="toggle-adv">展开</button>
+    </div>
+    <div id="adv" style="display:none">
+      <div class="muted" style="margin-top:8px">
+        密钥已遮蔽成 <span class="mono">{{ placeholder }}</span>，原样提交即保留原值；
+        想换就直接填真值。把敏感键改名/移走会导致占位符解不掉，保存会被拒绝。
+      </div>
+      <textarea id="raw" rows="22" spellcheck="false"
+        style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:var(--soft-bg);
+               color:var(--ink);border:1px solid var(--hairline-strong);
+               font-family:var(--font-mono);font-size:12.5px;line-height:1.5"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="btn" type="button" id="save-raw">保存原文</button>
+        <span class="muted" id="raw-msg"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">备份与回滚</h2>
+      <button class="btn ghost mini" type="button" id="reload-backups">刷新</button>
+    </div>
+    <table style="margin-top:8px">
+      <thead><tr><th>时间</th><th>来源</th><th>大小</th><th></th></tr></thead>
+      <tbody id="backup-rows"></tbody>
+    </table>
+    <div class="empty" id="backup-empty">读取中…</div>
+  </div>
+</div>
+<script>
+// 表单只渲染后端 schema 给的字段（B1：没有中文标签/范围的旋钮不许交给用户）。
+// 保存只提交**改过**的键（§2.3 部分更新），version 随每次成功保存就地更新，连续保存不必刷新。
+const $ = (id) => document.getElementById(id);
+const GROUPS = [
+  ['jiwen.rates.immersion_map.', '各类活动的初始沉浸度'],
+  ['jiwen.rates.', 'jiwen 情绪引擎 · 速率与阈值'],
+  ['jiwen.thresholds.', 'jiwen 开口三档'],
+  ['jiwen.', 'jiwen 其它'],
+  ['moments.', '朋友圈'],
+  ['', '全局'],
+];
+let VERSION = null, SCHEMA = [], LOADED = {};
+
+function groupOf(key) { for (const [p, t] of GROUPS) if (key.startsWith(p)) return t; }
+
+function inputFor(it, value) {
+  const el = document.createElement('input');
+  if (it.type === 'bool') { el.type = 'checkbox'; el.checked = !!value; el.style.width = 'auto'; }
+  else { el.type = 'number'; el.value = String(value);
+         el.step = it.type === 'int' ? '1' : 'any';
+         el.min = String(it.min); el.max = String(it.max); }
+  el.id = 'f:' + it.key;
+  return el;
+}
+
+function readField(it) {
+  const el = $('f:' + it.key);
+  if (it.type === 'bool') return el.checked;
+  if (el.value.trim() === '') return null;
+  const n = Number(el.value);
+  if (!isFinite(n)) return null;
+  return it.type === 'int' ? Math.trunc(n) : n;
+}
+
+function renderForm(values) {
+  const box = $('groups'); box.innerHTML = '';
+  for (const [, title] of GROUPS) {
+    const items = SCHEMA.filter((it) => groupOf(it.key) === title);
+    if (!items.length) continue;
+    const h = document.createElement('h2');
+    h.textContent = title; h.style.margin = '16px 0 0'; box.appendChild(h);
+    for (const it of items) {
+      const lab = document.createElement('label');
+      lab.textContent = it.label + (it.unit ? '（' + it.unit + '）' : '') +
+        (it.type === 'bool' ? '' : '  ' + it.min + ' ~ ' + it.max);
+      lab.setAttribute('for', 'f:' + it.key);
+      box.appendChild(lab);
+      box.appendChild(inputFor(it, values[it.key]));
+    }
+  }
+}
+
+async function loadParams() {
+  const r = await hubApi('/hub/api/params');
+  if (r.status !== 200) { hubSay($('save-msg'), 'HTTP ' + r.status); return; }
+  SCHEMA = r.body.schema || []; VERSION = r.body.version; LOADED = r.body.values || {};
+  renderForm(LOADED);
+  const warns = r.body.warnings || [];
+  $('warn-card').style.display = warns.length ? '' : 'none';
+  hubSay($('warn-text'), warns.includes('global_yml_unreadable')
+    ? '读不到 configs/_global.yml（不存在或格式坏了）。表单显示的是默认值，保存已禁用；请用备份回滚。'
+    : warns.map((w) => w.replace('missing_in_yml:', '配置里还没有：')).join('；'));
+  const ok = r.body.advanced_available;
+  $('save').disabled = !ok; $('save-raw').disabled = !ok;
+}
+
+function showHint(hint) {
+  const bot = hint && hint.bot, web = hint && hint.moments_web;
+  $('hint-card').style.display = (bot || web) ? '' : 'none';
+  $('restart-bot').style.display = bot ? '' : 'none';
+  const lines = [];
+  if (bot) lines.push('bot 进程需要重启才会读到新参数。');
+  // §5：门户自己就跑在 moments-web 里，从进程内重启自己会把这个请求一起杀掉 ——
+  // 所以这里只给用户自己执行的命令，不给按钮。
+  if (web) lines.push('朋友圈/门户进程需要你自己重启：macOS 执行 ' +
+    'launchctl kickstart -k gui/$UID/com.claudebotlife.moments-web');
+  hubSay($('hint-text'), lines.join(' '));
+}
+
+$('save').addEventListener('click', async () => {
+  const values = {};
+  for (const it of SCHEMA) {
+    const v = readField(it);
+    if (v === null) { hubSay($('save-msg'), it.label + ' 填的不是有效数值'); return; }
+    if (v !== LOADED[it.key]) values[it.key] = v;
+  }
+  $('save').disabled = true;
+  const r = await hubApi('/hub/api/params',
+    {method: 'POST', body: JSON.stringify({version: VERSION, values: values})});
+  $('save').disabled = false;
+  if (r.status !== 200) {
+    hubSay($('save-msg'), (r.body.error || 'HTTP ' + r.status) + '：' + (r.body.detail || ''));
+    if (r.body.error === 'config_stale') loadParams();
+    return;
+  }
+  VERSION = r.body.version;
+  for (const k of r.body.changed || []) LOADED[k] = values[k];
+  hubSay($('save-msg'), (r.body.changed || []).length
+    ? '已保存 ' + r.body.changed.length + ' 项，备份 ' + r.body.backup : '没有改动');
+  showHint(r.body.restart_hint);
+  loadBackups();
+});
+
+let RAW_VERSION = null;
+$('toggle-adv').addEventListener('click', async () => {
+  const box = $('adv'), open = box.style.display === 'none';
+  box.style.display = open ? '' : 'none';
+  $('toggle-adv').textContent = open ? '收起' : '展开';
+  if (!open) return;
+  const r = await hubApi('/hub/api/params/raw');
+  if (r.status !== 200) {
+    $('raw').value = '';
+    hubSay($('raw-msg'), (r.body.error || 'HTTP ' + r.status) + '：' + (r.body.detail || ''));
+    return;
+  }
+  $('raw').value = r.body.text; RAW_VERSION = r.body.version;
+  hubSay($('raw-msg'), (r.body.sensitive_paths || []).length
+    ? '已遮蔽：' + r.body.sensitive_paths.join('、') : '');
+});
+
+$('save-raw').addEventListener('click', async () => {
+  $('save-raw').disabled = true;
+  const r = await hubApi('/hub/api/params/raw',
+    {method: 'POST', body: JSON.stringify({version: RAW_VERSION, text: $('raw').value})});
+  $('save-raw').disabled = false;
+  if (r.status !== 200) {
+    hubSay($('raw-msg'), (r.body.error || 'HTTP ' + r.status) + '：' + (r.body.detail || ''));
+    return;
+  }
+  RAW_VERSION = r.body.version;
+  hubSay($('raw-msg'), '已保存，备份 ' + r.body.backup);
+  showHint(r.body.restart_hint);
+  loadParams(); loadBackups();
+});
+
+const KIND_TEXT = {save: '保存', restore: '回滚前'};
+async function loadBackups() {
+  const r = await hubApi('/hub/api/params/backups');
+  const rows = $('backup-rows'), empty = $('backup-empty');
+  rows.innerHTML = '';
+  if (r.status !== 200) { hubSay(empty, 'HTTP ' + r.status); return; }
+  for (const b of (r.body.backups || [])) {
+    const tr = document.createElement('tr');
+    for (const v of [b.id, KIND_TEXT[b.kind] || b.kind, b.size + ' B']) {
+      const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+    }
+    const td = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className = 'btn ghost mini'; btn.type = 'button'; btn.textContent = '回滚到此';
+    btn.addEventListener('click', () => restore(b.id));
+    td.appendChild(btn); tr.appendChild(td);
+    rows.appendChild(tr);
+  }
+  hubSay(empty, (r.body.backups || []).length ? '' : '还没有备份');
+}
+
+async function restore(id) {
+  if (!confirm('用 ' + id + ' 覆盖当前配置？当前内容会先另存一份。')) return;
+  const r = await hubApi('/hub/api/params/backups/' + encodeURIComponent(id) + '/restore',
+    {method: 'POST', body: JSON.stringify({version: VERSION})});
+  if (r.status !== 200) {
+    hubSay($('backup-empty'), (r.body.error || 'HTTP ' + r.status) + '：' + (r.body.detail || ''));
+    return;
+  }
+  showHint(r.body.restart_hint);
+  loadParams(); loadBackups();
+}
+
+// §5：bot 侧直接复用一期 POST /hub/api/bots/restart（异步 202 + job 轮询，契约一字不改）
+async function pollRestart(jobId) {
+  const r = await hubApi('/hub/api/bots/restart/' + encodeURIComponent(jobId));
+  if (r.status !== 200) { hubSay($('restart-msg'), '任务状态读不到了'); return; }
+  if (r.body.state === 'running') { hubSay($('restart-msg'), '重启中…');
+    setTimeout(() => pollRestart(jobId), 2000); return; }
+  hubSay($('restart-msg'), '重启结束：' + r.body.state);
+  $('restart-bot').disabled = false;
+}
+
+$('restart-bot').addEventListener('click', async () => {
+  $('restart-bot').disabled = true;
+  const r = await hubApi('/hub/api/bots/restart', {method: 'POST', body: '{}'});
+  if (r.status === 202 && r.body.job_id) { pollRestart(r.body.job_id); return; }
+  hubSay($('restart-msg'), (r.body.error || 'HTTP ' + r.status) + ' ' + (r.body.detail || ''));
+  $('restart-bot').disabled = false;
+});
+
+$('reload').addEventListener('click', loadParams);
+$('reload-backups').addEventListener('click', loadBackups);
+loadParams(); loadBackups();
+</script>
+</body>
+</html>
