@@ -14,6 +14,11 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MGMT_PREFIX = "/v0/management/"
+NONEXISTENT_IN_V7 = (
+    "/v0/management/anthropic-compatibility",
+    "/v0/management/gemini-compatibility",
+    "/v0/management/anthropic-api-key",
+)
 
 
 class _H(BaseHTTPRequestHandler):
@@ -59,6 +64,9 @@ class _H(BaseHTTPRequestHandler):
             st.apply_config(json.loads(body or b"{}"))
             return self._send(200, {"status": "ok"})
 
+        if path == "/__stub/state" and self.command == "GET":
+            return self._send(200, {"alias_count_violation": st.alias_count_violation})
+
         if path == "/healthz" and self.command == "GET":
             return self._send(200, {"status": "ok"})
 
@@ -74,6 +82,11 @@ class _H(BaseHTTPRequestHandler):
             if st._writes > st.patch_fail_after_n:
                 return self._send(500, {"error": "stub forced write failure"})
 
+        if path in NONEXISTENT_IN_V7:
+            # §10 修订 4：这三个块名在真实 v7 上管理 API 实测 404。
+            # 桩如实模拟，才测得出门户把 kind 映射到错块名的 bug。
+            return self._send(404, {"error": "no such management endpoint", "path": path})
+
         h = getattr(self, "_h_" + path.strip("/").replace("/", "_").replace("-", "_"), None)
         if h is None:
             return self._send(404, {"error": "stub: no such endpoint", "path": path})
@@ -83,20 +96,7 @@ class _H(BaseHTTPRequestHandler):
 
     # ---- §10 冻结端点 ----
     def _h_v0_management_openai_compatibility(self, body, query):
-        st = self.server.stub
-        if self.command == "GET":
-            return self._send(200, st.openai_compat)
-        if self.command == "PUT":                      # 整表替换
-            st.openai_compat = json.loads(body or b"[]")
-            return self._send(200, {"status": "ok"})
-        if self.command == "PATCH":                    # {"index":n,"value":{...}} 局部替换
-            p = json.loads(body or b"{}")
-            i = p.get("index")
-            if not isinstance(i, int) or not (0 <= i < len(st.openai_compat)):
-                return self._send(400, {"error": "bad index"})
-            st.openai_compat[i] = p.get("value")
-            return self._send(200, {"status": "ok"})
-        return self._send(405, {"error": "method not allowed"})
+        return self._block("openai_compat", body)
 
     def _h_v0_management_api_keys(self, body, query):
         return self._send(200, [self.server.stub.downstream_key])
@@ -142,8 +142,10 @@ class _H(BaseHTTPRequestHandler):
         """三种可编程模式（§10）：ok / http4xx_echo（回显请求头）/ unknown_model。"""
         st = self.server.stub
         if st.messages_mode == "unknown_model":
-            return self._send(502, {"error": {"type": "api_error",
-                                              "message": "unknown provider for model"}})
+            # ㉓：真机回 400、[CPX] 写的是 502 —— 状态码不可作判据，只能看 message 文本
+            return self._send(st.unknown_model_status,
+                              {"error": {"type": "api_error",
+                                         "message": "unknown provider for model claude-x"}})
         if st.messages_mode == "http4xx_echo":
             echo = {k: v for k, v in self.headers.items()}
             return self._send(401, {"error": {"type": "authentication_error",
@@ -164,17 +166,40 @@ class _H(BaseHTTPRequestHandler):
 
     # ---- §10 未冻结、被正文其它章节要求的三个端点（INTERFACE 缺口，见文件头）----
     def _h_v0_management_claude_api_key(self, body, query):
+        """§10 修订 4：anthropic kind 的承载块（实测块名，不是 anthropic-compatibility）。"""
+        return self._block("claude_api_key", body)
+
+    def _h_v0_management_gemini_api_key(self, body, query):
+        """§10 修订 4：gemini kind 的承载块（不是 gemini-compatibility）。"""
+        return self._block("gemini_api_key", body)
+
+    def _block(self, attr, body):
+        """三个承载块共用的 GET/PUT/PATCH/DELETE 语义，顺带做 §3.0c 的 alias 数记账。"""
         st = self.server.stub
+        cur = getattr(st, attr)
         if self.command == "GET":
-            return self._send(200, st.claude_api_key)
+            return self._send(200, cur)
         if self.command == "PUT":
-            st.claude_api_key = json.loads(body or b"[]")
+            new = json.loads(body or b"[]")
+            st.note_alias_counts(new)
+            setattr(st, attr, new)
+            return self._send(200, {"status": "ok"})
+        if self.command == "PATCH":
+            p = json.loads(body or b"{}")
+            i = p.get("index")
+            if not isinstance(i, int) or not (0 <= i < len(cur)):
+                return self._send(400, {"error": "bad index"})
+            st.note_alias_counts([p.get("value")])
+            cur[i] = p.get("value")
+            return self._send(200, {"status": "ok"})
+        if self.command == "DELETE":
+            setattr(st, attr, [])
             return self._send(200, {"status": "ok"})
         return self._send(405, {"error": "method not allowed"})
 
     def _h_v1_models(self, body, query):
         names = [m.get("alias") or m.get("name")
-                 for blk in self.server.stub.openai_compat
+                 for blk in self.server.stub.all_blocks
                  for m in (blk.get("models") or [])]
         return self._send(200, {"data": [{"id": n} for n in names if n]})
 
@@ -188,9 +213,12 @@ class StubCliproxy:
     def __init__(self, mgmt_key="k", downstream_key="d"):
         self.mgmt_key = mgmt_key
         self.downstream_key = downstream_key
-        self.openai_compat = []
-        self.claude_api_key = []
+        self.openai_compat = []          # kind=openai 的承载块
+        self.claude_api_key = []         # kind=anthropic 的承载块（§10：不是 anthropic-compatibility）
+        self.gemini_api_key = []         # kind=gemini 的承载块（不是 gemini-compatibility）
+        self.alias_count_violation = []  # §10：收到 models 长度 ≠ 2 的写就记一条
         self.messages_mode = "ok"
+        self.unknown_model_status = 502   # 默认沿用旧值；㉓ 的 400 由用例显式设
         self.timeout_sleep = 40
         self.auth_status = "ok"
         self.mgmt_status = 200          # 非 200 时所有 /v0/management/* 回该码（§10）
@@ -246,6 +274,8 @@ class StubCliproxy:
     # ---- 测试侧便利方法（不属于 §10 的线上契约，只在测试进程内用）----
     def apply_config(self, cfg):
         """对应 §10 的 POST /__stub/config。"""
+        if "unknown_model_status" in cfg:
+            self.unknown_model_status = cfg["unknown_model_status"]
         if "messages_mode" in cfg:
             self.messages_mode = cfg["messages_mode"]
         if "auth_status" in cfg:
@@ -254,34 +284,66 @@ class StubCliproxy:
             self.mgmt_status = cfg["mgmt_status"]
         if "patch_fail_after_n" in cfg:
             self.patch_fail_after_n = cfg["patch_fail_after_n"]
+        if cfg.get("reset_violations"):
+            self.alias_count_violation = []
         if "auth_files" in cfg:
             self.auth_files = cfg["auth_files"]
         if "down" in cfg and cfg["down"]:
             threading.Thread(target=self.stop, daemon=True).start()
 
+    def note_alias_counts(self, entries):
+        """§10 修订 4：写进来的条目里 models 长度 ≠ 2 就记一条（桩不替实现做校验，只记账）。"""
+        for e in entries or []:
+            if not isinstance(e, dict):
+                continue
+            n = len(e.get("models") or [])
+            if n != 2:
+                self.alias_count_violation.append({"name": e.get("name"), "models": n})
+
     def seed_openai_block(self, name="deepseek", base_url="https://api.deepseek.com/v1",
-                          api_key="sk-test-seeded-0000", upstream="deepseek-chat",
+                          api_key="sk-test-seeded-0000", upstream="deepseek-v4-flash",
                           alias="claude-sonnet-4-5-20250929", display_name="DeepSeek",
-                          disabled=False):
-        """直接往桩里塞一条 openai-compatibility 块（形状取自 [CPX] Q1.1b 的字段名）。"""
+                          disabled=False, haiku_alias="claude-3-5-haiku-20241022",
+                          prefix=""):
+        """按 §3.0c 铺一条**两个 models** 的块（主 alias + haiku alias）。"""
         blk = {"name": name, "base-url": base_url,
                "api-key-entries": [{"api-key": api_key}],
-               "models": [{"name": upstream, "alias": alias,
-                           "display-name": display_name}],
+               "models": [{"name": upstream, "alias": alias, "display-name": display_name,
+                           "force-mapping": True},
+                          {"name": upstream, "alias": haiku_alias,
+                           "display-name": display_name, "force-mapping": True}],
                "disabled": disabled}
+        if prefix:
+            blk["prefix"] = prefix       # 只在落选形态下写这个键，默认块保持原样
         self.openai_compat.append(blk)
         return blk
 
+    @property
+    def all_blocks(self):
+        return self.openai_compat + self.claude_api_key + self.gemini_api_key
+
     def aliases_enabled(self, alias):
-        """某 alias 当前有几个 enabled 条目（§3.6 的运行时唯一性断言用）。"""
+        """§3.0d：某 alias 下**不带 prefix** 的条目数（互斥判据，不再看 disabled 键）。
+
+        读侧的"停用"派生仍是 `prefix 非空 or 条目 disabled:true` 的或；
+        但运行时唯一性只由 prefix 决定 —— 带 prefix 的条目不响应裸模型名。
+        """
         n = 0
-        for blk in self.openai_compat:
+        for blk in self.all_blocks:
+            if blk.get("prefix"):
+                continue
             if blk.get("disabled"):
                 continue
             for m in blk.get("models") or []:
                 if m.get("alias") == alias:
                     n += 1
+                    break
         return n
+
+    def entries_for(self, alias):
+        """带该 alias 的全部条目（不管有没有 prefix）。"""
+        return [b for b in self.all_blocks
+                if any(m.get("alias") == alias for m in (b.get("models") or []))]
 
     def paths_hit(self, pattern):
         return [r for r in self.requests if re.search(pattern, r["path"])]

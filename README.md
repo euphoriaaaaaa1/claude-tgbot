@@ -272,6 +272,17 @@ powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 - **点「生成示例图」**：卡片上会盖一层"生成中"遮罩，同一个预设不能重复点（后台也挡着，另开一个窗口点也是 409）。示例图固定 1024 见方，方便横向比画风。
 - 朋友圈里要有帖子，得后台的 `self-initiate` / `jiwen` / 生图任务在跑（即上面那些可选服务挂上）。
 
+## 管理台（`:8765/hub`，换模型来源用）
+
+网页版的「换 provider / 填 key / 切回官方订阅 / 重启 bot」。装过 `install.sh` 才有。
+
+- **口令写在 `~/.claude-tgbot/hub.env`**：`install.sh` 会生成一条随机 `HUB_ACCESS_PASSWORD` 写进去。这个文件是**门户自己去读的配置文件**（600 权限，不进 git），不是给 shell `source` 的——所以你改完它只要重启 moments-web 就生效，不用去动 plist / 计划任务。同一个文件里还放着 cliproxy 的端口和 key。
+- **上游 key 存在哪**：`~/.claude-tgbot/cliproxy/config.yaml`（明文，600）。目录本身是 700 兜底——**把这个目录拷给别人排障、或让备份工具带走之前，先把里面的 key 删掉**。
+- **想再加一道内锁**：文件里加一行 `HUB_ADMIN_PASSWORD=<另一个口令>`，`/hub` 之下就要两把口令都对（家人只给第一把，只能看不能改）。
+- 🔴 **公网暴露前先确认门是开的**：把 `:8765` 挂到 cloudflare tunnel / frp 这类隧道上之前，先无痕窗口开一次 `你的域名/hub` —— 必须跳到登录页。直接进得去就是没读到口令，**这时管理台对全互联网开放**：任何人都能改 key、把 bot 的对话引到自己的端点、一键重启你所有 bot。
+- 启动时若没读到口令，`moments-web` 的日志里会有一条 `WARN: 未设 HUB_ACCESS_PASSWORD`。
+- **挂在隧道/反代后面**：再在 `hub.env` 加一行 `HUB_TRUST_PROXY=1`。隧道到本机这一段是明文 http，不开这个开关的话门户以为自己在 http 上，签出去的登录 cookie 不会带 `Secure` 标记（可能被降级到明文链路上带走）。**只有确认外面真有一层 https 隧道/反代时才开**——直连访问时开着它，等于让任何人伪造一个请求头就说自己是 https。
+
 ## 查看后台对话（所有平台）
 
 worker 是后台进程，没有能 attach 的窗口——看 `channels/<bot>/logs/` 下的日志：

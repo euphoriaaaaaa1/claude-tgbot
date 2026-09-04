@@ -267,3 +267,99 @@ def test_切换OAuth账户是幂等的(api, stub, settings_path):
     first = settings_path.read_text(encoding="utf-8")
     assert api.post(path)[0] == 200
     assert settings_path.read_text(encoding="utf-8") == first
+
+
+# ---------------- ㉚㊲（修订 7/9）：oauth_no_alias 与 activatable 的前置检查 ----------------
+
+def test_没有模型映射的账户activate返回409_oauth_no_alias(api, stub):
+    """㉚：请求体是空对象，用户没传错任何东西 —— 是账户状态问题，不是参数问题。"""
+    stub.seed_auth_file(email="alice@example.com", alias=None)
+    code, body = api.post("/hub/api/oauth/accounts/codex/%s/activate"
+                          % stub.email_hash("alice@example.com"))
+    assert code == 409, "实得 %s %s（400 会让页面提示参数错误，用户无从下手）" % (code, body)
+    assert body["error"] == "oauth_no_alias"
+    assert "model_aliases" in str(body.get("detail", "")) or \
+        "oauth-model-alias" in str(body.get("detail", "")), \
+        "detail 必须指出去哪配映射：%r" % body.get("detail")
+
+
+def test_没有模型映射的账户activatable为假并给出原因(api, stub):
+    """㊲：界面给出的可点入口必须保证点了会成 —— 这是 activatable 存在的唯一意义。"""
+    stub.seed_auth_file(email="alice@example.com", alias=None)
+    code, body = api.get("/hub/api/oauth/accounts")
+    acc = body["accounts"][0]
+    assert acc["activatable"] is False, "没有映射却给了可点入口，点了必 409"
+    assert acc["not_activatable_reason"] == "no_alias"
+
+
+def test_不支持的渠道activatable为假且原因不同(api, stub):
+    stub.seed_auth_file(provider="anthropic", email="carol@example.com")
+    acc = api.get("/hub/api/oauth/accounts")[1]["accounts"][0]
+    assert acc["activatable"] is False
+    assert acc["not_activatable_reason"] == "unsupported_provider"
+
+
+def test_正常账户的not_activatable_reason是null(api, stub):
+    stub.seed_auth_file(email="alice@example.com")
+    acc = api.get("/hub/api/oauth/accounts")[1]["accounts"][0]
+    assert acc["activatable"] is True
+    assert acc["not_activatable_reason"] is None
+
+
+# ---------------- ㉛㊱（修订 7/9）：oauth_state_expired ----------------
+
+def _start(api, provider="codex"):
+    code, body = api.post("/hub/api/oauth/start", {"provider": provider})
+    assert code == 200, body
+    return body["state"]
+
+
+def _submit(api, state, provider="codex"):
+    return api.post("/hub/api/oauth/submit", {
+        "provider": provider,
+        "redirect_url": "http://localhost:1455/callback?code=abc123&state=%s" % state})
+
+
+def test_state失配返回409_oauth_state_expired(api):
+    """㉛：URL 通常完全正确，只是会话作废；正确动作是重走 start，不是改输入。"""
+    _start(api)
+    code, body = _submit(api, "some-other-state-that-was-never-issued")
+    assert code == 409, "实得 %s %s" % (code, body)
+    assert body["error"] == "oauth_state_expired"
+    assert body.get("detail"), "detail 要指向重新点击开始登录"
+
+
+def test_同一state二次submit返回409(api):
+    """㊱：授权码是一次性凭据，用过即焚；不作废等于给公网门户一个免费放大器。"""
+    st = _start(api)
+    assert _submit(api, st)[0] == 200
+    code, body = _submit(api, st)
+    assert code == 409, "同一 state 被重放成功了：%s %s" % (code, body)
+    assert body["error"] == "oauth_state_expired"
+
+
+def test_二次submit不再转发给cliproxy(api, stub):
+    """㊱ 的真正危害在这里：不作废 = 每次都真转发，授权码被反复兑换。"""
+    st = _start(api)
+    assert _submit(api, st)[0] == 200
+    n = len([r for r in stub.requests if "oauth-callback" in r["path"]])
+    _submit(api, st)
+    assert len([r for r in stub.requests if "oauth-callback" in r["path"]]) == n, \
+        "作废后仍把重放的授权码转发给了 cliproxy"
+
+
+def test_submit失败时state保留可修正重试(api, stub):
+    """㊱ 只在 200 后作废 —— 失败（502）时保留，用户可修正重试。"""
+    st = _start(api)
+    stub.mgmt_status = 500
+    assert _submit(api, st)[0] == 502
+    stub.mgmt_status = 200
+    code, body = _submit(api, st)
+    assert code == 200, "失败后 state 被误作废，用户无法重试：%s %s" % (code, body)
+
+
+def test_没带state的submit照常转发(api):
+    """㉛：门户只在自己发起过 start、手里有 state 记录时才校验。"""
+    code, body = api.post("/hub/api/oauth/submit", {
+        "provider": "codex", "redirect_url": "http://localhost:1455/callback?code=abc123"})
+    assert code == 200, body

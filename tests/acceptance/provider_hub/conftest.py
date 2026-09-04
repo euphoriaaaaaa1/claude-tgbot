@@ -183,7 +183,7 @@ def provider_payload(**over):
     """§3.3 的合法请求体，默认 openai 形态（S0-B 前枚举里只有它）。"""
     body = {"label": "DeepSeek", "kind": "openai",
             "base_url": "https://api.deepseek.com/v1", "api_key": FAKE_KEY,
-            "upstream_model": "deepseek-chat",
+            "upstream_model": "deepseek-v4-flash",
             "model_alias": "claude-sonnet-4-5-20250929"}
     body.update(over)
     return {k: v for k, v in body.items() if v is not _OMIT}

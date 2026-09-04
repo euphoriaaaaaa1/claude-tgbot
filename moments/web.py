@@ -5,22 +5,100 @@
 """
 import os
 import sys
+import importlib.util
 import json
 import time
 import secrets
 import subprocess
 from datetime import datetime, timezone
 from flask import Flask, render_template, send_from_directory, request, jsonify
+from werkzeug.exceptions import HTTPException
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import db
 import config_loader
 from moments.styles_routes import styles_bp
+from moments import hub_auth
+from moments import redact
 
 app = Flask(__name__,
             template_folder=os.path.join(os.path.dirname(__file__), "templates"))
 app.register_blueprint(styles_bp)
+
+# 管理台蓝图挂载点（M1 落地 moments/hub_routes.py 后自动生效）。
+# 用 find_spec 只判"模块在不在"，模块内部真出 ImportError 仍会照常抛出，不被吞掉。
+_hub_routes = None
+if importlib.util.find_spec("moments.hub_routes") is not None:
+    from moments import hub_routes as _hub_routes
+    app.register_blueprint(_hub_routes.hub_bp)
+
+# 安审 S4：隧道（cloudflare tunnel / frp / nginx）到本进程是明文 http，Flask 默认不信
+# 转发头，于是 request.scheme 恒为 "http" —— 浏览器侧明明是 https，签出去的
+# hub_session / hub_admin 却一律不带 Secure，那道锁的凭据能被降级到明文信道带出去。
+# 默认关：直连 http://127.0.0.1:8765 时信转发头等于让任何人伪造 X-Forwarded-Proto。
+# 只认 x_proto 一跳，不认 X-Forwarded-For/Host（我们不按 IP 判权，认了只是白送伪造面）。
+if os.environ.get("HUB_TRUST_PROXY") == "1":
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_for=0, x_host=0, x_port=0, x_prefix=0)
+
+# 鉴权门必须最先挂：它注册的 before_request 要跑在下面的体积闸之前
+hub_auth.install(app)
+
+# ---- 框架级错误 JSON 化 + /hub/api 出站兜底（INTERFACE §0.1 / §0.2 / §0.2b）----
+# 边界就是路径前缀：体积闸与出站脱敏**只**挂 /hub/api/*，
+# `/`、`/styles`、`/api/*`、`/image/*` 的响应不经过它们（§0.2b 裁决 / §9.1 逐字节不变）。
+HUB_API_PREFIX = "/hub/api/"
+HUB_MAX_BODY = 1024 * 1024
+# 框架级 404/405 回 JSON 的路径前缀。§0.1 只对 /hub/api/* "强制"，
+# 但它允许回 HTML 的例外只列了 `/`、`/styles`、`/hub*` 三类**页面**路由 ——
+# `/api/*` 不是页面路由，回 HTML 错误页会让前端 fetch 解不出东西，故一并 JSON 化。
+# 成功响应一个字节没动，§9.1 的承诺不受影响。
+JSON_ERROR_PREFIXES = (HUB_API_PREFIX, "/api/")
+
+_HUB_ERROR_CODES = {404: "not_found", 405: "method_not_allowed",
+                    413: "payload_too_large", 500: "internal"}
+
+
+def _hub_error(code):
+    resp = jsonify({"error": _HUB_ERROR_CODES[code]})
+    resp.status_code = code
+    return resp
+
+
+def _hub_error_handler(code):
+    def handler(e):
+        if request.path.startswith(JSON_ERROR_PREFIXES):
+            return _hub_error(code)
+        if isinstance(e, HTTPException):
+            return e            # 页面与老路径保持 Flask 默认 HTML（§0.1 例外）
+        raise e
+    return handler
+
+
+for _code in _HUB_ERROR_CODES:
+    app.register_error_handler(_code, _hub_error_handler(_code))
+
+
+@app.before_request
+def _hub_body_limit():
+    """体积闸只管 /hub/api/*：老路径要收 base64 图（/api/moment），全局 MAX_CONTENT_LENGTH 会误伤。"""
+    if request.path.startswith(HUB_API_PREFIX) and (request.content_length or 0) > HUB_MAX_BODY:
+        return _hub_error(413)
+
+
+@app.after_request
+def _hub_api_scrub(resp):
+    """§0.2 第二层：自由文本字段过一遍出站正则。只是兜底，正确性靠 cliproxy_client 的白名单投影。"""
+    if not request.path.startswith(HUB_API_PREFIX) or resp.direct_passthrough or not resp.is_json:
+        return resp
+    body = resp.get_json(silent=True)
+    if body is None:
+        return resp
+    scrubbed, changed = redact.scrub_fields(body)
+    if changed:
+        resp.set_data(json.dumps(scrubbed, ensure_ascii=False))
+    return resp
 
 USER_ADDRESS_FALLBACK = "哥哥"
 USER_DISPLAY_FALLBACK = "我"
@@ -383,7 +461,8 @@ def _trigger_bot_moment_reply(cfg: dict, moment: dict, user_text: str,
 
 
 # bot 端口映射（每个 bot 的 dispatcher 端口；加 bot 就在这里加一行）
-_BOT_PORTS = {"chenlulu": "17801"}
+from moments.bots_client import BOT_PORTS as _BOTS_SRC  # 单一事实源（原本地表与 bots_client 重复）
+_BOT_PORTS = {k: str(v) for k, v in _BOTS_SRC.items()}
 
 
 def _ensure_worker_alive(bot_id: str, chat_id: str, bot_dir: str):
@@ -407,7 +486,7 @@ def _ensure_worker_alive(bot_id: str, chat_id: str, bot_dir: str):
 def api_post_user_moment():
     """用户在主页发朋友圈。三个 bot 各自异步触发评论决策。"""
     import base64
-    data = request.get_json(force=True) or {}
+    data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
     visibility = data.get("visibility") or "public"
     if visibility not in ("public", "private"):
@@ -583,7 +662,7 @@ def api_image_provider():
             p = img.get("provider", "novelai")
         return jsonify({"provider": p, "scope": scope or "legacy"})
 
-    data = request.get_json(force=True) or {}
+    data = request.get_json(silent=True) or {}
     new_provider = data.get("provider")
     scope = (data.get("scope") or "").strip()
     if new_provider not in ("novelai", "comfyui"):
@@ -614,7 +693,7 @@ def api_get_profile(bot_id):
 
 @app.route("/api/profile/<bot_id>", methods=["POST"])
 def api_set_profile(bot_id):
-    data = request.get_json(force=True) or {}
+    data = request.get_json(silent=True) or {}
     avatar = data.get("avatar_url")
     banner = data.get("banner_url")
     # 后端兜底：拒绝单字段 > 300KB（base64），防止前端绕过
@@ -667,6 +746,20 @@ def serve_image(filename):
 
 
 if __name__ == "__main__":
+    # 默认监听改回环（原来是 0.0.0.0）：绑定地址和隧道 ingress 是两个独立开关，
+    # 只关一个等于没关。想让局域网访问就显式设 MOMENTS_WEB_HOST + HUB_ACCESS_PASSWORD。
+    host = os.environ.get("MOMENTS_WEB_HOST", "127.0.0.1")
+    # 闸本身已在 hub_auth.install() 里跑过（抽查 13：gunicorn/waitress 那类起法也得受保护），
+    # 这里只取它的判定结果 —— 不重跑，免得 REFUSE 行打两遍。
+    _exit_code = app.extensions.get("hub_startup_refused")
+    if _exit_code is not None:
+        sys.exit(_exit_code)          # 不 bind 端口，不初始化 db
     db.init()
     port = int(os.environ.get("MOMENTS_WEB_PORT", "8765"))
-    host = os.environ.get("MOMENTS_WEB_HOST", "0.0.0.0"); app.run(host=host, port=port, debug=False)
+    if _hub_routes is not None:
+        # BUG-24：管理台的启动自愈只在**真的要开门户**时跑一次。
+        # 原来挂在蓝图注册（= import 期）上，而 moments/post.py 也 import 本模块 ——
+        # 每个 bot 进程起来都会去改 cliproxy 的 prefix，还会被网络往返拖住 import。
+        # 它自己吞掉全部异常，起不来也不会拦住 app.run。
+        _hub_routes.reconcile()
+    app.run(host=host, port=port, debug=False)
