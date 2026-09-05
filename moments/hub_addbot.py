@@ -29,6 +29,7 @@ import uuid
 from urllib.parse import urlsplit
 
 import requests
+import yaml
 from flask import current_app
 
 from moments import bots_client, hub_auth, redact
@@ -489,6 +490,45 @@ def lay_down(fields):
 
 
 # ---------------------------------------------------------------- C 段 · 注册 + 拉起（§4.2）
+
+# ---------------------------------------------------------------- 停用开关
+
+def set_enabled(bot_id, enabled):
+    """把 `configs/<bot>.yml` 的顶层 `enabled` 改成布尔值，返回改完的值。
+
+    停用的唯一标记就是这个字段（`bots_registry.is_enabled` 判它），所以这里也是**唯一**
+    的写入口。三条硬约束：
+
+    - **绝不 dump YAML**：走 `hub_config.set_scalar` 的行级编辑，注释/锚点/键序/块标量
+      逐字节保真（§2.4 那条可 grep 的红线，bot 的 yml 里全是人设正文，dump 一次就毁）。
+    - **原子写**：复用 `hub_config.atomic_write`，半截文件不可能出现 —— bot 的 yml 写坏了
+      注册表就整个跳过它，等于把 bot 弄丢。
+    - **幂等**：已经是这个值就原样写回同一份文本（`set_scalar` 只换那一段字节，
+      重复调用产出完全相同的文件）。
+
+    `enabled` 键不存在时走 `set_scalar` 的插入分支（按父块缩进插在块首）。
+    """
+    from moments import hub_config          # 延迟 import：只有这一个函数要它
+    if not isinstance(bot_id, str) or not BOT_ID_RE.match(bot_id):
+        raise HubError(400, "bad_bot_id", "bot id 形状非法")
+    path = os.path.join(configs_dir(), bot_id + ".yml")
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        raise HubError(404, "bot_not_found", "没有叫 %s 的 bot" % bot_id)
+    except OSError as e:
+        # 只报类型名：异常消息带路径（§0.2 同款口径）
+        raise HubError(500, "config_unreadable", type(e).__name__)
+    try:
+        root = hub_config.compose(text)
+    except yaml.YAMLError as e:
+        raise HubError(409, "bad_yaml",
+                       hub_config.yaml_error_detail(e, "%s.yml 解析失败" % bot_id))
+    new_text = hub_config.set_scalar(text, root, "enabled", bool(enabled), "bool")
+    hub_config.atomic_write(new_text, path)
+    return bool(enabled)
+
 
 def _step(name, state, detail=None, **extra):
     step = {"name": name, "state": state}

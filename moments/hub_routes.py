@@ -987,7 +987,9 @@ def bots_list():
     except Exception as e:      # 名单读不出来就是 config_unreadable，detail 只给类名（§6.0/§7）
         return jsonify({"error": "config_unreadable", "detail": type(e).__name__}), 500
     # 探活自己吞异常，不会把故障冒成 config_unreadable；空名单是正常态，不是错误。
+    # `disabled` 是**顶层**的一列 id，不塞进 bot 行里：行的字段集是 §6.1 的契约。
     return jsonify({"bots": bots_client.probe_bots(entries),
+                    "disabled": bots_client.disabled_ids(),
                     "restart_available": bots_client.restart_plan()[1]})
 
 
@@ -1390,3 +1392,41 @@ def setup_write_key():
             # 不该让整个请求变成 500，那会让用户以为 key 没填成、再填一遍。
             resp["provider_error"] = type(e).__name__
     return jsonify(resp)
+
+
+# ======================================================================
+# 第 8 段 · 单个 bot 的停用/启用开关（/hub/api/bots/<id>/enabled）
+#
+# 为什么有这一段：装了三个 bot，想只停其中一个，此前只能去改 `configs/<bot>.yml`
+# 或者手动 kill 它的 tmux 会话 —— 前者当时**没有任何代码读那个字段**（写了等于没写），
+# 后者下一次 `restart-bots.sh` 就把它拉回来。现在停用的唯一标记就是那个字段：
+# `bots_registry` 不吐停用 bot → 重启脚本 / Windows 启动与注册脚本 / 门户名单全不认它。
+#
+# 本段只做「校验 + 翻码 + 组响应」，写盘全在 `hub_addbot.set_enabled`
+# （行级 YAML 编辑 + 原子写，全程不 dump —— bot 的 yml 里全是人设正文，dump 一次就毁）。
+# 停用**不自动重启**：重启会打断所有 bot 正在处理的对话，那必须是用户按下的动作。
+# 响应带 `restart_hint`，页面据此复用一期那个「重启全部 bot」入口（契约一字不改）。
+#
+# 段内辅助一律 `_bt` 前缀（段界规矩见第 6 段抬头）。
+# ======================================================================
+
+
+@hub_bp.post("/hub/api/bots/<bot_id>/enabled")
+@_api
+def bots_set_enabled(bot_id):
+    """`{"enabled": true|false}` → 写 `configs/<bot>.yml` 的顶层 `enabled`。
+
+    - 非法 id → `400 bad_bot_id`（形状校验与建 bot 同一个 `BOT_ID_RE`）
+    - 没这个 bot → `404 bot_not_found`
+    - `enabled` 不是布尔 → `400 bad_body`（`"false"` 这种字符串一律不认：
+      按 JS 的真值判它会变成"点了停止反而是启用"）
+    """
+    body = _require_json_object(request.get_json(silent=True))
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HubError(400, "bad_body", "enabled 必须是布尔值 true / false")
+    # 与建 bot 共用一把锁：两者都在写 `configs/<bot>.yml`，同时进来会互相覆盖
+    with hub_addbot.hold_addbot_lock():
+        value = hub_addbot.set_enabled(bot_id, enabled)
+    return jsonify({"ok": True, "enabled": value,
+                    "restart_hint": hub_addbot.RESTART_FLAGS})

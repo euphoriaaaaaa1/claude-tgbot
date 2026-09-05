@@ -393,12 +393,17 @@ def make_backup(kind, content):
     raise HubError(500, "config_write_failed", "同一秒内的备份名已用尽")
 
 
-def _atomic_write(text):
-    """mkstemp（0600 随机名）→ 写 → fsync → os.replace。失败一律 500，不留临时文件。"""
-    path = global_path()
+def atomic_write(text, path=None):
+    """mkstemp（0600 随机名）→ 写 → fsync → os.replace。失败一律 500，不留临时文件。
+
+    `path` 缺省是 `_global.yml`；`configs/<bot>.yml` 的停用开关也走这里 ——
+    同一份"半截文件不可能出现"的保证，不在别处再抄一遍 mkstemp/fsync/replace。
+    """
+    path = path or global_path()
     tmp = None
     try:
-        fd, tmp = tempfile.mkstemp(dir=configs_dir(), prefix=".global-", suffix=".tmp")
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
+                                   prefix="." + os.path.basename(path) + "-", suffix=".tmp")
         with os.fdopen(fd, "wb") as f:
             f.write(text.encode("utf-8"))
             f.flush()
@@ -493,11 +498,11 @@ def commit(new_text, kind="save", backup=True):
     行级编辑器 + 原子写本身保真，改错了再切回即可；若照常备份，低权用户高频切换
     会把 admin 参数页的 5 份 save 备份全部挤掉（跨权限副作用）。"""
     if not backup:
-        _atomic_write(new_text)
+        atomic_write(new_text)
         return None
     current = read_global()
     bid = make_backup(kind, current if current is not None else "")
-    _atomic_write(new_text)
+    atomic_write(new_text)
     if kind == "save":          # restore 类不挤 save 的 5 份配额（R3-3）
         rotate_saves()
     return bid
