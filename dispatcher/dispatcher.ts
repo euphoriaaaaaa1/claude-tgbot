@@ -1102,7 +1102,15 @@ const server = Bun.serve({
           const shouldReplyTo = replyTo != null && replyMode !== 'off' && (replyMode === 'all' || i === 0)
           if (asVoice) {
             const voiceId = access.voiceId
-            if (!voiceId) throw new Error('as_voice=true but access.json missing voiceId')
+            if (!voiceId) {
+              // 语音是可选功能（voice-bridge 用户自备，见 voicecall/README）。没配 voiceId
+              // 时 AI 传了 as_voice 不该炸整条消息 —— 降级为纯文本发出，内容不丢。
+              process.stderr.write(`dispatcher[${BOT_NAME}]: as_voice 但 access.json 无 voiceId，降级纯文本\n`)
+              const sent = await sendChunk(item.chunk,
+                shouldReplyTo ? { reply_parameters: { message_id: replyTo! } } : {})
+              if (sent) sentIds.push(sent.message_id)
+              continue
+            }
             const hasDual = voiceChunks.length > 0
             const ttsText = hasDual ? (voiceChunks[i] ?? '') : item.chunk
             const skipVoice = !ttsText || ttsText.trim() === ''
@@ -1112,22 +1120,35 @@ const server = Bun.serve({
               if (sent) sentIds.push(sent.message_id)
             }
             if (!skipVoice) {
-              const vResp = await fetch('http://127.0.0.1:7788/send_voice', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  bot_token: bot.token,
-                  chat_id: chatId,
-                  text: ttsText,
-                  voice_id: voiceId,
-                  emotion: voiceEmotion,
-                  instruct: voiceInstruct,
-                  reply_to_message_id: (shouldReplyTo && !hasDual) ? replyTo : undefined,
-                }),
-              })
-              if (!vResp.ok) throw new Error(`voice-bridge ${vResp.status}: ${await vResp.text().catch(() => '')}`)
-              const { message_id } = await vResp.json() as { message_id: number }
-              sentIds.push(message_id)
+              // 一段语音失败不毁整条（与 sendChunk 跳过策略对称）：throw 会让剩余段全灭
+              // + worker 收 500 整条重发 → 文本重复语音错位。voice-bridge 没起/代理抖动
+              // 都走这条：hasDual 时文本已发出不丢内容；纯语音失败回退把原文当文本发。
+              try {
+                const vResp = await fetch('http://127.0.0.1:7788/send_voice', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    bot_token: bot.token,
+                    chat_id: chatId,
+                    text: ttsText,
+                    voice_id: voiceId,
+                    emotion: voiceEmotion,
+                    instruct: voiceInstruct,
+                    reply_to_message_id: (shouldReplyTo && !hasDual) ? replyTo : undefined,
+                  }),
+                })
+                if (!vResp.ok) throw new Error(`voice-bridge ${vResp.status}`)
+                const { message_id } = await vResp.json() as { message_id: number }
+                sentIds.push(message_id)
+              } catch (e) {
+                process.stderr.write(`dispatcher[${BOT_NAME}]: send_voice 失败(${String(e).slice(0, 120)})，` +
+                  (hasDual ? '文本已在，跳过这条语音\n' : '回退为文本发送\n'))
+                if (!hasDual) {
+                  const sent = await sendChunk(ttsText,
+                    shouldReplyTo ? { reply_parameters: { message_id: replyTo! } } : {})
+                  if (sent) sentIds.push(sent.message_id)
+                }
+              }
             }
           } else {
             const sent = await sendChunk(item.chunk,
