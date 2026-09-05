@@ -13,6 +13,14 @@ out="$(python3 -m bots_registry --format=sh)" || {
   echo "bots_registry 执行失败，未启动任何 bot" >&2; exit 1; }
 [ -n "$out" ] || { echo "bots_registry 没给出任何 bot，未启动任何 bot" >&2; exit 1; }
 
+# 先把**全部** tg-* 会话停掉，再按注册表拉起（口径同 stop-bots.example.sh）。
+# 只在下面的循环里逐个 kill 不够：`enabled: false` 的 bot 已经不在注册表里了，
+# 循环压根轮不到它，它那个旧 dispatcher 会一直活着 —— 「停止」就等于没停。
+# 放在注册表读成功之后：读不出名单时本脚本原样非零退出，不会白停一遍用户的 bot。
+for s in $(tmux ls 2>/dev/null | grep -oE '^tg-[a-z0-9_]+' | sort -u || true); do
+  tmux kill-session -t "$s" 2>/dev/null && echo "已停 $s" || true
+done
+
 # 用 here-doc 喂循环（不是管道）：循环体留在当前 shell，计数与 exit 才有效
 while IFS="$TAB" read -r bot port ns; do
   [ -n "$bot" ] || continue
@@ -33,7 +41,7 @@ while IFS="$TAB" read -r bot port ns; do
   [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || {
     echo "跳过 $bot：$chan/.env 里缺 TELEGRAM_BOT_TOKEN" >&2; continue; }
 
-  tmux kill-session -t "$session" 2>/dev/null || true
+  # 会话已在上面统一停过了，这里直接起
   # BOT_NAMESPACE 必须注进去：worker-manager.ts 是 env 优先，注了它新 bot 才认得自己的
   # 记忆命名空间（TS 侧那张表退化为 legacy 兜底，源码零改动）。空值 = TS 自动回落该表。
   tmux new-session -d -s "$session" \
