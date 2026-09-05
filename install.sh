@@ -196,12 +196,16 @@ fi
 # ── 收尾：本地交互终端里直接把管理台弹出来（口令：cat ~/.claude-tgbot/hub.env）──
 # SSH / 管道 / CI 里不弹：open 在那些环境要么失败要么开在错误的机器上。
 if [ -t 1 ] && [ -z "${SSH_CONNECTION:-}" ]; then
-  hub_probe="$(curl -s -o /dev/null -w '%{http_code}' -m 3 http://127.0.0.1:8765/login 2>/dev/null || true)"
-  case "$hub_probe" in
-    200|302)
-      if command -v open >/dev/null 2>&1; then open "http://127.0.0.1:8765/hub" || true
-      elif command -v xdg-open >/dev/null 2>&1; then xdg-open "http://127.0.0.1:8765/hub" >/dev/null 2>&1 || true
-      fi
-      echo "已在浏览器打开管理台（登录口令：cat ~/.claude-tgbot/hub.env）" ;;
-  esac
+  # --noproxy '*'：Clash 等代理环境下 shell 的 http_proxy 会把 127.0.0.1 请求也拐去代理，
+  # 被拦就拿不到状态码 → 该弹不弹。判定放宽为「端口上有任何 HTTP 响应」（000=连不上才不弹）：
+  # 401/303/404 都说明服务活着，弹到 /hub 后由服务端自己跳登录页。
+  hub_probe="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -m 3 http://127.0.0.1:8765/login 2>/dev/null || true)"
+  if [ -n "$hub_probe" ] && [ "$hub_probe" != "000" ]; then
+    if command -v open >/dev/null 2>&1; then open "http://127.0.0.1:8765/hub" || true
+    elif command -v xdg-open >/dev/null 2>&1; then xdg-open "http://127.0.0.1:8765/hub" >/dev/null 2>&1 || true
+    fi
+    echo "已在浏览器打开管理台（登录口令：cat ~/.claude-tgbot/hub.env）"
+  else
+    echo "管理台没探测到（8765 端口无响应），起来后手动开：http://127.0.0.1:8765/hub"
+  fi
 fi
