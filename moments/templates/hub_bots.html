@@ -9,7 +9,8 @@
 {% include "_nav.html" %}
 <div class="wrap">
   <h1>bot 状态</h1>
-  <div class="sub">左边这盏灯是 dispatcher 进程，phase 是它托管的 worker —— 两层分开看</div>
+  <div class="sub">「开关」是配置里停没停用，dispatcher 那盏灯是进程此刻在不在，
+    phase 是它托管的 worker —— 三层分开看</div>
 
   <div class="card">
     <div class="row" style="justify-content:space-between">
@@ -22,7 +23,8 @@
     <div class="muted" id="restart-msg" style="margin-top:6px"></div>
     <table style="margin-top:8px">
       <thead>
-        <tr><th>bot</th><th>dispatcher</th><th>worker phase</th><th>排队</th><th>在飞</th></tr>
+        <tr><th>bot</th><th>开关</th><th>dispatcher</th><th>worker phase</th>
+            <th>排队</th><th>在飞</th><th></th></tr>
       </thead>
       <tbody id="bot-rows"></tbody>
     </table>
@@ -42,6 +44,27 @@ function cell(v) {
   return td;
 }
 
+// 已停用的 bot 仍留在表里（灰一档）—— 从列表里消失就等于停了以后再也点不回来。
+function pill(cls, text) {
+  const td = document.createElement('td');
+  const span = document.createElement('span');
+  span.className = 'pill ' + cls;
+  span.textContent = text;
+  td.appendChild(span);
+  return td;
+}
+
+function switchCell(botId, enabled) {
+  const td = document.createElement('td');
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn mini ' + (enabled ? 'ghost' : '');
+  btn.textContent = enabled ? '停止' : '启用';
+  btn.addEventListener('click', () => setEnabled(botId, !enabled, btn));
+  td.appendChild(btn);
+  return td;
+}
+
 async function loadBots() {
   const r = await hubApi('/hub/api/bots');
   const rows = $('bot-rows'), empty = $('bot-empty');
@@ -52,20 +75,43 @@ async function loadBots() {
     return;
   }
   $('restart-all').disabled = !r.body.restart_available;
+  const off = new Set(r.body.disabled || []);
   for (const b of (r.body.bots || [])) {
+    const enabled = !off.has(b.id);
     const tr = document.createElement('tr');
+    if (!enabled) { tr.style.opacity = '.5'; }
     tr.appendChild(cell(b.display_name || b.id));
-    const st = document.createElement('td');
+    tr.appendChild(pill(enabled ? 'on' : 'off', enabled ? '启用中' : '已停用'));
     const cls = b.state === 'online' ? 'on' : (b.state === 'offline' ? 'off' : '');
-    st.innerHTML = '<span class="pill ' + cls + '">' +
-                   (STATE_TEXT[b.state] || b.state) + '</span>';
-    tr.appendChild(st);
+    tr.appendChild(pill(cls, STATE_TEXT[b.state] || b.state));
     tr.appendChild(cell(b.phase));
     tr.appendChild(cell(b.queue_depth));
     tr.appendChild(cell(b.in_flight));
+    tr.appendChild(switchCell(b.id, enabled));
     rows.appendChild(tr);
   }
-  hubSay(empty, (r.body.bots || []).length ? '' : '没有启用中的 bot');
+  hubSay(empty, (r.body.bots || []).length ? '' : '一个 bot 都还没有');
+}
+
+// 写开关只改配置文件，真正生效靠随后那次重启（重启脚本按注册表拉起，
+// 停用的 bot 已不在名单里）。所以写完直接走同一个重启入口 —— 光改文件不重启，
+// 用户会看见"点了停止它还在回消息"，那跟没做一样。二次确认里把代价说清楚。
+async function setEnabled(botId, enabled, btn) {
+  const what = enabled ? '启用' : '停止';
+  if (!confirm(what + ' ' + botId + '？改完会立即重启全部 bot 让它生效，'
+               + '正在处理的对话会被打断。')) { return; }
+  btn.disabled = true;
+  const r = await hubApi('/hub/api/bots/' + encodeURIComponent(botId) + '/enabled',
+                         {method: 'POST', body: JSON.stringify({enabled: enabled})});
+  btn.disabled = false;
+  if (r.status !== 200) {
+    hubSay($('restart-msg'), what + '失败：' + ((r.body && (r.body.detail || r.body.error))
+                                                || ('HTTP ' + r.status)));
+    return;
+  }
+  hubSay($('restart-msg'), '已' + what + ' ' + botId + '，正在重启使其生效…');
+  loadBots();
+  startRestart();          // 复用「重启全部 bot」那条既有链路（202 + job 轮询）
 }
 
 // §6.2 是异步的：POST 拿 job_id，再轮询 GET .../restart/<job_id> 看四态。
@@ -85,14 +131,20 @@ async function pollJob(jobId) {
   loadBots();
 }
 
-$('restart-all').addEventListener('click', async () => {
-  if (!confirm('重启全部 bot？正在处理的对话会被打断。')) return;
+// 重启入口只有这一个（「重启全部 bot」按钮和停用/启用之后都走它）——
+// 停用真正生效靠的就是这一下：重启脚本按注册表拉起，停用的 bot 不在名单里，起不来。
+async function startRestart() {
   $('restart-all').disabled = true;
   const r = await hubApi('/hub/api/bots/restart', {method: 'POST', body: '{}'});
   if (r.todo) { hubSay($('restart-msg'), TODO_TEXT); return; }
   if (r.status === 202 && r.body.job_id) { pollJob(r.body.job_id); return; }
   hubSay($('restart-msg'), (r.body.error || '') + ' ' + (r.body.detail || ''));
   $('restart-all').disabled = false;
+}
+
+$('restart-all').addEventListener('click', () => {
+  if (!confirm('重启全部 bot？正在处理的对话会被打断。')) return;
+  startRestart();
 });
 
 $('refresh').addEventListener('click', loadBots);

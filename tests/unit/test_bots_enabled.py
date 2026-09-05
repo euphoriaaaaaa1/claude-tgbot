@@ -317,3 +317,14 @@ def test_重启脚本先停全部tg会话再按注册表拉起():
         "停旧会话必须排在『读注册表成功之后、拉起之前』（读不出名单时不该白停一遍）"
     assert txt.count("tmux kill-session") == 1, \
         "循环里还留着逐个 kill —— 与统一停重复，删掉那句"
+
+
+# ------------------------------------------------------------ 页面
+
+def test_bots页面有停止启用按钮且带二次确认():
+    """源码级：页面得能停、能启回来，且停之前问一句（那一下会打断所有对话）。"""
+    html = (REPO_ROOT / "moments" / "templates" / "hub_bots.html").read_text(encoding="utf-8")
+    assert "/enabled'" in html or '/enabled"' in html, "页面没接停用开关端点"
+    assert "confirm(" in html and "停止" in html and "启用" in html
+    assert "r.body.disabled" in html, "页面没读 disabled 名单，停用的 bot 分不出灰态"
+    assert "startRestart()" in html, "改完不重启 = 用户点了停止它还在回消息"
