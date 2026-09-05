@@ -199,13 +199,20 @@ if [ -t 1 ] && [ -z "${SSH_CONNECTION:-}" ]; then
   # --noproxy '*'：Clash 等代理环境下 shell 的 http_proxy 会把 127.0.0.1 请求也拐去代理，
   # 被拦就拿不到状态码 → 该弹不弹。判定放宽为「端口上有任何 HTTP 响应」（000=连不上才不弹）：
   # 401/303/404 都说明服务活着，弹到 /hub 后由服务端自己跳登录页。
-  hub_probe="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -m 3 http://127.0.0.1:8765/login 2>/dev/null || true)"
+  # 第⑤步刚 bootout+bootstrap 过服务，冷启动要几秒——重试最多 15 秒等它起身，
+  # 拿到任何 HTTP 响应即止；15 秒还没有就是真没起来（看 /tmp/claudebotlife-moments-web.stderr）。
+  hub_probe=""
+  for _try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    hub_probe="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -m 2 http://127.0.0.1:8765/login 2>/dev/null || true)"
+    [ -n "$hub_probe" ] && [ "$hub_probe" != "000" ] && break
+    sleep 1
+  done
   if [ -n "$hub_probe" ] && [ "$hub_probe" != "000" ]; then
     if command -v open >/dev/null 2>&1; then open "http://127.0.0.1:8765/hub" || true
     elif command -v xdg-open >/dev/null 2>&1; then xdg-open "http://127.0.0.1:8765/hub" >/dev/null 2>&1 || true
     fi
     echo "已在浏览器打开管理台（登录口令：cat ~/.claude-tgbot/hub.env）"
   else
-    echo "管理台没探测到（8765 端口无响应），起来后手动开：http://127.0.0.1:8765/hub"
+    echo "管理台 15 秒内没起来（8765 无响应）——多半是启动出错，看日志：tail -30 /tmp/claudebotlife-moments-web.stderr"
   fi
 fi
