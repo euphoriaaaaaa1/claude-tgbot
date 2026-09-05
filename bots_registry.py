@@ -12,6 +12,10 @@ CLI 契约（INTERFACE §6，契约即测试点）::
 
 **没有任何可用 bot 时退出码 1** 是刻意的：启动脚本据此报错并非零退出，
 而不是把空名单当"本来就没有 bot"静默成功 —— 那会让所有 bot 悄悄起不来。
+
+**停用标记**：``configs/<bot>.yml`` 顶层 ``enabled: false``。本表不吐它，
+于是所有消费方（重启脚本 / Windows 启动与注册 / 门户名单）都不认它 ——
+"停了不被任何路径拉回来"就是这一处判定负责的，不另设第二张开关表。
 """
 import json
 import os
@@ -78,6 +82,16 @@ def _scan(warn=None):
     return rows
 
 
+def is_enabled(cfg):
+    """顶层 ``enabled`` 的判定：**没写字段 = 启用**（存量 bot 一个都不许被顺手停掉）。
+
+    只有显式写了假值（``false`` / ``no`` / ``0`` / 空串）才算停用 —— 手写 ``enabled: 0``
+    的人要的就是停，按 ``is False`` 判会把它当启用，正是"看着改了其实没生效"那类坑。
+    """
+    v = cfg.get("enabled")
+    return v is None or bool(v)
+
+
 def _resolve_ports(rows):
     """端口解析（F3，与 namespace 对称）：env → yml → legacy 表 → 派生。
 
@@ -118,12 +132,23 @@ def _namespace(bot_id, cfg):
     return LEGACY_NAMESPACES.get(bot_id)
 
 
-def bots(warn=None):
-    """全部可用 bot，按 id 排序。CLI 与全部 Python 消费方共用这一个出口。"""
+def bots(warn=None, include_disabled=False):
+    """可用 bot，按 id 排序。CLI 与全部 Python 消费方共用这一个出口。
+
+    ``enabled: false`` 的 bot **默认不出现在这里** —— 这张表就是"该起哪些 bot"的名单，
+    重启脚本、Windows 启动/注册脚本全按它拉起，不吐出去就等于停用生效。
+    ``include_disabled=True`` 给"通讯录"类用途（端口/命名空间查询、管理台列表）用。
+
+    过滤放在这里而不是 ``_scan``：端口按**全表**解析，停用的 bot 仍占着自己的号，
+    停一个 bot 不会让别人的派生端口漂移，重新启用时端口也还是原来那个
+    （端口一漂，消费方就照注册表去连了另一个服务 —— 与 F3 同一条理由）。
+    """
     rows = _scan(warn)
     fixed, derived = _resolve_ports(rows)
     out = []
     for bot_id, cfg in rows:
+        if not include_disabled and not is_enabled(cfg):
+            continue
         port = fixed.get(bot_id) or derived.get(bot_id)
         if port is None:                       # 端口耗尽的极端情况：宁可不列
             continue
@@ -138,13 +163,27 @@ def bots(warn=None):
 
 
 def ports():
-    """``{bot_id: port}``。moments 侧端口表的唯一来源。"""
-    return {b["id"]: b["port"] for b in bots()}
+    """``{bot_id: port}``。moments 侧端口表的唯一来源。
+
+    **含停用的 bot**：这是"谁在哪个端口"的通讯录，不是"该起哪些"的名单。
+    漏掉停用 bot 会让管理台把它显示成 unknown（查不到端口），而它真实状态是 offline；
+    也会让端口占用检查放行一个撞号的新 bot。
+    """
+    return {b["id"]: b["port"] for b in bots(include_disabled=True)}
+
+
+def disabled_ids():
+    """被 ``enabled: false`` 停用的 bot id 集合。管理台按它给行打"已停用"徽标。"""
+    return {bot_id for bot_id, cfg in _scan() if not is_enabled(cfg)}
 
 
 def namespace_for(bot_id):
-    """``bot_id`` → namespace uuid；yml 里没有就回 legacy 兜底，再没有回 None。"""
-    for b in bots():
+    """``bot_id`` → namespace uuid；yml 里没有就回 legacy 兜底，再没有回 None。
+
+    同 ``ports()`` 含停用 bot：命名空间是身份，停用期间也不该查不到
+    （查不到 = 重新启用后 worker 认不出自己的记忆）。
+    """
+    for b in bots(include_disabled=True):
         if b["id"] == bot_id:
             return b["namespace_uuid"]
     return LEGACY_NAMESPACES.get(bot_id)

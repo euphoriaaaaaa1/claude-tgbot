@@ -66,10 +66,20 @@ def test_名单读不出来一律抛异常(monkeypatch, tmp_path, raw):
 
 
 def test_未设接缝时走真实配置(monkeypatch):
-    """未设 HUB_BOTS_FILE 就该回落 config_loader，与不存在该变量时行为一致。"""
-    monkeypatch.setattr("config_loader.list_enabled_bots",
-                        lambda: [{"_bot_id": "chenlulu", "display_name": "陈璐璐"}])
+    """未设 HUB_BOTS_FILE 就该回落 config_loader，与不存在该变量时行为一致。
+
+    并锁住 `include_disabled=True`：管理台列表必须含被停用的 bot，
+    否则停了以后它从页面消失，再也点不回来。
+    """
+    seen = {}
+
+    def fake(include_disabled=False):
+        seen["include_disabled"] = include_disabled
+        return [{"_bot_id": "chenlulu", "display_name": "陈璐璐"}]
+
+    monkeypatch.setattr("config_loader.list_enabled_bots", fake)
     assert bots_client.list_bots() == [{"id": "chenlulu", "display_name": "陈璐璐"}]
+    assert seen["include_disabled"] is True
 
 
 @pytest.mark.parametrize("env,expect", [("18000", 18000), ("", None), ("abc", None),

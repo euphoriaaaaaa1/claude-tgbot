@@ -71,12 +71,16 @@ def list_bots():
 
     读不出来一律**抛异常**，由路由层统一转 ``500 config_unreadable``（§6.0 三态表第一行）——
     异常消息不出站，出站的只有类名，所以这里的文案可以写路径之外的任何提示。
+
+    **含被停用的 bot**（``include_disabled=True``）：管理台是唯一能把它启用回来的地方，
+    从列表里消失就等于停了以后再也点不回来。哪些被停了由 ``disabled_ids()`` 另外给，
+    不塞进行里 —— 行的字段集是 §6.1 的契约。
     """
     path = os.environ.get("HUB_BOTS_FILE")
     if not path:
         import config_loader          # 延迟 import：名单是请求期才要的，别拖慢模块导入
         return [_entry(c.get("_bot_id"), c.get("display_name"))
-                for c in config_loader.list_enabled_bots()]
+                for c in config_loader.list_enabled_bots(include_disabled=True)]
     with open(path, encoding="utf-8") as f:
         raw = json.load(f)
     if not isinstance(raw, list):
@@ -87,6 +91,18 @@ def list_bots():
             raise TypeError("bots 名单元素不是对象")
         out.append(_entry(e.get("id"), e.get("display_name")))
     return out
+
+
+def disabled_ids():
+    """被 ``enabled: false`` 停用的 bot id 列表（排序后的）。读不出配置就回空 —— 停用标记
+    查不到时按"都启用"显示，比让整个列表 500 好；行本身的在线状态照样如实探活。"""
+    if os.environ.get("HUB_BOTS_FILE"):
+        return []                    # 名单被注入替换（测试态）：配置目录与它无关，不猜
+    try:
+        import bots_registry
+        return sorted(bots_registry.disabled_ids())
+    except Exception:
+        return []
 
 
 def bot_port(bot_id):
