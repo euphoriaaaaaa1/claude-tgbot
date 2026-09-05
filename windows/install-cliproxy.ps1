@@ -67,10 +67,18 @@ Write-Host ""
 Write-Host "cliproxy 就绪。注册开机自启（含守护循环）："
 Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\register-tasks.ps1`""
 # 管理台已在跑的话直接弹给用户（口令在 %USERPROFILE%\.claude-tgbot\hub.env）
+# 只要端口上有任何 HTTP 响应就弹（401/303 也算服务活着）；连不上才不弹。
+# PS5.1 的 Invoke-WebRequest 对非 2xx 会抛异常，所以 catch 里也要认「有响应」。
+$hubUp = $false
 try {
-    $probe = Invoke-WebRequest -Uri "http://127.0.0.1:8765/login" -Method Head -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
-    if ($probe.StatusCode -eq 200) {
-        Start-Process "http://127.0.0.1:8765/hub"
-        Write-Host "已在浏览器打开管理台（登录口令看 %USERPROFILE%\.claude-tgbot\hub.env）"
-    }
-} catch { }
+    Invoke-WebRequest -Uri "http://127.0.0.1:8765/login" -Method Head -TimeoutSec 3 -UseBasicParsing -Proxy $null -ErrorAction Stop | Out-Null
+    $hubUp = $true
+} catch {
+    if ($_.Exception.Response) { $hubUp = $true }
+}
+if ($hubUp) {
+    Start-Process "http://127.0.0.1:8765/hub"
+    Write-Host "已在浏览器打开管理台（登录口令看 %USERPROFILE%\.claude-tgbot\hub.env）"
+} else {
+    Write-Host "管理台没探测到（8765 无响应），起来后手动开：http://127.0.0.1:8765/hub"
+}
