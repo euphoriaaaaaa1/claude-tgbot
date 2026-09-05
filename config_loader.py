@@ -8,6 +8,7 @@ import os
 import yaml
 
 import persona_clock
+from bots_registry import is_enabled as _enabled   # 停用判定只有一处，别在这里再写一遍
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIGS_DIR = os.path.join(PROJECT_ROOT, "configs")
@@ -64,8 +65,13 @@ def load_bot(bot_id: str) -> dict:
     return cfg
 
 
-def list_enabled_bots() -> list[dict]:
-    """枚举所有 configs/<bot>.yml（除 _ 开头的）。"""
+def list_enabled_bots(include_disabled: bool = False) -> list[dict]:
+    """枚举所有 configs/<bot>.yml（除 _ 开头的）。
+
+    顶层 ``enabled: false`` 的 bot 默认跳过 —— 判定与 ``bots_registry._enabled`` 同一口径
+    （没写字段 = 启用，只有显式假值才停），两处必须一致，否则"停了"在这条路径上不生效。
+    ``include_disabled=True`` 只给管理台列表用：停用的 bot 得留在页面上才点得回来。
+    """
     bots = []
     if not os.path.isdir(CONFIGS_DIR):
         return bots
@@ -75,6 +81,8 @@ def list_enabled_bots() -> list[dict]:
         bot_id = fn[:-4]
         try:
             cfg = load_bot(bot_id)
+            if not include_disabled and not _enabled(cfg):
+                continue
             cfg["_bot_id"] = bot_id
             bots.append(cfg)
         except Exception:

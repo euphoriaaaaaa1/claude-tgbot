@@ -279,8 +279,12 @@ def _listening(port):
 
 
 def _check_port(port, skip=None):
-    """端口占用两问：注册表里有没有别人占（含派生值）、本机是不是已经有人在听。"""
-    for bot in _registry().bots():
+    """端口占用两问：注册表里有没有别人占（含派生值）、本机是不是已经有人在听。
+
+    ``include_disabled=True``：被停用的 bot 仍占着它的端口，放行一个撞号的新 bot
+    会让那个 bot 一旦重新启用就起不来（或反过来抢走新 bot 的号）。
+    """
+    for bot in _registry().bots(include_disabled=True):
         if bot["port"] == port and bot["id"] != skip:
             raise HubError(409, "bot_exists", "端口 %d 已被 %s 占用" % (port, bot["id"]))
     if skip is None and _listening(port):
@@ -427,7 +431,7 @@ def _channel_path_literal(target):
 def _new_namespace():
     """uuid4 + 全表去重。namespace 撞车 = 两个 bot 共用会话历史，所以去重是契约的一部分
     （撞的概率是 0，这个 while 只是把契约写进代码里）。"""
-    used = {b["namespace_uuid"] for b in _registry().bots()}
+    used = {b["namespace_uuid"] for b in _registry().bots(include_disabled=True)}
     ns = str(uuid.uuid4())
     while ns in used:
         ns = str(uuid.uuid4())
