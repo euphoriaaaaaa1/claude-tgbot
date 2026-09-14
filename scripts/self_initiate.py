@@ -23,6 +23,9 @@ COOLDOWN_MAX = 86400    # 最长间隔 24 小时
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE_DIR = os.path.expanduser("~/.claude/dispatcher/.self-initiate-state")
 
+sys.path.insert(0, REPO_ROOT)
+from bots_registry import disabled_ids_safe  # noqa: E402  停用判定唯一入口（fail-open 在它内部）
+
 
 def _bot_port(bot: str) -> str | None:
     """从 configs/_global.yml 之外最简单的来源拿端口：restart 脚本同款约定，
@@ -39,13 +42,21 @@ def main() -> int:
         print("usage: self_initiate.py <bot> <chat_id>", file=sys.stderr)
         return 2
     bot, chat = sys.argv[1], sys.argv[2]
-    now = int(time.time())
+    now = int(os.environ.get("SELF_INITIATE_NOW") or time.time())  # 时钟注入（测试用）
     hour = datetime.now().hour
 
     # ─── 随机间隔闸：到点才允许，然后立刻 roll 下一个周期 ───
     os.makedirs(STATE_DIR, exist_ok=True)
     marker = os.path.join(STATE_DIR, f"{bot}-{chat}.last")
     interval_f = os.path.join(STATE_DIR, f"{bot}-{chat}.interval")
+
+    # ─── 需求⑤：停用的 bot 计划任务照常触发，这里自行空退出（不写 inbox、不 POST）───
+    # 先刷 .last（不动 .interval）：启用后随机间隔从最后一轮停用 tick 重新计，不会一启用就补发主动消息。
+    if bot in disabled_ids_safe():
+        print(f"skip: {bot} disabled (configs/{bot}.yml enabled:false)", file=sys.stderr)
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write(str(now))
+        return 0
     try:
         last = int(open(marker, encoding="utf-8").read().strip())
     except Exception:
