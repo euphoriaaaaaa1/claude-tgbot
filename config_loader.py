@@ -9,10 +9,23 @@ import yaml
 
 import persona_clock
 from bots_registry import is_enabled as _enabled   # 停用判定只有一处，别在这里再写一遍
+from bots_registry import configs_dir as _registry_configs_dir
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIGS_DIR = os.path.join(PROJECT_ROOT, "configs")
+_DEFAULT_CONFIGS_DIR = CONFIGS_DIR
 GLOBAL_CFG_PATH = os.path.join(CONFIGS_DIR, "_global.yml")
+
+
+def _configs_dir() -> str:
+    """bot yml 目录，与 ``bots_registry.configs_dir()`` 同源：每次现读 ``HUB_CONFIGS_DIR``。
+
+    导入期快照会让"注册表认停用、这里读另一份目录"两处不一致；
+    ``CONFIGS_DIR`` 被显式改过（既有测试的 monkeypatch 写法）则以它为准。
+    """
+    if CONFIGS_DIR != _DEFAULT_CONFIGS_DIR:
+        return CONFIGS_DIR
+    return str(_registry_configs_dir())
 
 
 def load_global() -> dict:
@@ -23,7 +36,7 @@ def load_global() -> dict:
 
 
 def load_bot(bot_id: str) -> dict:
-    p = os.path.join(CONFIGS_DIR, f"{bot_id}.yml")
+    p = os.path.join(_configs_dir(), f"{bot_id}.yml")
     if not os.path.exists(p):
         raise FileNotFoundError(f"配置不存在：{p}")
     with open(p, encoding="utf-8") as f:
@@ -73,9 +86,10 @@ def list_enabled_bots(include_disabled: bool = False) -> list[dict]:
     ``include_disabled=True`` 只给管理台列表用：停用的 bot 得留在页面上才点得回来。
     """
     bots = []
-    if not os.path.isdir(CONFIGS_DIR):
+    d = _configs_dir()
+    if not os.path.isdir(d):
         return bots
-    for fn in sorted(os.listdir(CONFIGS_DIR)):
+    for fn in sorted(os.listdir(d)):
         if fn.startswith("_") or not fn.endswith(".yml"):
             continue
         bot_id = fn[:-4]
