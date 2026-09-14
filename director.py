@@ -312,6 +312,25 @@ def _ensure_worker_alive(bot: str, chat_id: str) -> None:
         print(f"[director] ensure_worker({bot}) 失败(dispatcher 未起?): {e}", flush=True)
 
 
+def _batch_human_ts(user_batch) -> str | None:
+    """缺陷③b：批内真人消息最新 ts（能转成正有限 float 的才算）→ UTC ISO 整秒；无有效 ts → None。永不抛。
+    worker 只认生产者正向打的 human_ts 来算"距你们上次说话"，导演注入的合成消息不带它就不会重置计时。"""
+    best = 0.0
+    for m in user_batch or ():
+        try:
+            t = float(m.get("ts"))
+        except Exception:  # 缺失/None/非数/非 dict：只丢这一条
+            continue
+        if best < t < float("inf"):  # NaN 比较恒假，自然被排除
+            best = t
+    if best <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(int(best), timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    except (OverflowError, OSError, ValueError):  # 超出平台时间范围的坏值
+        return None
+
+
 def inject(bot: str, chat_id: str, history: list[dict],
            initiate: bool = False, prev: dict | None = None,
            context: str | None = None, closing: bool = False,
@@ -375,6 +394,9 @@ def inject(bot: str, chat_id: str, history: list[dict],
         "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
         "message_id": str(ms),
     }
+    human_ts = _batch_human_ts(user_batch)
+    if human_ts:  # 无真人批 → 无此键（不是 null）
+        payload["human_ts"] = human_ts
     path = os.path.join(inbox, f"director-{ms}.json")
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
