@@ -141,17 +141,21 @@ function logSpawn(msg: string): void {
 
 // ─── 时间感知：每条入站消息带本地时刻，久别重逢再加一行间隔 ──────────────
 // 进程内变量不够用——要解决的正是"worker 被回收后隔了十几小时"，重启即失忆就永远算不出
-// 间隔。落一个按 chat 分键的小状态文件，tmp+rename 原子写，启动时读一次进内存。
+// 间隔。落一个小状态文件，tmp+rename 原子写，启动时读一次进内存。
+// desync ③b：间隔按"本 bot 收到的最近一条真人消息"统一计时（保留键 _human 等，更新规则在
+// chat_guard）；按 chat 分键的旧值照写，只为格式向后兼容。worker-plugin 读同一文件做跨聊天拦截。
 const LAST_TS_FILE = join(CHANNEL_DIR, '.last-inbound-ts.json')
-const lastInboundTs: Record<string, number> = (() => {
+const lastInboundTs: Record<string, unknown> = (() => {
   try {
     const d = JSON.parse(readFileSync(LAST_TS_FILE, 'utf8'))
-    return d && typeof d === 'object' && !Array.isArray(d) ? d as Record<string, number> : {}
+    return d && typeof d === 'object' && !Array.isArray(d) ? d as Record<string, unknown> : {}
   } catch { return {} }
 })()
+let inboundState = loadInboundState(lastInboundTs)
 function rememberInboundTs(chatId: string, tsMs: number): void {
   if (!chatId || !Number.isFinite(tsMs)) return
   lastInboundTs[chatId] = tsMs
+  Object.assign(lastInboundTs, inboundState)   // 四个保留键与按 chat 旧键同一次原子写
   try {
     mkdirSync(CHANNEL_DIR, { recursive: true })
     writeFileSync(`${LAST_TS_FILE}.tmp`, JSON.stringify(lastInboundTs))
@@ -763,7 +767,10 @@ export class WorkerManager {
     // 时间取 meta.ts（消息自身时刻，不是投递时刻）；缺失/非法 → 用当前时刻。
     const parsedTs = Date.parse(String(meta.ts ?? ''))
     const tsMs = Number.isFinite(parsedTs) && parsedTs > 0 ? parsedTs : Date.now()
-    const timePrefix = buildTimePrefix(tsMs, lastInboundTs[chatIdStr] ?? null)
+    // desync ③b：间隔 = 距本 bot 此前收到的最近一条真人消息（群/私聊共用）；合成消息不重置
+    const prevHuman = inboundState._human
+    inboundState = applyInboundMarks(inboundState, chatIdStr, meta, tsMs)
+    const timePrefix = buildTimePrefix(tsMs, prevHuman)
     rememberInboundTs(chatIdStr, tsMs)
     // 真人私聊消息前注入关系数值提示（群聊/peer/导演 inject 不注入——与旧行为一致）
     const isHumanPrivate = !isBotSender && scene === 'private'
@@ -798,6 +805,12 @@ export class WorkerManager {
 // 单例（dispatcher.ts import 使用）
 let _manager: WorkerManager | null = null
 export function getManager(): WorkerManager {
-  if (!_manager) _manager = new WorkerManager()
+  if (!_manager) {
+    // 测试模式 fail-closed（INTERFACE §11.2）：开关未设时直接通过，生产零影响。
+    // 把 manager 实际会用的 CHANNEL_DIR / 派给 worker 的 dispatcher 地址一并交检，防测试落到生产端口。
+    const tm = testModeCheck({ ...process.env, CHANNEL_DIR, TELEGRAM_DISPATCHER_URL: DISPATCHER_URL })
+    if (!tm.ok) { process.stderr.write(`test_mode: refuse ${tm.reason}\n`); process.exit(97) }
+    _manager = new WorkerManager()
+  }
   return _manager
 }
