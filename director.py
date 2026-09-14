@@ -55,6 +55,12 @@ TURN_TIMEOUT = 120          # 点名后等发言超时（秒），超时累计 f
 SCENE_MAX_AGE_MIN = 20      # 场次绝对寿命，防 worker 卡死场次悬挂
 ABS_MAX = 15               # transcript 级硬兜底：最后真人消息后 bot 发言 > 此数无条件停
 HUMAN_QUIET_MIN = 30        # 真人 30min 内说过话 → 不自主开新场（真人主导优先）
+# 缺陷②：群 transcript 看不到私聊。dispatcher 每条真人私聊都写 <MARKER_DIR>/<bot目录名>-<chat>.last-user（int 秒），
+# 30min 内私聊过的 bot 视为"忙"：不当开场人、不被续轮点名；可用 bot < 2 不开场/收场。
+PRIVATE_BUSY_MIN = 30
+MARKER_DIR = os.path.expanduser(
+    os.environ.get("DIRECTOR_MARKER_DIR") or "~/.claude/dispatcher/.self-initiate-state")
+BUSY_LOG_THROTTLE_SEC = 300  # busy_skip/stopped_skip/resumed_skip 等同键日志限流
 
 # ── 运行层参数（全部可环境变量覆盖，测试指到假目录，零碰生产）──
 POLL_SEC = 2          # 主循环轮询间隔
@@ -222,12 +228,16 @@ def decide(chat_id: str = CHAT_ID, history: list[dict] | None = None,
     return {"speak": True, "who": who, "heat": heat}
 
 
-def decide_scene(history: list[dict], budget: int, exclude: str | None = None) -> dict:
+def decide_scene(history: list[dict], budget: int, exclude: str | None = None, busy=()) -> dict:
     """自主场每轮动态判定：让导演读最近几句，判断①这场闲聊聊完没②谁接③最后一句悬着没。
-    返回 {"done": bool, "dangling": bool, "who": str|None}。结束由这个判断驱动，不是纯计数。"""
+    返回 {"done": bool, "dangling": bool, "who": str|None}。结束由这个判断驱动，不是纯计数。
+    exclude=刚说完的人、busy=正在私聊/已停止的人：LLM 选中二者之一 → 确定性改选（可为 None）。"""
+    busy = set(busy or ())
+    excl_set = busy | ({exclude} if exclude else set())
     lines = [f"{m['speaker']}：{m['text']}" for m in history[-6:]]
     convo = "\n".join(lines) if lines else "（没有对话）"
     excl = f"刚说完的是 {BOTS.get(exclude, exclude)}({exclude})，别再选 ta。\n" if exclude else ""
+    excl += "".join(f"别选 {BOTS[b]}({b})（正在忙）。\n" for b in BOTS if b in busy)
     roster = "、".join(f"{bid}={name}" for bid, name in BOTS.items())
     who_enum = "或".join(f'"{b}"' for b in BOTS) or '"bot1"'
     prompt = (
@@ -245,8 +255,8 @@ def decide_scene(history: list[dict], budget: int, exclude: str | None = None) -
     who = (r.get("who") or "").strip()
     if who not in BOTS:
         who = None
-    if exclude and who == exclude:
-        who = next((b for b in BOTS if b != exclude), None)
+    if who in excl_set:
+        who = _pick_other(excl_set)
     return {"done": bool(r.get("done")), "dangling": bool(r.get("dangling")), "who": who}
 
 
@@ -374,9 +384,12 @@ def inject(bot: str, chat_id: str, history: list[dict],
     return path
 
 
-def decide_initiate(history: list[dict]) -> dict:
+def decide_initiate(history: list[dict], exclude=()) -> dict:
     """冷场发起：让 DeepSeek 挑一个 bot 起话题。只发起一条，不给 bot 互聊充能——
-    用户不回，就没有后续（防止无人时 bot 自嗨烧配额）。"""
+    用户不回，就没有后续（防止无人时 bot 自嗨烧配额）。
+    exclude=正在私聊/已停止的 bot：提示词里点名别选；LLM 仍选中 → 确定性改选，全排除 → speak=False。"""
+    exclude = set(exclude or ())
+    busy_line = "".join(f"别选 {BOTS[b]}({b})（正在忙）。\n" for b in BOTS if b in exclude)
     lines = [f"{m['speaker']}：{m['text'][:100]}" for m in history[-6:]]
     convo = "\n".join(lines) if lines else "（群里很久没人说话）"
     roster = "、".join(f"{bid}={name}" for bid, name in BOTS.items())
@@ -386,12 +399,17 @@ def decide_initiate(history: list[dict]) -> dict:
         f"之前的对话：\n{convo}\n\n"
         "你是导演，只决定要不要让某个角色自然地起个话头、以及选谁——**不要替 ta 想说什么**，"
         "起什么话头由 ta 自己按人设定。不必每次都发起，可以继续安静。\n"
+        f"{busy_line}"
         f'只输出 JSON：{{"speak": true或false, "who": {who_enum}}}'
     )
     r = call_claude_json(prompt, timeout=30) or {}
     who = (r.get("who") or "").strip()
     if not r.get("speak") or who not in BOTS:
         return {"speak": False, "reason": "导演选择继续安静"}
+    if who in exclude:
+        who = _pick_other(exclude)
+        if who is None:
+            return {"speak": False, "reason": "可用bot不足"}
     return {"speak": True, "who": who}
 
 
@@ -447,14 +465,87 @@ def _bot_after_human_count(hist: list[dict]) -> int:
     return sum(1 for m in tail if m["is_bot"])
 
 
-def _scene_gates(st: dict, hist: list[dict], now: float, kind: str) -> tuple[bool, str]:
-    """自主开场六道闸（对齐 should_post_moment）。返回 (go, reason)。human 触发不过闸。"""
+# ══════════════════ 缺陷②：私聊忙碌感知（读 dispatcher 的 .last-user marker）══════════════════
+_busy_log_at: dict = {}  # (where, bot) → 上次打印时刻；测试可清空
+
+
+def _throttled(key: tuple, now: float) -> bool:
+    """同键 BUSY_LOG_THROTTLE_SEC 内已打过 → True（本次别打）；否则记下本次并返回 False。"""
+    last = _busy_log_at.get(key)
+    if last is not None and now - last < BUSY_LOG_THROTTLE_SEC:
+        return True
+    _busy_log_at[key] = now
+    return False
+
+
+def _log_busy(where: str, bot: str, since_min: float, now: float) -> bool:
+    if _throttled((where, bot), now):
+        return False
+    print(f"[director] busy_skip where={where} bot={bot} since_min={int(since_min)}", flush=True)
+    return True
+
+
+def _pick_other(exclude: set) -> str | None:
+    """BOTS 顺序里第一个不在 exclude 的 bot；全排除 → None。"""
+    return next((b for b in BOTS if b not in exclude), None)
+
+
+def _busy_bots(now: float) -> dict:
+    """{bot: since_min}：该 bot 所有私聊 marker 的最大 ts 距 now 在 [-60s, 30min) → 忙。
+    marker 名是 BOT_DIR_NAME（dispatcher 按 bot 目录名写）。fail-open：缺文件/坏内容/远未来/过旧 → 不忙；永不抛。"""
+    import glob
+    busy, found_any = {}, False
+    for bot in BOTS:
+        best = None
+        pattern = os.path.join(MARKER_DIR, f"{glob.escape(BOT_DIR_NAME.get(bot, bot))}-*.last-user")
+        for path in glob.glob(pattern):
+            found_any = True
+            try:
+                with open(path, encoding="utf-8") as f:
+                    ts = int(f.read().strip())
+            except Exception as e:  # 非整数/空/不可读：只忽略这个文件
+                if not _throttled(("marker_bad", bot), now):
+                    print(f"[director] busy_marker_bad bot={bot} err={type(e).__name__}", flush=True)
+                continue
+            best = ts if best is None else max(best, ts)
+        if best is not None and -60 <= now - best < PRIVATE_BUSY_MIN * 60:
+            busy[bot] = max(0.0, (now - best) / 60)
+    if not found_any and not _throttled(("marker_missing", ""), now):
+        # ② 静默失效必须可观测：一个 marker 都没有，多半是目录/命名漂移
+        print(f"[director] busy_marker_missing dir={MARKER_DIR}", flush=True)
+    return busy
+
+
+def _busy_reason(excl: set, mins: dict) -> str:
+    """可用bot<2 的原因文案。mins 值为 None 的是已停止/启用宽限中的 bot，其余算私聊忙碌；两段各按 BOTS 顺序。"""
+    stop = [b for b in BOTS if b in excl and b in mins and mins[b] is None]
+    busy = [b for b in BOTS if b in excl and b not in stop]
+    parts = ([f"私聊忙碌({','.join(busy)})"] if busy else []) + ([f"已停止({','.join(stop)})"] if stop else [])
+    return "或".join(parts) + "可用bot<2"
+
+
+def _log_excluded(where: str, bot: str, mins: dict, now: float) -> bool:
+    """忙者打 busy_skip；已停止/宽限中的 bot（mins 值为 None）另有 stopped/resumed 行，不重复。"""
+    m = mins.get(bot, 0)
+    return m is not None and _log_busy(where, bot, m, now)
+
+
+def _scene_gates(st: dict, hist: list[dict], now: float, kind: str, busy=()) -> tuple[bool, str]:
+    """自主开场七道闸，代码顺序即契约：夜间 → 真人30min → 忙碌/停止 → 距上场冷却 → 同类冷却 → 日限 → 配额（永远最后）。
+    返回 (go, reason)。human 触发不过闸。busy 可为 set/dict/tuple/None（dict 的值只供日志取 since_min）。"""
+    mins = dict(busy) if isinstance(busy, dict) else {}
+    busy = set(busy or ())
     lo, hi = NIGHT_SKIP
     if lo <= _local_hour(now) < hi:
         return (False, f"夜间{lo}-{hi}点不打扰")
     lh = _last_human_ts(hist)
     if lh and (now - lh) < HUMAN_QUIET_MIN * 60:
         return (False, "真人30min内说过话(真人主导优先)")
+    if len(BOTS) - len(busy & set(BOTS)) < 2:
+        for b in BOTS:
+            if b in busy:
+                _log_excluded("scene_gate", b, mins, now)
+        return (False, _busy_reason(busy, mins))
     if now - st.get("last_scene_end_ts", 0) < SCENE_COOLDOWN_MIN * 60:
         return (False, f"距上场不足{SCENE_COOLDOWN_MIN}min")
     kind_last = (st.get("scene_kind_last_ts") or {}).get(kind, 0)
@@ -468,12 +559,16 @@ def _scene_gates(st: dict, hist: list[dict], now: float, kind: str) -> tuple[boo
     return (True, "ok")
 
 
-def _check_triggers(st: dict, hist: list[dict], now: float) -> dict | None:
+def _check_triggers(st: dict, hist: list[dict], now: float, busy=()) -> dict | None:
     """按优先级找一个自主开场理由。返回 {kind, opener, context} 或 None。
-    jiwen/朋友圈/特殊日 全 try/except fail-open；最后兜底冷场。"""
+    jiwen/朋友圈/特殊日 全 try/except fail-open；最后兜底冷场。busy 里的 bot 不当开场人。"""
+    mins = dict(busy) if isinstance(busy, dict) else {}  # 只供日志取 since_min；值 None=已停止/宽限
+    busy = set(busy or ())
     newest_ts = hist[-1]["ts"] if hist else 0
 
     # 1) jiwen 情绪越阈：任一 bot forced/描述非空 → 由 ta 起头
+    # ponytail: 想开场的人正在私聊 → 本 tick 不再下探朋友圈/特殊日/冷场（INTERFACE §2.6：该 bot 忙且无其它 jiwen 触发 → idle）
+    jiwen_busy_skipped = False
     if _jiwen_reader:
         for bot in BOTS:
             try:
@@ -481,8 +576,15 @@ def _check_triggers(st: dict, hist: list[dict], now: float) -> dict | None:
             except Exception:
                 info = None
             if info and (info.get("forced") or info.get("description")):
+                if bot in busy:  # forced 的人正在私聊：本来就不该去群，不换人代开
+                    if mins.get(bot, 0) is not None:  # 已停止/宽限中的人只跳过，不压住别的触发（裁决 D2）
+                        _log_busy("jiwen_opener", bot, mins.get(bot, 0), now)
+                        jiwen_busy_skipped = True
+                    continue
                 return {"kind": "jiwen", "opener": bot,
                         "context": f"你现在{info.get('description') or '心里有点动静'}"}
+    if jiwen_busy_skipped:
+        return None
 
     # 2) 朋友圈事件：上次检查点后有人发了新圈 → 别的 bot 起头搭话
     if _db:
@@ -495,10 +597,14 @@ def _check_triggers(st: dict, hist: list[dict], now: float) -> dict | None:
                 poster = m0.get("bot_id", "")
                 opener = next((b for b in BOTS if b != poster), "bot3")
                 st["last_moment_seen_ts"] = max(int(m0.get("ts", now)), int(last_seen))
+                if opener in busy:
+                    _log_excluded("moment_opener", opener, mins, now)
+                    opener = _pick_other(busy | {poster})
                 txt = (m0.get("text") or "")[:60]
                 pname = BOTS.get(poster, poster or "群友")
-                return {"kind": "moment", "opener": opener,
-                        "context": f"你刷到 {pname} 刚发的朋友圈：「{txt}」"}
+                if opener:  # 没人可用 → 本触发作废、继续下探（检查点照样推进，免得每 tick 重触发）
+                    return {"kind": "moment", "opener": opener,
+                            "context": f"你刷到 {pname} 刚发的朋友圈：「{txt}」"}
         except Exception:
             pass
 
@@ -508,8 +614,13 @@ def _check_triggers(st: dict, hist: list[dict], now: float) -> dict | None:
             from datetime import date as _date
             d = _date.fromtimestamp(now)
             if _holiday.is_holiday(d):
-                return {"kind": "special_date", "opener": next(iter(BOTS), None),
-                        "context": "今天是个特别的日子"}
+                opener = next(iter(BOTS), None)
+                if opener in busy:
+                    _log_excluded("special_opener", opener, mins, now)
+                    opener = _pick_other(busy)
+                if opener:
+                    return {"kind": "special_date", "opener": opener,
+                            "context": "今天是个特别的日子"}
         except Exception:
             pass
 
@@ -561,6 +672,10 @@ def tick(chat_id: str = CHAT_ID, now: float | None = None) -> dict:
         return {"action": "idle"}
     newest = hist[-1]
     new_msgs = [m for m in hist if _is_new(m, st)]
+    # 缺陷②：私聊忙碌的 bot（dict 值只给日志用 since_min）。只用于"无新消息"的续轮/开场路径；
+    # 真人新消息分支（decide→inject）不看 busy（BRIEF ②）。
+    busy = _busy_bots(now)
+    excl = dict(busy)
 
     # 急停：新消息里用户说了停止词 → 锁 LOCK_MIN 分钟
     for m in new_msgs:
@@ -643,13 +758,25 @@ def tick(chat_id: str = CHAT_ID, now: float | None = None) -> dict:
             return {"action": "scene_end", "reason": "场次超时/硬顶"}
         if now < scene.get("next_turn_after", 0):
             return {"action": "scene_pace"}  # 还没到点，等 pace / 等被点 bot 发言
+        if len(BOTS) - len(set(excl) & set(BOTS)) < 2:  # 可用 bot < 2：场撑不起来，直接收场不点名
+            for b in BOTS:
+                if b in excl:
+                    _log_excluded("scene_close", b, excl, now)
+            _close_scene(st, now)
+            _save_state(chat_id, st)
+            return {"action": "scene_end", "reason": _busy_reason(set(excl), excl)}
+        for b in BOTS:  # 忙者本轮被排除在点名之外（限流日志，S2 可观测）
+            if b in excl:
+                _log_excluded("scene_turn", b, excl, now)
         budget = scene.get("budget", 0)
         last_bot = next((m for m in reversed(hist) if m["is_bot"]), None)
-        v = decide_scene(hist, budget, exclude=scene.get("last_speaker"))
+        v = decide_scene(hist, budget, exclude=scene.get("last_speaker"), busy=excl)
+        # 兜底改选：不连说、不点忙者/停止者（可用≥2 保证非 None）
+        fallback = _pick_other({scene.get("last_speaker")} | set(excl)) or "bot3"
         # 导演判定聊完了，或预算软顶到了 → 该收尾
         if v["done"] or budget <= 0:
             if v["dangling"]:  # 最后一句悬着（问题/话头没接）→ 加 1 轮把它接住再结束
-                who = v["who"] or next((b for b in BOTS if b != scene.get("last_speaker")), "bot3")
+                who = v["who"] or fallback
                 scene["closing_done"] = True
                 scene["next_turn_after"] = now + TURN_TIMEOUT
                 st["scene"] = scene
@@ -663,7 +790,7 @@ def tick(chat_id: str = CHAT_ID, now: float | None = None) -> dict:
             return {"action": "scene_end",
                     "reason": ("导演判定聊完" if v["done"] else "预算软顶")}
         # 继续：点导演选的人接话
-        who = v["who"] or next((b for b in BOTS if b != scene.get("last_speaker")), "bot3")
+        who = v["who"] or fallback
         scene["next_turn_after"] = now + TURN_TIMEOUT  # 宽限等 ta 发言；发言后续轮分支改回 pace
         st["scene"] = scene
         _save_state(chat_id, st)
@@ -672,19 +799,20 @@ def tick(chat_id: str = CHAT_ID, now: float | None = None) -> dict:
         return {"action": "scene_turn", "who": who, "budget": budget, "inbox": path}
 
     # 无活跃场 → 找一个触发理由开一整场自主群聊（过节流闸）
-    trig = _check_triggers(st, hist, now)
+    seen0 = st.get("last_moment_seen_ts")
+    trig = _check_triggers(st, hist, now, excl)
     if trig:
         kind = trig["kind"]
         if kind == "cold_gap":  # 冷场无论开不开都记时间戳，避免每 tick 重复触发
             st["last_initiate_ts"] = now
-        go, reason = _scene_gates(st, hist, now, kind)
+        go, reason = _scene_gates(st, hist, now, kind, excl)
         if not go:
             _save_state(chat_id, st)
             return {"action": "scene_skip", "kind": kind, "reason": reason}
         opener = trig.get("opener")
         context = trig.get("context") or None
         if not opener:  # 冷场：让 decide_initiate 挑一个人起头
-            ri = decide_initiate(hist)
+            ri = decide_initiate(hist, exclude=excl)
             if not ri.get("speak"):
                 _save_state(chat_id, st)
                 return {"action": "initiate_pass"}
@@ -698,6 +826,8 @@ def tick(chat_id: str = CHAT_ID, now: float | None = None) -> dict:
         _record_scene_turn()
         return {"action": "scene_open", "kind": kind, "who": opener,
                 "inbox": path, "scene_budget": SCENE_TURNS}
+    if st.get("last_moment_seen_ts") != seen0:  # 朋友圈触发因无人可用作废，但检查点已推进：落盘，免得每 tick 重触发
+        _save_state(chat_id, st)
     return {"action": "idle"}
 
 
