@@ -27,6 +27,7 @@ import {
 } from './clear_summary'
 import { createHangRuntime } from './hang_runtime'
 import { probeSituation } from './situation_bridge'
+import { inboxHumanMarks } from './chat_guard'
 
 // ─── env ──────────────────────────────────────────────────────────────
 const CHANNEL_DIR = process.env.CHANNEL_DIR || ''
@@ -486,6 +487,8 @@ const MEMORY_DIR = SESSION_JSONL ? join(dirname(SESSION_JSONL), 'memory') : ''
 const RECENT_NOTE = 'recent_conversation.md'
 const SUMMARY_TAIL_BYTES = 2 * 1024 * 1024   // 会话 jsonl 可达几百 MB，只读尾巴
 const SUMMARY_TIMEOUT_MS = 25_000
+// /clear 回执上限：回执只是通知，挂住了也不能让 clearInProgress 陪着等 grammY 默认 500s 的请求超时
+const RECEIPT_TIMEOUT_MS = 10_000
 let clearInProgress = false
 
 function readTailFile(path: string, maxBytes: number): string {
@@ -642,6 +645,21 @@ async function slashBridgeIfApplicable(ctx: Context, text: string): Promise<bool
       return true
     }
     clearInProgress = true
+    // ③c 回执与清理解耦：走到回执时上下文已清，回执失败/挂起只记一行日志，不再回"失败"误导用户。
+    // ponytail: 超时不取消底层请求（同私有 clear_chain 语义），晚到的回执照常送达，无害。
+    const receipt = async (msg: string): Promise<void> => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          bot.api.sendMessage(chatId, msg, replyOpt),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), RECEIPT_TIMEOUT_MS) }),
+        ])
+      } catch (e) {
+        process.stderr.write(`dispatcher[${BOT_NAME}]: clear_receipt_failed chat=${chatId} ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}\n`)
+      } finally {
+        clearTimeout(timer)
+      }
+    }
     void (async () => {
       try {
         const kept = await saveClearSummary('all')
@@ -650,9 +668,11 @@ async function slashBridgeIfApplicable(ctx: Context, text: string): Promise<bool
         await new Promise(r => setTimeout(r, 500))   // 先杀再删：claude 活着时还在写这个 jsonl
         const wiped = wipeSessionJsonl()
         process.stderr.write(`dispatcher[${BOT_NAME}]: /clear chat=${chatId} wiped=${wiped} summary=${kept}\n`)
-        await bot.api.sendMessage(chatId, `已清空${kept ? '（最近聊到哪我记小本本上了）' : ''}`, replyOpt)
+        await receipt(`已清空${kept ? '（最近聊到哪我记小本本上了）' : ''}`)
       } catch (e) {
-        await bot.api.sendMessage(chatId, `[slash bridge 失败: ${String(e).slice(0, 200)}]`, replyOpt).catch(() => {})
+        // 回执失败已在 receipt 里吞掉，能到这的只有清理本身出错 → 确实没清成，如实说
+        process.stderr.write(`dispatcher[${BOT_NAME}]: /clear failed chat=${chatId} ${String(e).slice(0, 200)}\n`)
+        await receipt(`[清空没成功: ${String(e).slice(0, 200)}]`)
       } finally {
         clearInProgress = false
       }
@@ -836,6 +856,8 @@ async function handleInbound(
     ts: new Date((ctx.message?.date ?? 0) * 1000).toISOString(),
     reply_to: ctx.message?.reply_to_message?.message_id,
   }
+  // 真人（非 bot、非合成）消息打 human_ts / mentions_group 标，worker 据此统一计时、找"最近真人在哪个聊天"（INTERFACE §4.1）
+  Object.assign(meta, inboxHumanMarks(text, isBotSender, options?.synthetic, ctx.message?.date, Date.now()))
   if (imagePath) meta.image_path = imagePath
   if (voiceText) meta.voice_text = voiceText
   if (attachment) {

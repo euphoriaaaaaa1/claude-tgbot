@@ -26,6 +26,8 @@ import { settingsPath } from './provider_watch'
 import { createBurstCollector, readBurstCfg } from './burst_inbox'
 import { takeHangArchive } from './hang_runtime'
 import { situAnchorLine } from './situation_bridge'
+import { applyInboundMarks, loadInboundState, testModeCheck } from './chat_guard'
+import { planInboxBatch, readInboxMeta } from './inbox_names'
 
 // ─── 配置（与 dispatcher.ts 同源的 env）────────────────────────────────
 const BOT = process.env.BOT_NAME || ''
@@ -141,17 +143,21 @@ function logSpawn(msg: string): void {
 
 // ─── 时间感知：每条入站消息带本地时刻，久别重逢再加一行间隔 ──────────────
 // 进程内变量不够用——要解决的正是"worker 被回收后隔了十几小时"，重启即失忆就永远算不出
-// 间隔。落一个按 chat 分键的小状态文件，tmp+rename 原子写，启动时读一次进内存。
+// 间隔。落一个小状态文件，tmp+rename 原子写，启动时读一次进内存。
+// desync ③b：间隔按"本 bot 收到的最近一条真人消息"统一计时（保留键 _human 等，更新规则在
+// chat_guard）；按 chat 分键的旧值照写，只为格式向后兼容。worker-plugin 读同一文件做跨聊天拦截。
 const LAST_TS_FILE = join(CHANNEL_DIR, '.last-inbound-ts.json')
-const lastInboundTs: Record<string, number> = (() => {
+const lastInboundTs: Record<string, unknown> = (() => {
   try {
     const d = JSON.parse(readFileSync(LAST_TS_FILE, 'utf8'))
-    return d && typeof d === 'object' && !Array.isArray(d) ? d as Record<string, number> : {}
+    return d && typeof d === 'object' && !Array.isArray(d) ? d as Record<string, unknown> : {}
   } catch { return {} }
 })()
+let inboundState = loadInboundState(lastInboundTs)
 function rememberInboundTs(chatId: string, tsMs: number): void {
   if (!chatId || !Number.isFinite(tsMs)) return
   lastInboundTs[chatId] = tsMs
+  Object.assign(lastInboundTs, inboundState)   // 四个保留键与按 chat 旧键同一次原子写
   try {
     mkdirSync(CHANNEL_DIR, { recursive: true })
     writeFileSync(`${LAST_TS_FILE}.tmp`, JSON.stringify(lastInboundTs))
@@ -682,22 +688,31 @@ export class WorkerManager {
       this.dispatchContent(item, item.content, null)
       return
     }
-    // file：读取+组装；同 chat 的连发消息合并成一条注入（省轮次，治"只回最后一条"）
-    const first = this.readInboxMeta(item.path)
-    if (!first) { rmSync(item.path, { force: true }); this.pump(); return }
-    const parts = [first]
-    const chatId = String(first.meta.chat_id ?? '')
-    while (this.queue.length > 0 && this.queue[0].kind === 'file') {
-      const nxt = this.queue[0] as { kind: 'file'; path: string }
-      const m = this.readInboxMeta(nxt.path)
-      if (!m) { this.queue.shift(); rmSync(nxt.path, { force: true }); continue }
-      if (String(m.meta.chat_id ?? '') !== chatId) break
-      parts.push(m); this.queue.shift(); rmSync(nxt.path, { force: true })
+    // file：队头连续的 file 段逐个读 meta（停用期间积压的陈旧合成件在 readInboxMeta 里删掉 → null），
+    // 再交给 inbox_names 的纯函数规划：同 chat 的连发合并成一条注入（省轮次，治"只回最后一条"），
+    // 读不了的丢弃，遇到别的 chat 即停。只映射到第一个换 chat 的项为止，积压再长也不全读。
+    const now = Date.now()
+    const metas = new Map<string, Record<string, any>>()
+    const heads: Array<{ path: string; chatId: string | null }> = []
+    let firstChat: string | null = null
+    for (const q of [item, ...this.queue]) {
+      if (q.kind !== 'file') break
+      const m = readInboxMeta(q.path, now, logSpawn)
+      const cid = m ? String(m.chat_id ?? '') : null
+      if (m) metas.set(q.path, m)
+      heads.push({ path: q.path, chatId: cid })
+      if (cid != null && firstChat == null) firstChat = cid
+      else if (cid != null && cid !== firstChat) break
     }
-    const content = parts.map(p => p.content).join('\n\n')
+    const plan = planInboxBatch(heads)
+    this.queue.splice(0, heads.length - plan.rest - 1)   // item 自己已 shift 出队
+    for (const p of plan.drop) rmSync(p, { force: true })
+    if (plan.merge.length === 0) { this.pump(); return }
+    const content = plan.merge.map(p => this.buildContent(metas.get(p)!)).join('\n\n')
+    for (const p of plan.merge.slice(1)) rmSync(p, { force: true })
     // reply 默认路由：worker-plugin 的 lastChatId 改由该文件驱动
-    this.writeLastChatId(chatId)
-    this.dispatchContent(item, content, item.path)
+    this.writeLastChatId(plan.chatId ?? '')
+    this.dispatchContent({ kind: 'file', path: plan.merge[0] }, content, plan.merge[0])
   }
 
   private dispatchContent(item: QueueItem, content: string, deletePath: string | null): void {
@@ -727,10 +742,8 @@ export class WorkerManager {
     } catch {}
   }
 
-  // inbox 文件 → 组装后的 content（worker-plugin.ts deliverFile 的组装逻辑逐字段迁入）
-  private readInboxMeta(path: string): { content: string; meta: Record<string, unknown> } | null {
-    let meta: any
-    try { meta = JSON.parse(readFileSync(path, 'utf8')) } catch { return null }
+  // inbox meta → 组装后的 content（worker-plugin.ts deliverFile 的组装逻辑逐字段迁入）
+  private buildContent(meta: any): string {
     const text: string = typeof meta.text === 'string' ? meta.text : ''
     const isBotSender = meta.is_bot_sender === true
     const userTag = isBotSender
@@ -763,7 +776,10 @@ export class WorkerManager {
     // 时间取 meta.ts（消息自身时刻，不是投递时刻）；缺失/非法 → 用当前时刻。
     const parsedTs = Date.parse(String(meta.ts ?? ''))
     const tsMs = Number.isFinite(parsedTs) && parsedTs > 0 ? parsedTs : Date.now()
-    const timePrefix = buildTimePrefix(tsMs, lastInboundTs[chatIdStr] ?? null)
+    // desync ③b：间隔 = 距本 bot 此前收到的最近一条真人消息（群/私聊共用）；合成消息不重置
+    const prevHuman = inboundState._human
+    inboundState = applyInboundMarks(inboundState, chatIdStr, meta, tsMs)
+    const timePrefix = buildTimePrefix(tsMs, prevHuman)
     rememberInboundTs(chatIdStr, tsMs)
     // 真人私聊消息前注入关系数值提示（群聊/peer/导演 inject 不注入——与旧行为一致）
     const isHumanPrivate = !isBotSender && scene === 'private'
@@ -791,13 +807,19 @@ export class WorkerManager {
     // 场景标注必须紧贴 <channel>，注入的几行一律排在它前面（摘要按开标签一刀切）
     const content =
       `${relPrefix}${timePrefix}${situLine}${late ? `${late}\n` : ''}${sceneTag}<channel ${metaAttrs}>\n${body}\n</channel>`
-    return { content, meta: notifMeta }
+    return content
   }
 }
 
 // 单例（dispatcher.ts import 使用）
 let _manager: WorkerManager | null = null
 export function getManager(): WorkerManager {
-  if (!_manager) _manager = new WorkerManager()
+  if (!_manager) {
+    // 测试模式 fail-closed（INTERFACE §11.2）：开关未设时直接通过，生产零影响。
+    // 把 manager 实际会用的 CHANNEL_DIR / 派给 worker 的 dispatcher 地址一并交检，防测试落到生产端口。
+    const tm = testModeCheck({ ...process.env, CHANNEL_DIR, TELEGRAM_DISPATCHER_URL: DISPATCHER_URL })
+    if (!tm.ok) { process.stderr.write(`test_mode: refuse ${tm.reason}\n`); process.exit(97) }
+    _manager = new WorkerManager()
+  }
   return _manager
 }

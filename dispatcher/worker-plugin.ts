@@ -16,10 +16,20 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
+import {
+  loadInboundState, pickSrcChat, dstActiveMs, crossChatDecision, applyReplyOutcome,
+  crossSceneHint, replyToolDescription, testModeCheck,
+} from './chat_guard.ts'
 
 const BOT = process.env.TELEGRAM_WORKER_BOT || ''
 const DISPATCHER = process.env.TELEGRAM_DISPATCHER_URL || 'http://127.0.0.1:17801'
 const CHANNEL_DIR = process.env.CHANNEL_DIR || join(homedir(), '.claude', 'channels', BOT)
+// 测试模式 fail-closed（INTERFACE §11.2）：开关未设时直接通过，生产零影响
+const testMode = testModeCheck({ ...process.env, CHANNEL_DIR, TELEGRAM_DISPATCHER_URL: DISPATCHER })
+if (!testMode.ok) {
+  process.stderr.write(`test_mode: refuse ${testMode.reason}\n`)
+  process.exit(97)
+}
 if (!BOT) {
   process.stderr.write(`worker-plugin: need TELEGRAM_WORKER_BOT\n`)
   process.exit(1)
@@ -29,6 +39,19 @@ if (!BOT) {
 function lastChatId(): string {
   try { return readFileSync(join(CHANNEL_DIR, '.last-chat-id'), 'utf8').trim() } catch { return '' }
 }
+
+// desync ④：跨聊天拦截读 worker-manager 原子写的 sidecar；读失败 → 全空 → 不拦（fail-open）
+function inboundState() {
+  try { return loadInboundState(JSON.parse(readFileSync(join(CHANNEL_DIR, '.last-inbound-ts.json'), 'utf8'))) }
+  catch { return loadInboundState(null) }
+}
+// 主动切换场景的提示文案在 chat_guard.crossSceneHint（纯函数）；这里只读 access.json，读失败 → ''
+function readAccessJson(): unknown {
+  try { return JSON.parse(readFileSync(join(CHANNEL_DIR, 'access.json'), 'utf8')) } catch { return null }
+}
+// "去群里说一声"放行账本：进程内，每条用户消息最多放行 1 次；worker 重启即清空（已知残余）
+let _group_request_used_ms: Record<string, number> = {}
+const CROSS_WARN_PRIV_MS = 30 * 60_000   // 发群时私聊 30 分钟内有真人 → cross_chat_warn（残余风险计量）
 
 process.on('unhandledRejection', err => process.stderr.write(`worker-plugin: unhandledRejection: ${err}\n`))
 process.on('uncaughtException', err => process.stderr.write(`worker-plugin: uncaughtException: ${err}\n`))
@@ -47,7 +70,8 @@ const mcp = new Server(
         + '你可以【直接不调 reply、结束这一轮】——就是装没看见、晾一会儿、避而不答，这比每条都秒答更像活人。'
         + '冷淡、高冷、傲娇、正忙、闹脾气的人设，尤其该多沉默、多冷处理。'
         + '但别走极端把所有消息都无视——该聊、想聊、被打动、或事关重要时，就好好回。沉默是选项，不是常态。',
-    ].join('\n') },
+      crossSceneHint(readAccessJson()),
+    ].filter(Boolean).join('\n') },
 )
 
 // ─── HTTP helper ─────────────────────────────────────────────────────
@@ -71,6 +95,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         as_voice: { type: 'boolean' }, voice_text: { type: 'string' },
         voice_emotion: { type: 'string', enum: ['HAPPY','SAD','ANGRY','NEUTRAL','FEARFUL','SURPRISED','DISGUSTED'] },
         voice_instruct: { type: 'string' },
+        user_requested: { type: 'boolean', description: replyToolDescription() },
       }, required: ['text'] } },
     { name: 'react', description: 'Add emoji reaction to a message in this chat.',
       inputSchema: { type: 'object', properties: { message_id: { type: 'string' }, emoji: { type: 'string' } }, required: ['message_id','emoji'] } },
@@ -91,6 +116,43 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
       case 'reply': {
         // 路由：显式 chat_id 优先，否则回到刚注入那条 inbound 的来源 chat。
         const targetChat = String(args.chat_id || lastChatId())
+        // desync ④：私聊里聊到的内容不主动发进闲置的群；用户在私聊里明确让去群里说 → 放行一次。
+        // src/dst 只按真人/导演计时（peer/self-initiate 不算），判定全在 chat_guard 纯函数里。
+        const st = inboundState()
+        const now = Date.now()
+        const src = pickSrcChat(st)
+        const srcHumanMs = src != null ? st._human_by_chat[src] ?? null : null
+        // D7：放行评估与额度记账只在真正跨聊天（dst≠src）时进行。同一聊天里的回复误带声明 → 当没传，
+        // 否则会白白烧掉这条消息唯一一次放行，真要发群时反被判 already_used。
+        const userRequested = args.user_requested === true && targetChat !== src
+        const decision = crossChatDecision(src, targetChat, dstActiveMs(st, targetChat), now, {
+          userRequested,
+          srcHumanMs,
+          srcMentionsGroup: src != null && st._mentions_group_by_chat[src] === srcHumanMs,
+          usedForHumanMs: src != null ? _group_request_used_ms[src] ?? null : null,
+        })
+        if (decision.block) {
+          process.stderr.write(`worker-plugin: cross_chat_block src=${src} dst=${targetChat} idle_min=${decision.idleMin} user_requested=${userRequested ? 1 : 0} denied=${decision.userRequestDenied ?? '-'}\n`)
+          const text = decision.userRequestDenied
+            ? 'blocked: 不能算用户要求（用户最近没在私聊里让你去群里说，或这条要求已经发过群了）；要说就在私聊里说。'
+            : `blocked: 私聊内容不主动发进群（群 ${targetChat} 最近 ${decision.idleMin ?? '未知'} 分钟无人说话）。要说就在私聊里说。`
+          return { content: [{ type: 'text', text }] }
+        }
+        if (decision.bypass === 'user_request') {
+          const privMin = srcHumanMs != null ? Math.floor((now - srcHumanMs) / 60_000) : null
+          process.stderr.write(`worker-plugin: cross_chat_user_request src=${src} dst=${targetChat} priv_min=${privMin} idle_min=${decision.idleMin}\n`)
+        } else if (/^-\d+$/.test(targetChat)) {
+          // 放行发群，但私聊 30 分钟内有真人 → 计量"群热闹时带私聊细节"这条只靠人设句管的残余风险。
+          // 取最近一个私聊（src 是私聊时就是 src 本身）：群里真人刚说过话时 src 会是群，照样要计。
+          let priv: string | null = null
+          for (const [c, ms] of Object.entries(st._human_by_chat)) {
+            if (/^\d+$/.test(c) && (priv == null || ms > st._human_by_chat[priv])) priv = c
+          }
+          const privMs = priv != null ? st._human_by_chat[priv] : null
+          if (priv != null && privMs != null && now - privMs <= CROSS_WARN_PRIV_MS) {
+            process.stderr.write(`worker-plugin: cross_chat_warn src=${priv} dst=${targetChat} priv_min=${Math.floor((now - privMs) / 60_000)} grp_min=${decision.idleMin}\n`)
+          }
+        }
         const out = await postJson('/send', {
           chat_id: targetChat,
           text: args.text,
@@ -101,7 +163,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           voice_emotion: args.voice_emotion,
           voice_instruct: args.voice_instruct,
         })
-        const ids: number[] = out.message_ids ?? []
+        // 走到这里 = /send 成功（失败抛到外层 catch，不记账）；只有"靠用户要求放行"的那次才记
+        _group_request_used_ms = applyReplyOutcome(_group_request_used_ms, src, srcHumanMs, decision, true)
+        // dispatcher 回 message_ids；单条形态 message_id 也认（harness mock 与旧 /send 形态）
+        const ids: number[] = out.message_ids ?? (out.message_id != null ? [out.message_id] : [])
         return { content: [{ type: 'text', text: ids.length === 1 ? `sent (id: ${ids[0]})` : `sent ${ids.length} parts (ids: ${ids.join(', ')})` }] }
       }
       case 'react': {
