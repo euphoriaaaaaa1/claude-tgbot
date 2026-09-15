@@ -188,21 +188,33 @@ def _wants_action(text: str) -> bool:
     return any(w in text for w in _ACTION_INTENT_WORDS)
 
 
+from bots_registry import disabled_ids_safe  # noqa: E402  需求⑤ 停用判定唯一入口
+
+_urlopen = urllib.request.urlopen  # HTTP 注入点（INTERFACE §10.4），测试换成记录器
+
+
 def _ensure_worker_alive(bot: str) -> None:
     """POST 该 bot dispatcher 的 /ensure_worker（查活+拉起原子完成，跨平台，替代旧 tmux）。
-    dispatcher 未起则静默跳过——它起来后会自己 drain inbox 兜住。"""
+    dispatcher 未起则静默跳过——它起来后会自己 drain inbox 兜住。停用的 bot（需求⑤）→ 不拉起。"""
+    if bot in disabled_ids_safe():
+        sys.stderr.write(f"[voicecall] {bot} stopped, skip\n")
+        return None
     port = BOTS.get(bot, {}).get("port")
     if not port:
         return
     try:
         req = urllib.request.Request(f"http://127.0.0.1:{port}/ensure_worker", method="POST")
-        urllib.request.urlopen(req, timeout=5)
+        _urlopen(req, timeout=5)
     except Exception as e:
         print(f"[ensure_worker] {bot} 失败(dispatcher 未起?): {e}", flush=True)
 
 
 def _write_inbox(bot: str, text: str, prefix: str) -> bool:
-    """往 bot inbox 写一条消息（复用新架构 inbox 机制：dispatcher/director/moments 同款，worker 自动 drain）。"""
+    """往 bot inbox 写一条消息（复用新架构 inbox 机制：dispatcher/director/moments 同款，worker 自动 drain）。
+    停用的 bot（需求⑤）→ 不写、返回 False（停用期间不积压，启用后也就不会补发）。"""
+    if bot in disabled_ids_safe():
+        sys.stderr.write(f"[voicecall] {bot} stopped, skip\n")
+        return False
     cid = BOTS.get(bot, {}).get("chat_id", "")
     if not cid:
         print(f"[inbox] {prefix} 跳过：bot {bot} 未配 chat_id（先 enable-bot）", flush=True)
