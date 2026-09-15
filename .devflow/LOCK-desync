@@ -1,1 +1,3 @@
-ceabf2c68d91c2fd20c81da5dff53ced9b78313f
+# LOCK-desync（公开版）—— 修订账本式锁；验证：git diff <BASE> -- tests/acceptance/desync/ dispatcher/tests/acceptance/desync/ 的差异须逐一对应下方条目
+BASE:    ceabf2c68d91c2fd20c81da5dff53ced9b78313f   # 卡点2 冻结点：公开 py+TS 约 330 条
+Rpub-1:  6c2c993   # 裁决 L-pub1：quota_dm 的 test_maybe_dm_*（11 函数/14 条）与 resume 的 test_decide_dm_*（4 函数/8 条）加 skip——公开版无群聊信号主动私聊(DM)，§10.3"公开同签名"前提不成立；只增 15 行 skip，断言/期望值/用例数零改动；非 DM 的 14 条保留且全过
