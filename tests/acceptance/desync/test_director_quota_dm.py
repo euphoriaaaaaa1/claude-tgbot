@@ -76,6 +76,7 @@ def _setup(d, who="bot2", dm=True, count=0, last_ts=0, last_bot=None):
     return rec
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_maybe_dm_绕闸配方_decide_dm必被调用_exclude透传stopped并resumed(director):
     rec = _setup(director)
     r = director.maybe_dm({}, [_hm(NOW - 10)], [human(NOW - 600)], NOW, exclude={"bot1", "bot3"})
@@ -83,6 +84,7 @@ def test_maybe_dm_绕闸配方_decide_dm必被调用_exclude透传stopped并resu
     assert r is not None and rec["inject"] == ["bot2"]
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 @pytest.mark.parametrize("exclude", [None, (), {"bot1": 1.0}, ["bot3"]])
 def test_maybe_dm_exclude各种类型不抛_按集合透传(director, exclude):
     rec = _setup(director)
@@ -90,28 +92,33 @@ def test_maybe_dm_exclude各种类型不抛_按集合透传(director, exclude):
     assert rec["decide"] == [set(exclude or ())]
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_maybe_dm_闸1_新消息无真人_返回None不调LLM(director):
     rec = _setup(director)
     bot_row = {**_hm(NOW - 10), "is_bot": True, "from_username": "bot1"}
     assert director.maybe_dm({}, [bot_row], [], NOW) is None and rec["decide"] == []
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_maybe_dm_闸2_夜间区间命中_返回None(director):
     rec = _setup(director)
     director.DM_NIGHT_SKIP = (0, 24)
     assert director.maybe_dm({}, [_hm(NOW - 10)], [], NOW) is None and rec["decide"] == []
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_maybe_dm_闸3_日限已满_返回None(director):
     rec = _setup(director, count=10)
     assert director.maybe_dm({}, [_hm(NOW - 10)], [], NOW) is None and rec["decide"] == []
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_maybe_dm_闸4_冷却中_返回None(director):
     rec = _setup(director, last_ts=NOW - 1)
     assert director.maybe_dm({}, [_hm(NOW - 10)], [], NOW) is None and rec["decide"] == []
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_maybe_dm_闸5_quota_ok为False_返回None_不调decide_dm(director):
     rec = _setup(director)
     calls = _quota_counter(director, value=False)
@@ -119,22 +126,26 @@ def test_maybe_dm_闸5_quota_ok为False_返回None_不调decide_dm(director):
     assert rec["decide"] == [] and len(calls) == 1
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_maybe_dm_闸6_LLM说不私聊_返回None_不inject(director):
     rec = _setup(director, dm=False)
     assert director.maybe_dm({}, [_hm(NOW - 10)], [], NOW) is None
     assert len(rec["decide"]) == 1 and rec["inject"] == []
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_maybe_dm_闸7_同一bot连续私聊_返回None_不inject(director):
     rec = _setup(director, who="bot2", count=1, last_bot="bot2")
     assert director.maybe_dm({}, [_hm(NOW - 10)], [], NOW) is None and rec["inject"] == []
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_maybe_dm_闸7_count为0时同bot仍放行(director):
     rec = _setup(director, who="bot2", count=0, last_bot="bot2")
     assert director.maybe_dm({}, [_hm(NOW - 10)], [], NOW) is not None and rec["inject"] == ["bot2"]
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_maybe_dm_LLM选中被排除bot_改选后inject的是非排除bot(director):
     rec = _setup(director, who="bot2")
     director.maybe_dm({}, [_hm(NOW - 10)], [], NOW, exclude={"bot2"})
