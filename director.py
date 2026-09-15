@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from claude_cli import call_claude_json  # 走 DeepSeek 快通道，不烧 Claude 配额
 import chat_history  # session_uuid：确定性定位 worker 会话，别靠 mtime 猜
+from bots_registry import disabled_ids_safe  # 需求⑤：停用判定唯一入口（configs/<bot>.yml enabled:false，fail-open 在其内部）
 
 # 外部触发/额度依赖：全部 optional + 调用点 try/except fail-open，
 # 任一模块缺失/异常都不能让 director 常驻进程崩（和 life-context.py 同策略）。
@@ -61,6 +62,7 @@ PRIVATE_BUSY_MIN = 30
 MARKER_DIR = os.path.expanduser(
     os.environ.get("DIRECTOR_MARKER_DIR") or "~/.claude/dispatcher/.self-initiate-state")
 BUSY_LOG_THROTTLE_SEC = 300  # busy_skip/stopped_skip/resumed_skip 等同键日志限流
+RESUME_GRACE_MIN = 30        # 需求⑤：bot 启用后宽限期内仍排除，防补发停用期积压的开场理由（边界不含）
 
 # ── 运行层参数（全部可环境变量覆盖，测试指到假目录，零碰生产）──
 POLL_SEC = 2          # 主循环轮询间隔
@@ -149,6 +151,9 @@ def read_group_history(chat_id: str = CHAT_ID, n: int = 12) -> list[dict]:
     return msgs[-n:]
 
 
+_read_hist = read_group_history  # tick 读群历史的注入点（INTERFACE §10.2）
+
+
 def compute_heat(history: list[dict]) -> int:
     """heat = MAX_HEAT - (最后一条真人消息之后的 bot 发言数)。
     没有真人消息时，按全部 bot 发言数算（防止纯 bot 历史无限接）。确定性，不调 LLM。"""
@@ -172,11 +177,12 @@ def _fmt_msg(m: dict) -> str:
     return f"{m['speaker']}{q}：{m['text'][:120]}"
 
 
-def _build_prompt(history: list[dict], heat: int, exclude: str | None = None) -> str:
+def _build_prompt(history: list[dict], heat: int, exclude: str | None = None, avail=None) -> str:
+    """avail：可被点名的 bot（默认全部）；已停止/启用宽限中的 bot 不出现在 who 枚举里。"""
     lines = [_fmt_msg(m) for m in history]
     convo = "\n".join(lines) if lines else "（群里还没人说话）"
     roster = "、".join(f"{bid}={name}" for bid, name in BOTS.items())
-    who_enum = "或".join(f'"{b}"' for b in BOTS) or '"bot1"'
+    who_enum = "或".join(f'"{b}"' for b in (avail or BOTS)) or '"bot1"'
     excl_line = ""
     if exclude:
         excl_line = f"⚠️ {BOTS.get(exclude, exclude)}({exclude}) 刚说完，这一轮别再选 ta，让别的角色接。\n"
@@ -204,11 +210,12 @@ def _build_prompt(history: list[dict], heat: int, exclude: str | None = None) ->
 
 
 def decide(chat_id: str = CHAT_ID, history: list[dict] | None = None,
-           scene_budget: int | None = None, exclude: str | None = None) -> dict:
+           scene_budget: int | None = None, exclude=None) -> dict:
     """决定这一轮谁说话。返回 {speak, who?, heat, reason?}。只出 who，不产内容（beat）。
     - scene_budget 给定（自主场续轮）：用它当额度，不看 compute_heat（无真人也能接）。
-    - exclude：刚说完的 bot，续轮不让 ta 连说（确定性改选）。
+    - exclude：str=刚说完的 bot（续轮不连说）；集合=已停止/启用宽限中的 bot（需求⑤）。命中 → 确定性改选。
     heat<=0 直接不接（确定性，不调 LLM）——这是死循环掐断点。"""
+    excl = _as_set(exclude)
     if history is None:
         history = read_group_history(chat_id)
     if not history:
@@ -219,12 +226,16 @@ def decide(chat_id: str = CHAT_ID, history: list[dict] | None = None,
         heat = compute_heat(history)
         if heat <= 0:
             return {"speak": False, "heat": heat, "reason": "接话额度耗尽，等用户再开口"}
-    r = call_claude_json(_build_prompt(history, heat, exclude=exclude), timeout=30) or {}
+    avail = [b for b in BOTS if b not in excl]
+    if not avail:
+        return {"speak": False, "reason": "可用bot不足"}  # INTERFACE §9.2 形状（无 heat 键）
+    r = call_claude_json(_build_prompt(history, heat, exclude=exclude if isinstance(exclude, str) else None,
+                                       avail=avail), timeout=30) or {}
     who = (r.get("who") or "").strip()
     if not r.get("speak") or who not in BOTS:
         return {"speak": False, "heat": heat, "reason": "导演判定这轮不接", "raw": r}
-    if exclude and who == exclude:  # 续轮不让刚说完的人连说 → 确定性改选另一个
-        who = next((b for b in BOTS if b != exclude), who)
+    if who in excl:  # 刚说完的人 / 停用者 → 确定性改选
+        who = _pick_other(excl)
     return {"speak": True, "who": who, "heat": heat}
 
 
@@ -301,6 +312,9 @@ def _ensure_worker_alive(bot: str, chat_id: str) -> None:
     """unified session：每个 bot 只有一个 worker（群+私聊同脑），由该 bot 的 dispatcher
     内嵌 worker-manager 托管。这里 POST /ensure_worker 查活+拉起（原子，替代 tmux）。
     dispatcher 不在 = worker 定义上就是死的；照常写 inbox，dispatcher 起来后 drain 兜住。"""
+    if _is_stopped(bot):  # 需求⑤：停用的 bot 一律不拉起
+        _log_stopped("ensure", bot)
+        return
     if os.environ.get("DIRECTOR_NO_SPAWN"):  # 测试模式：不真拉 worker
         return
     import urllib.request
@@ -340,8 +354,12 @@ def inject(bot: str, chat_id: str, history: list[dict],
     prev 给定（自主场续轮）：明确让 ta 先接上一个发言 bot 的那句话。
     context 给定（自主场开场理由，如 jiwen 情绪/朋友圈）：作为起话头的背景。
     closing=True（收尾轮）：把最后一句/问题接住、自然收尾，别再抛新问题——防对话吊在半句上。
-    user_batch 给定（用户连发了几条）：明确列出让 bot 一起照顾到，别只回最新一条。"""
-    convo = "\n".join(_fmt_msg(m) for m in history[-8:])
+    user_batch 给定（用户连发了几条）：明确列出让 bot 一起照顾到，别只回最新一条。
+    停用的 bot（需求⑤）：不写 inbox、不拉起，返回 ""。"""
+    if _is_stopped(bot):  # 入口硬闸：不依赖上游有没有排除
+        _log_stopped("inject", bot)
+        return ""
+    convo ="\n".join(_fmt_msg(m) for m in history[-8:])
     # 用户连发多条 → 明确列出，要求一次回复里都照顾到（治"只回最后一条"）。
     batch_block = ""
     if user_batch and len(user_batch) > 1:
@@ -552,6 +570,47 @@ def _log_excluded(where: str, bot: str, mins: dict, now: float) -> bool:
     return m is not None and _log_busy(where, bot, m, now)
 
 
+# ══════════════════ 需求⑤：手动停用的 bot 不被导演拉起、不被替写消息 ══════════════════
+# 判定源：configs/<bot>.yml enabled:false，经 bots_registry.disabled_ids_safe()（fail-open 在其内部）。
+_prev_stopped = None     # 上一 tick 的停用集合；None=首个 tick，不判定"启用"转换
+_resumed_at: dict = {}   # bot → 检测到启用的时刻（启用宽限用）
+
+
+def _as_set(x) -> set:
+    """排除参数统一转集合：str → {str}（兼容旧的"刚说完的人"单值），dict 取键，None/空 → 空集。"""
+    return {x} if isinstance(x, str) else set(x or ())
+
+
+def _is_stopped(bot: str) -> bool:
+    return bot in disabled_ids_safe()
+
+
+def _log_stopped(where: str, bot: str, now: float | None = None) -> None:
+    if not _throttled((where, bot), time.time() if now is None else now):
+        print(f"[director] stopped_skip where={where} bot={bot}", flush=True)
+
+
+def _stop_state(now: float) -> tuple[set, set]:
+    """每 tick 一次：(stopped, resumed)。停用→启用的 bot 在 RESUME_GRACE_MIN 内仍排除（同停用待遇），防补发停用期积压的开场理由。"""
+    global _prev_stopped
+    stopped = disabled_ids_safe() & set(BOTS)
+    if _prev_stopped is not None:
+        for b in _prev_stopped - stopped:
+            _resumed_at[b] = now
+    for b in stopped:
+        _resumed_at.pop(b, None)  # 再次停用 → 宽限记录作废
+        _log_stopped("tick", b, now)
+    _prev_stopped = stopped
+    for b, t in list(_resumed_at.items()):
+        if not now - t < RESUME_GRACE_MIN * 60:  # 边界 1800 秒不含
+            del _resumed_at[b]
+    for b, t in _resumed_at.items():
+        if not _throttled(("resumed", b), now):
+            # 裁决 D1：公开锁定用例要求刚启用那一 tick 报 since_min=0（私有锁定的是"至少 1"），整分钟向下取
+            print(f"[director] resumed_skip bot={b} since_min={int((now - t) // 60)}", flush=True)
+    return stopped, set(_resumed_at)
+
+
 def _scene_gates(st: dict, hist: list[dict], now: float, kind: str, busy=()) -> tuple[bool, str]:
     """自主开场七道闸，代码顺序即契约：夜间 → 真人30min → 忙碌/停止 → 距上场冷却 → 同类冷却 → 日限 → 配额（永远最后）。
     返回 (go, reason)。human 触发不过闸。busy 可为 set/dict/tuple/None（dict 的值只供日志取 since_min）。"""
@@ -680,6 +739,9 @@ def _close_scene(st: dict, now: float) -> None:
 def _prewarm_all_workers(chat_id: str) -> None:
     """开场时把三个 bot 的 worker 都预热，避免续轮冷启动、被点无人应。"""
     for b in BOTS:
+        if _is_stopped(b):  # 需求⑤：停用的不预热
+            _log_stopped("prewarm", b)
+            continue
         _ensure_worker_alive(b, chat_id)
 
 
@@ -689,7 +751,7 @@ def tick(chat_id: str = CHAT_ID, now: float | None = None) -> dict:
     if not switch_on(chat_id):
         return {"action": "off"}
     st = _load_state(chat_id)
-    hist = read_group_history(chat_id, n=HISTORY_N)
+    hist = _read_hist(chat_id, n=HISTORY_N)
     if not hist:
         return {"action": "idle"}
     newest = hist[-1]
@@ -697,7 +759,11 @@ def tick(chat_id: str = CHAT_ID, now: float | None = None) -> dict:
     # 缺陷②：私聊忙碌的 bot（dict 值只给日志用 since_min）。只用于"无新消息"的续轮/开场路径；
     # 真人新消息分支（decide→inject）不看 busy（BRIEF ②）。
     busy = _busy_bots(now)
+    # 需求⑤：停用与启用宽限中的 bot。与 busy 不同，真人新消息分支（decide）也必须排除它们。
+    stopped, resumed = _stop_state(now)
+    avoid = stopped | resumed
     excl = dict(busy)
+    excl.update({b: None for b in avoid})  # 值 None = 停用/宽限：文案归"已停止"段、不打 busy_skip
 
     # 急停：新消息里用户说了停止词 → 锁 LOCK_MIN 分钟
     for m in new_msgs:
@@ -752,7 +818,7 @@ def tick(chat_id: str = CHAT_ID, now: float | None = None) -> dict:
         if has_human_new and scene.get("active"):
             scene["active"] = False
             st["scene"] = scene
-        r = decide(chat_id, history=hist)
+        r = decide(chat_id, history=hist, exclude=avoid)
         _mark_decided(st, newest)  # 决策过就记账，同一条消息永不二次决策
         _save_state(chat_id, st)
         if r.get("speak"):
