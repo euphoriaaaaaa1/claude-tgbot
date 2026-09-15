@@ -95,17 +95,20 @@ def _dm(director):
     return [human(NOW - 10, "合成")], [human(NOW - 600, "早些")]
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_decide_dm_LLM选中被排除bot_改选BOTS顺序下一个(director):
     msgs, hist = _dm(director)
     r = director.decide_dm(msgs, hist, exclude={"bot2"})
     assert r["dm"] is True and r["who"] == "bot1"
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_decide_dm_全部排除_dm_False_可用bot不足(director):
     msgs, hist = _dm(director)
     assert director.decide_dm(msgs, hist, exclude=ALL) == {"dm": False, "reason": "可用bot不足"}
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 @pytest.mark.parametrize("exclude", [None, (), {"bot1": 1.0}, ["bot3"], "bot1"])
 def test_decide_dm_exclude各种类型不抛_who不在排除集(director, exclude):
     msgs, hist = _dm(director)
@@ -114,6 +117,7 @@ def test_decide_dm_exclude各种类型不抛_who不在排除集(director, exclud
     assert r["who"] not in ex
 
 
+@pytest.mark.skip(reason="公开版无群聊信号主动私聊(DM)功能：INTERFACE §10.3『公开同签名』前提不成立，裁决 L-pub1")
 def test_decide_dm_exclude为空_who原样透传(director):
     msgs, hist = _dm(director)
     assert director.decide_dm(msgs, hist)["who"] == "bot2"
