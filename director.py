@@ -779,8 +779,10 @@ def tick(chat_id: str = CHAT_ID, now: float | None = None) -> dict:
         return {"action": "locked"}
 
     if new_msgs:
-        if now - newest["ts"] < DEBOUNCE_SEC:
-            return {"action": "debounce"}  # 等下一轮 tick 再决策
+        # 等下一轮 tick 再决策。裁决 D3：只对"刚到的"消息防抖；未来时间戳（时钟偏差/坏值）不等——
+        # 否则坏值会让导演一直 debounce 到时钟追上，期间 decide 全停
+        if 0 <= now - newest["ts"] < DEBOUNCE_SEC:
+            return {"action": "debounce"}
 
         scene = st.get("scene") or {}
         has_human_new = any(not m["is_bot"] for m in new_msgs)
