@@ -525,11 +525,22 @@ def _gen_image_comfyui(bot_id: str, moment_id: int, text: str, visibility: str):
 def _gen_image_novelai(bot_id: str, bot_cfg: dict, moment_id: int,
                        text: str, visibility: str):
     """NovelAI：写 inbox JSON 让 bot worker 用 novelai-skill 生图。"""
+    _write_moment_image(bot_id, bot_cfg, moment_id, text, visibility)
+
+
+def _write_moment_image(bot_id: str, bot_cfg: dict, moment_id: int,
+                        text: str, visibility: str) -> str | None:
+    """写 <bot_dir>/chats/<chat>/inbox/moment-image-<ms>.json 并拉活 worker，返回文件路径。
+    停用的 bot（需求⑤）或没配 chat_id → 不写不拉起，返回 None。"""
     import json as _json
+    from bots_registry import disabled_ids_safe
+    if bot_id in disabled_ids_safe():
+        sys.stderr.write(f"[moments.post] {bot_id} stopped, skip\n")
+        return None
     bot_dir = bot_cfg["bot_channel_path"]
     chat_id = str(bot_cfg.get("chat_id", ""))
     if not chat_id:
-        return
+        return None
     inbox = os.path.join(bot_dir, "chats", chat_id, "inbox")
     os.makedirs(inbox, exist_ok=True)
     PYBIN = os.environ.get("CLAUDEBOTLIFE_PYTHON", sys.executable)
@@ -562,6 +573,7 @@ def _gen_image_novelai(bot_id: str, bot_cfg: dict, moment_id: int,
         _json.dump(payload, f, ensure_ascii=False)
     from moments.web import _ensure_worker_alive
     _ensure_worker_alive(bot_id, chat_id, bot_dir)
+    return fname
 
 
 _MONOLOGUE_OPENERS = (

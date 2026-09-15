@@ -177,6 +177,28 @@ def disabled_ids():
     return {bot_id for bot_id, cfg in _scan() if not is_enabled(cfg)}
 
 
+_safe_warned = False
+
+
+def disabled_ids_safe():
+    """``disabled_ids()`` 的 fail-open 包装：后台生产者（导演 / 主动消息 / 朋友圈 / 语音）判"停用"的唯一入口。
+
+    逐文件容错由 ``_scan`` 负责（别的 bot 的 yml 坏了不影响本 bot 被判停用）；这里只兜目录级异常：
+    整个 configs 读不了 → 空集（= 都当启用，退回改动前行为），stderr 只报一次类名。
+    """
+    global _safe_warned
+    try:
+        d = configs_dir()
+        if d.is_dir():
+            os.listdir(d)   # glob 会静默吞掉 PermissionError：显式探一次，让"目录读不了"可观测
+        return disabled_ids()
+    except Exception as e:
+        if not _safe_warned:
+            _safe_warned = True
+            sys.stderr.write("disabled_ids failed: %s\n" % type(e).__name__)
+        return set()
+
+
 def namespace_for(bot_id):
     """``bot_id`` → namespace uuid；yml 里没有就回 legacy 兜底，再没有回 None。
 

@@ -525,6 +525,11 @@ bot 名单、端口、记忆命名空间全部由 `configs/*.yml` 派生（`bots
 > 端口不用管：yml 里不写 `dispatcher_port` 时，注册表会自动挑一个不跟现有 bot 撞的号；想钉死就显式写上。
 >
 > 多 bot 群聊由 `director.py` 调度（可选，单 bot 用不到）。
+>
+> - **停用某个 bot**（管理台开关，或 `configs/<bot>.yml` 写 `enabled: false`）后，macOS 的 self-initiate plist 和 Windows 计划任务 `claude-tgbot-self-initiate-<bot>` 仍会按时触发，但脚本读到停用就立即退出：不发消息、不拉起 bot。想彻底卸掉：macOS 用 `launchctl bootout gui/$UID/<label>`，Windows 用 `Unregister-ScheduledTask claude-tgbot-self-initiate-<bot>`。
+> - 模板 bot 的 `.claude/settings.json` 挂了"上下文压缩后补群聊近况"的钩子，命令用的是 `python3`，PATH 里要能找到它。
+> - 改过 `DIRECTOR_GT_DIR`（群聊记录目录）的，给 worker 也配同名环境变量，否则钩子读不到群聊记录。
+> - 情绪打分已内置"亲密时回得短不算冷落"；某个角色要更细的口径，在它 yml 的 `jiwen.delta_hints` 里写专属准则。
 
 ---
 

@@ -366,7 +366,8 @@ def api_comment():
     if target_bot:
         try:
             cfg = config_loader.load_bot(target_bot)
-            _trigger_bot_moment_reply(cfg, moment, text, cid, user_display)
+            if _trigger_bot_moment_reply(cfg, moment, text, cid, user_display) is None:
+                db.mark_pending(cid, False)  # bot 已停用：没人会回，别让评论一直挂"待回复"
         except Exception as e:
             db.mark_pending(cid, False)
             print(f"[api_comment] trigger {target_bot} failed: {e}", flush=True)
@@ -383,6 +384,10 @@ def _trigger_bot_moment_reply(cfg: dict, moment: dict, user_text: str,
     """写 inbox JSON 让 dispatcher 唤起 worker；worker 通过 Bash 调脚本回写朋友圈。"""
     bot_dir = cfg["bot_channel_path"]
     chat_id = str(cfg["chat_id"])
+    target = cfg["_bot_id"] if "_bot_id" in cfg else cfg.get("id")
+    if target in disabled_ids_safe():  # 需求⑤：停用的 bot 不写 inbox、不拉起（停用期间的评论不在启用后补发）
+        sys.stderr.write(f"[moments.web] {target} stopped, skip\n")
+        return None
     inbox = os.path.join(bot_dir, "chats", chat_id, "inbox")
     os.makedirs(inbox, exist_ok=True)
 
@@ -460,21 +465,28 @@ def _trigger_bot_moment_reply(cfg: dict, moment: dict, user_text: str,
         json.dump(payload, f, ensure_ascii=False)
 
     # 关键：worker 没活就 spawn（dispatcher 监听的是 telegram 不是 inbox）
-    _ensure_worker_alive(cfg["_bot_id"] if "_bot_id" in cfg else cfg.get("id"),
-                        chat_id, bot_dir)
+    _ensure_worker_alive(target, chat_id, bot_dir)
+    return fname
 
 
 # bot 端口：唯一事实源 = bots_registry（扫 configs/*.yml），加 bot 零代码改动。
 # 直接用 bots_client.bot_port 而不再自建派生表：那张表是导入期快照，
 # 既看不见新加的 bot，也漏掉了 DISPATCHER_PORT_<BOT> 覆盖（探活认、这里不认，两处不一致）。
 from moments.bots_client import bot_port as _bot_port
+from bots_registry import disabled_ids_safe  # noqa: E402  需求⑤ 停用判定唯一入口
+import urllib.request  # noqa: E402
+
+_urlopen = urllib.request.urlopen  # HTTP 注入点（INTERFACE §10.4），测试换成记录器
 
 
 def _ensure_worker_alive(bot_id: str, chat_id: str, bot_dir: str):
     """POST 该 bot dispatcher 的 /ensure_worker：查活+拉起原子完成（跨平台，替代 tmux）。
     session uuid/slug 由 dispatcher 内部算，这里不再猜（旧版按 mtime 猜 uuid + 手拼
-    slug 是丢记忆隐患，且旧 per-chat 会话名根本匹配不上 unified worker）。"""
-    import urllib.request
+    slug 是丢记忆隐患，且旧 per-chat 会话名根本匹配不上 unified worker）。
+    停用的 bot（需求⑤）→ 不拉起。"""
+    if bot_id in disabled_ids_safe():
+        sys.stderr.write(f"[moments.web] {bot_id} stopped, skip\n")
+        return None
     port = _bot_port(bot_id)
     if not port:
         sys.stderr.write(f"[ensure_worker] 未知 bot {bot_id}，跳过 spawn\n")
@@ -482,7 +494,7 @@ def _ensure_worker_alive(bot_id: str, chat_id: str, bot_dir: str):
     try:
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/ensure_worker", method="POST")
-        urllib.request.urlopen(req, timeout=5)
+        _urlopen(req, timeout=5)
     except Exception as e:
         sys.stderr.write(f"[ensure_worker] {bot_id} 失败(dispatcher 未起?): {e}\n")
 
