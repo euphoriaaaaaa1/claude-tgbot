@@ -27,6 +27,7 @@ import {
 } from './clear_summary'
 import { createHangRuntime } from './hang_runtime'
 import { probeSituation } from './situation_bridge'
+import { inboxHumanMarks } from './chat_guard'
 
 // ─── env ──────────────────────────────────────────────────────────────
 const CHANNEL_DIR = process.env.CHANNEL_DIR || ''
@@ -836,6 +837,8 @@ async function handleInbound(
     ts: new Date((ctx.message?.date ?? 0) * 1000).toISOString(),
     reply_to: ctx.message?.reply_to_message?.message_id,
   }
+  // 真人（非 bot、非合成）消息打 human_ts / mentions_group 标，worker 据此统一计时、找"最近真人在哪个聊天"（INTERFACE §4.1）
+  Object.assign(meta, inboxHumanMarks(text, isBotSender, options?.synthetic, ctx.message?.date, Date.now()))
   if (imagePath) meta.image_path = imagePath
   if (voiceText) meta.voice_text = voiceText
   if (attachment) {
