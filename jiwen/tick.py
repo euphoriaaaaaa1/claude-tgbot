@@ -18,7 +18,6 @@ import os
 import sys
 import time
 import argparse
-from pathlib import Path
 
 # 让 jiwen 自身的导入工作
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +27,7 @@ sys.path.insert(0, os.path.dirname(HERE))  # claudebotlife/
 import engine
 import deepseek_delta
 import config_loader
+from chat_history import _project_slug_for  # slug 规则唯一实现（仓根 chat_history.py，与 worker-manager.ts 同规则）
 
 DEFAULT_STATE_DIR = os.path.expanduser("~/.claude/dispatcher/.jiwen-state")
 
@@ -131,12 +131,10 @@ def find_recent_messages(channel_dir: str, since_ts: int, limit: int = 12) -> tu
       messages: [{"role":"user"|"assistant", "content":str}] 最近 N 条
       max_ts: 最新一条 user 消息的 unix ts（用于下次 since_ts）
     """
-    # bot session jsonl 在 ~/.claude/projects/-<home-path>--claude-channels-<name>/<uuid>.jsonl
+    # bot session jsonl 在 ~/.claude/projects/<slug>/<uuid>.jsonl，slug = 绝对路径里非字母数字全换 '-'
+    # （旧写法只换 / 和 .，Windows 的反斜杠与盘符冒号原样留下 → 目录永远找不到 → 情绪数值永不更新）
     project_root = os.path.expanduser("~/.claude/projects")
-    # channel_dir 形如 ~/.claude/channels/<name> → 反推 Claude Code 的 project 目录名
-    p = Path(channel_dir)
-    proj_name = str(p).replace("/", "-").replace(".", "-")
-    proj_dir = os.path.join(project_root, proj_name)
+    proj_dir = os.path.join(project_root, _project_slug_for(channel_dir))
     if not os.path.isdir(proj_dir):
         return [], since_ts
 

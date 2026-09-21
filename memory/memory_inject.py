@@ -3,14 +3,17 @@
 实际位置：~/.claude/projects/<slug>/memory/MEMORY.md
 （这是 Claude Code 内置 auto-memory 路径，bot 在对话中也会自己更新它）
 
-slug 算法见 chat_history._project_slug_for。
+slug 算法只有一份：chat_history._project_slug_for（非字母数字全换 '-'，与 worker-manager.ts 同规则）。
+此前这里自带一份只换 / 和 . 的旧写法，Windows 上反斜杠与盘符冒号留下 → MEMORY.md 路径永远算错 → 摘要恒空。
 """
 import os
+import sys
 
-
-def _project_slug_for(bot_channel_path: str) -> str:
-    abs_dir = os.path.abspath(bot_channel_path)
-    return abs_dir.replace("/", "-").replace(".", "-")
+try:
+    from chat_history import _project_slug_for
+except ImportError:  # 仓根不在 sys.path 上（单独当脚本跑、从别的 cwd 导入）时补上再导
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from chat_history import _project_slug_for
 
 
 def memory_path(bot_channel_path: str) -> str:
