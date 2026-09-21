@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { quoteCmdArg, winCmdLine, winCmdSpawnSpec, probeClaudeWin } from './win_cmd'
+import { quoteCmdArg, winCmdLine, winCmdSpawnSpec, probeClaudeWin, assertNoCmdExpansion } from './win_cmd'
 
 // UCRT 规则复刻：2N 个 \ + " → N 个 \ 并翻转引号态；2N+1 个 \ + " → N 个 \ + 字面 "；引号态内 "" → 字面 "
 function crtParse(cmdline: string): string[] {
@@ -99,5 +99,29 @@ describe('cmd.exe 消费者收敛（W-A2：修一条路漏另一条路——cliV
       })
     }
     expect(hits).toEqual([])
+  })
+})
+
+describe('%…% / !…! 守卫（G-5：cmd 在引号内照样展开，命中即静默换参数 → 拒绝并抛错）', () => {
+  test('成对 % 或 ! → 抛错，错误里带被拒的片段', () => {
+    expect(() => winCmdLine(['C:\\npm\\claude.cmd', '--add-dir', 'C:\\Users\\a%b%c\\.claude\\channels\\bot'])).toThrow(/%b%/)
+    expect(() => winCmdLine(['C:\\Users\\%USERNAME%\\npm\\claude.cmd', '-p'])).toThrow(/%USERNAME%/)
+    expect(() => winCmdLine(['C:\\npm\\claude.cmd', 'D:\\!x!\\bots'])).toThrow(/!x!/)
+    expect(() => assertNoCmdExpansion('%TEMP%')).toThrow(/%TEMP%/)
+  })
+  test('winCmdSpawnSpec 同样拦（worker / 摘要 / cliVersion 三处都经它）', () => {
+    expect(() => winCmdSpawnSpec('C:\\npm\\claude.cmd', ['--add-dir', 'C:\\%TEMP%\\x'])).toThrow(/%TEMP%/)
+  })
+  test('落单的 % 或 !（cmd 原样保留）不拦，正常路径不受影响', () => {
+    for (const t of ['C:\\Users\\100%\\bots', 'D:\\wow!\\x', '50% done!', '%', '!', 'C:\\Users\\John Smith\\.claude'])
+      expect(() => winCmdLine(['C:\\npm\\claude.cmd', t])).not.toThrow()
+    expect(() => assertNoCmdExpansion('')).not.toThrow()
+  })
+  test('错误信息说明改哪里（CLAUDE_BIN / CHANNEL_DIR）', () => {
+    let msg = ''
+    try { winCmdLine(['C:\\%X%\\claude.cmd']) } catch (e) { msg = (e as Error).message }
+    expect(msg).toContain('%X%')
+    expect(msg).toMatch(/CLAUDE_BIN/)
+    expect(msg).toMatch(/CHANNEL_DIR/)
   })
 })

@@ -10,7 +10,8 @@
 //      命令名就被截成 C:\Users\John → "不是内部或外部命令"，worker 永远起不来。
 //      /d 关掉注册表 AutoRun（clink 等会往 stdout 混输出）。
 // 验收：node ~/.claude/skills/platform-compat-review/scripts/crt-roundtrip.mjs dispatcher/win_cmd.ts → 15/15。
-// 挡不住的（W-A3）：%VAR% 展开、换行、8191 总长——调用方保证参数里没有这些。
+// %…% 与 !…!（G-5）：cmd 在引号内照样展开，winCmdLine 检测到成对形态直接抛错（见 assertNoCmdExpansion）。
+// 挡不住的（W-A3）：换行、8191 总长——调用方保证参数里没有这些。
 
 import { existsSync } from 'fs'
 import { win32 } from 'path'
@@ -27,8 +28,26 @@ export function quoteCmdArg(arg: string): string {
   return out + '\\'.repeat(bs * 2) + '"'
 }
 
-/** [可执行, ...参数] → 交给 cmd /d /s /c 的整行（已含外层引号） */
+// %…% / !…! 守卫（G-5、W-A3）。cmd 在引号内照样展开 %VAR%（注册表 DelayedExpansion=1 的机器还展开 !VAR!），
+// 命中就是静默换参数（CHANNEL_DIR 可由 HUB_CHANNELS_DIR 任意指定，用户名也可能含 %）。
+// 选"拒绝并抛错"而不是转义，原因：cmd /c 命令行层没有可靠转义——%% 只在批处理里是转义、^ 在 % 展开之后才处理、
+// ! 的转义又随 DelayedExpansion 开关变，写不出对两种机器都对的一个串；而这里的 token 全是路径
+// （claude.cmd / CHANNEL_DIR / mcp 配置 / CLAUDE.md），改名或换 CLAUDE_BIN / HUB_CHANNELS_DIR 就能绕开，
+// 错误信息直接说明改哪里。守卫是保守的：任何成对形态都拒（含 %%）。落单的 % 或 ! 不拦——cmd 对配不成对的
+// 字符原样保留（落单 ! 只在 DelayedExpansion=1 时被吃，非默认，拦了就是对绝大多数机器的误报）。
+const CMD_EXPANSION_RE = /%[^%]*%|![^!]*!/
+export function assertNoCmdExpansion(token: string): void {
+  const m = CMD_EXPANSION_RE.exec(token)
+  if (!m) return
+  throw new Error(
+    `cmd.exe 会把 ${JSON.stringify(m[0])} 当环境变量展开（token: ${JSON.stringify(token)}）；` +
+    'cmd /c 命令行层无可靠转义，请改路径避开成对的 % 与 !（CLAUDE_BIN、CHANNEL_DIR/HUB_CHANNELS_DIR 或 Windows 用户名）',
+  )
+}
+
+/** [可执行, ...参数] → 交给 cmd /d /s /c 的整行（已含外层引号）；含 %…%/!…! 的 token 抛错（见上） */
 export function winCmdLine(tokens: string[]): string {
+  for (const t of tokens) assertNoCmdExpansion(t)
   return '"' + tokens.map(quoteCmdArg).join(' ') + '"'
 }
 

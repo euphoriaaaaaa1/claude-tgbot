@@ -539,11 +539,13 @@ function runClaudeSummary(prompt: string): Promise<string | null> {
       const cleanup = () => { try { if (cwd) rmSync(cwd, { recursive: true, force: true }) } catch {} }
       const claude = resolveClaude()
       const args = ['-p', '--strict-mcp-config']
-      // Windows .cmd 得经 cmd /d /s /c 起，引号拼法与 worker-manager 共用 win_cmd.ts（两份内联复制曾修一处漏一处）
-      const spec = winCmdSpawnSpec(claude.bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
-      const p = claude.viaCmd
-        ? spawn(spec.file, spec.args, spec.opts as any)
-        : spawn(claude.bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
+      // Windows .cmd 得经 cmd /d /s /c 起，引号拼法与 worker-manager 共用 win_cmd.ts（两份内联复制曾修一处漏一处）。
+      // spec 只在 viaCmd 分支算：winCmdLine 的 %…%/!…! 守卫会抛错，POSIX 路径不该受 cmd 规则约束（抛错由外层 catch 接住 → 摘要为空）
+      const spawnViaCmd = () => {
+        const spec = winCmdSpawnSpec(claude.bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
+        return spawn(spec.file, spec.args, spec.opts as any)
+      }
+      const p = claude.viaCmd ? spawnViaCmd() : spawn(claude.bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
       let out = ''
       let err = ''
       // Windows 上 p 是 cmd 壳，p.kill 只杀壳、claude(node.exe) 成孤儿且占着临时 cwd 删不掉 → 按进程树杀（POSIX 仍是 SIGKILL）

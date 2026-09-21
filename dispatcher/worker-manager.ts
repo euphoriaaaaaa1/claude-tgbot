@@ -224,7 +224,9 @@ function providerFingerprint(): string {
 export function cliVersion(claudeBin: string, viaCmd: boolean, run: typeof spawnSync = spawnSync): string {
   let r: { stdout?: string | Buffer | null }
   if (viaCmd) {
-    const spec = winCmdSpawnSpec(claudeBin, ['--version'], { encoding: 'utf8' })
+    let spec
+    // 路径被 win_cmd.ts 的 %…%/!…! 守卫拒绝：指纹留空（checkFingerprint 对空值不写），紧接着 spawnWorker 会用同一原因 fail-loud
+    try { spec = winCmdSpawnSpec(claudeBin, ['--version'], { encoding: 'utf8' }) } catch { return '' }
     r = run(spec.file, spec.args, spec.opts as any)
   } else {
     r = run(claudeBin, ['--version'], { encoding: 'utf8' })
@@ -513,7 +515,16 @@ export class WorkerManager {
     // Windows .cmd：经 cmd /d /s /c 起，引号拼法只在 win_cmd.ts 一处（含空格路径/元字符/尾反斜杠都靠它）。
     let proc
     if (claude.viaCmd) {
-      const spec = winCmdSpawnSpec(claude.bin, args, { cwd: botDir, env, stdio: ['pipe', 'pipe', 'pipe'] })
+      let spec
+      try {
+        spec = winCmdSpawnSpec(claude.bin, args, { cwd: botDir, env, stdio: ['pipe', 'pipe', 'pipe'] })
+      } catch (e) {
+        // 参数含 cmd 会展开的 %…%/!…!（win_cmd.ts 守卫）：路径问题，重试无意义 → 不进退避重启；
+        // phase 归 stopped，下一条消息 ensure() 再报一次，日志里的原因写明该改哪里
+        logSpawn(`🔴 无法起 worker：${(e as Error).message}`)
+        this.phase = 'stopped'
+        return
+      }
       proc = spawn(spec.file, spec.args, spec.opts as any)
     } else {
       proc = spawn(claude.bin, args, { cwd: botDir, env, stdio: ['pipe', 'pipe', 'pipe'] })

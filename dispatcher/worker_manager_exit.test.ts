@@ -241,3 +241,9 @@ test('cliVersion：stdout 空/缺失 → 空串（checkFingerprint 对空值不�
   expect(cliVersion('x.cmd', true, fakeRun('', []))).toBe('')
   expect(cliVersion('x', false, fakeRun(undefined, []))).toBe('')
 })
+
+test('cliVersion viaCmd：路径被 %…% 守卫拒绝 → 空串且不起子进程（spawnWorker 随后用同一原因 fail-loud）', () => {
+  const calls: RunCall[] = []
+  expect(cliVersion('C:\\Users\\%USERNAME%\\npm\\claude.cmd', true, fakeRun('9.9.9', calls))).toBe('')
+  expect(calls).toHaveLength(0)
+})
