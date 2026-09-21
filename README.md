@@ -221,6 +221,8 @@ notepad configs\_global.yml              # 记事本打开，把 jiwen.delta_llm
 # ④ 把示例机器人「陈露露」的资料放到 Claude 的 channels 目录
 mkdir $env:USERPROFILE\.claude\channels -Force
 Copy-Item -Recurse channels\chenlulu $env:USERPROFILE\.claude\channels\
+# 模板里"压缩后补群聊近况"钩子写的是 python3 + $CLAUDEBOTLIFE_REPO（只有 mac/Linux 的 shell 认），Windows 必须跑一遍安装器改成绝对路径：
+python scripts\install_compact_hook.py $env:USERPROFILE\.claude\channels\chenlulu
 
 # ⑤ 配置这个机器人的 token 和白名单
 cd $env:USERPROFILE\.claude\channels\chenlulu
@@ -527,7 +529,7 @@ bot 名单、端口、记忆命名空间全部由 `configs/*.yml` 派生（`bots
 > 多 bot 群聊由 `director.py` 调度（可选，单 bot 用不到）。
 >
 > - **停用某个 bot**（管理台开关，或 `configs/<bot>.yml` 写 `enabled: false`）后，macOS 的 self-initiate plist 和 Windows 计划任务 `claude-tgbot-self-initiate-<bot>` 仍会按时触发，但脚本读到停用就立即退出：不发消息、不拉起 bot。想彻底卸掉：macOS 用 `launchctl bootout gui/$UID/<label>`，Windows 用 `Unregister-ScheduledTask claude-tgbot-self-initiate-<bot>`。
-> - 模板 bot 的 `.claude/settings.json` 挂了"上下文压缩后补群聊近况"的钩子，命令用的是 `python3`，PATH 里要能找到它。
+> - 模板 bot 的 `.claude/settings.json` 挂了"上下文压缩后补群聊近况"的钩子。mac/Linux：命令用的是 `python3` 和 `$CLAUDEBOTLIFE_REPO`，PATH 里要能找到 `python3`。Windows：这两样都不成立（python.org 安装器没有 `python3.exe`，`$VAR` 只有 POSIX shell 会展开），每个 bot 目录都要跑一次 `python scripts\install_compact_hook.py <bot 目录>`，它会把命令改写成解释器与脚本的绝对路径（含空格的路径自动加引号）。
 > - 改过 `DIRECTOR_GT_DIR`（群聊记录目录）的，给 worker 也配同名环境变量，否则钩子读不到群聊记录。
 > - 情绪打分已内置"亲密时回得短不算冷落"；某个角色要更细的口径，在它 yml 的 `jiwen.delta_hints` 里写专属准则。
 

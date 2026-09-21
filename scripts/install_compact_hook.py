@@ -5,6 +5,10 @@
         （bot 目录即 worker 的 cwd；Windows 在 %USERPROFILE%\\.claude\\channels\\<bot名>，改过 HUB_CHANNELS_DIR 的以它为准）
 写入项  {"matcher":"compact","hooks":[{"type":"command",
           "command":"<运行本脚本的解释器绝对路径> <本仓>/scripts/compact_group_context.py","timeout":10}]}
+        两段路径各自按需加引号（见 quote_hook_path）：POSIX 只在含空格/shell 元字符时加（shlex.quote），
+        Windows 一律加双引号——解释器默认装在 %LOCALAPPDATA%\\Programs\\Python 下（含用户名），用户名或仓路径
+        含空格时裸拼接会被按空格切开；Windows 宿主用 cmd.exe 还是 Git Bash 跑 hook 未坐实，双引号两者都认，
+        而不加引号的反斜杠路径在 POSIX shell 下会被吃成 C:Usersx。不含特殊字符的路径形态不变。
 规则    幂等：已有 command 里脚本 basename 为 compact_group_context.py 的 compact 项时，command 逐字相同 →
         already installed 不改；不同 → 替换该项（结果仍只一条）；没有 → 追加。模板 bot 自带的
         `python3 "$CLAUDEBOTLIFE_REPO/scripts/compact_group_context.py"` 也按此认作同一项并替换成绝对路径，不会装出第二条。
@@ -18,6 +22,7 @@ import argparse
 import difflib
 import json
 import os
+import shlex
 import shutil
 import sys
 import time
@@ -31,8 +36,16 @@ SCRIPT_NAME = "compact_group_context.py"
 HOOK_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), SCRIPT_NAME)
 
 
-def hook_command() -> str:
-    return f"{sys.executable} {HOOK_SCRIPT}"
+def quote_hook_path(path: str, windows: bool = (os.name == "nt")) -> str:
+    """hook command 里的一段路径。Windows：一律双引号（cmd.exe 与 Git Bash 都认，Windows 路径不可能含 "，
+    且能保住反斜杠）；POSIX：shlex.quote，安全字符集内原样、否则单引号。"""
+    if windows:
+        return f'"{path}"'
+    return shlex.quote(path)
+
+
+def hook_command(windows: bool = (os.name == "nt")) -> str:
+    return f"{quote_hook_path(sys.executable, windows)} {quote_hook_path(HOOK_SCRIPT, windows)}"
 
 
 def hook_item() -> dict:
