@@ -1,6 +1,6 @@
 // win_cmd.ts 白盒：cmd /s 剥首尾引号 + UCRT parse_command_line 往返（与 platform-compat-review 的 crt-roundtrip.mjs 同规则）。
 import { describe, expect, test } from 'bun:test'
-import { quoteCmdArg, winCmdLine, winCmdSpawnSpec } from './win_cmd'
+import { quoteCmdArg, winCmdLine, winCmdSpawnSpec, probeClaudeWin } from './win_cmd'
 
 // UCRT 规则复刻：2N 个 \ + " → N 个 \ 并翻转引号态；2N+1 个 \ + " → N 个 \ + 字面 "；引号态内 "" → 字面 "
 function crtParse(cmdline: string): string[] {
@@ -67,5 +67,21 @@ describe('winCmdSpawnSpec', () => {
     expect(s.args[3]).toBe('""C:\\npm\\claude.cmd" "-p""')
     expect(s.opts.windowsVerbatimArguments).toBe(true)
     expect(s.opts.cwd).toBe('C:\\x')
+  })
+})
+
+describe('probeClaudeWin（不解码 where 输出，中文用户名无损）', () => {
+  const home = 'C:\\Users\\张三'
+  const env = { Path: `C:\\Windows\\system32;"${home}\\AppData\\Roaming\\npm"`, APPDATA: `${home}\\AppData\\Roaming`, USERPROFILE: home }
+  test('按 PATH 顺序找 .exe/.cmd/.bat，跳过无扩展名 bash shim', () => {
+    const fs = new Set([`${home}\\AppData\\Roaming\\npm\\claude`, `${home}\\AppData\\Roaming\\npm\\claude.cmd`])
+    expect(probeClaudeWin(env, p => fs.has(p))).toBe(`${home}\\AppData\\Roaming\\npm\\claude.cmd`)
+  })
+  test('PATH 没刷新时兜底 %USERPROFILE%\\.local\\bin\\claude.exe（官方安装器）', () => {
+    const fs = new Set([`${home}\\.local\\bin\\claude.exe`])
+    expect(probeClaudeWin({ PATH: 'C:\\Windows', USERPROFILE: home }, p => fs.has(p))).toBe(`${home}\\.local\\bin\\claude.exe`)
+  })
+  test('都没有 → null（交给 PATH，spawn error 里报清楚）', () => {
+    expect(probeClaudeWin(env, () => false)).toBeNull()
   })
 })

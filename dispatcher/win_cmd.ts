@@ -1,4 +1,4 @@
-// Windows 上经 cmd.exe 起 .cmd/.bat 的命令行拼接（唯一实现；worker 与 /clear 摘要子进程共用）。
+// Windows 起进程相关的纯函数：cmd.exe 命令行拼接（唯一实现；worker 与 /clear 摘要子进程共用）+ claude 可执行探测。
 //
 // 规则（缺一条就会在某类路径/参数上碎，2026-09-21 审查致命-1）：
 //   1. 每个 token 都包双引号（空串也包，否则整个 token 消失）；
@@ -11,6 +11,9 @@
 //      /d 关掉注册表 AutoRun（clink 等会往 stdout 混输出）。
 // 验收：node ~/.claude/skills/platform-compat-review/scripts/crt-roundtrip.mjs dispatcher/win_cmd.ts → 15/15。
 // 挡不住的（W-A3）：%VAR% 展开、换行、8191 总长——调用方保证参数里没有这些。
+
+import { existsSync } from 'fs'
+import { win32 } from 'path'
 
 export function quoteCmdArg(arg: string): string {
   let out = '"'
@@ -42,4 +45,27 @@ export function winCmdSpawnSpec(resolved: string, args: string[], opts: Record<s
     args: ['/d', '/s', '/c', winCmdLine([resolved, ...args])],
     opts: { ...opts, windowsVerbatimArguments: true },
   }
+}
+
+// ─── claude 可执行探测（Windows）────────────────────────────────────────
+// 不读 `where claude` 的 stdout：where.exe 往管道写的是 OEM 码页（中文 Windows 是 cp936）字节，
+// 按 utf8 解码后用户名的中文段变成 U+FFFD → claude.cmd 路径不存在 → "不是内部或外部命令" → 无限退避重启。
+// 改为拿 env（Node 以 Unicode 读环境变量，中文用户名无损）按 PATH 顺序逐目录 existsSync：
+// 每目录试 .exe/.cmd/.bat（npm 的无扩展名 bash shim 天然跳过，直接 spawn 它会 WinError 193），
+// 再兜底 npm 全局目录 %APPDATA%\npm 与官方原生安装器目录 %USERPROFILE%\.local\bin。
+export function probeClaudeWin(
+  env: Record<string, string | undefined>,
+  exists: (p: string) => boolean = existsSync,
+): string | null {
+  const pathKey = Object.keys(env).find(k => k.toLowerCase() === 'path')
+  const dirs = ((pathKey && env[pathKey]) || '').split(';').map(s => s.trim().replace(/^"|"$/g, '')).filter(Boolean)
+  if (env.APPDATA) dirs.push(win32.join(env.APPDATA, 'npm'))
+  if (env.USERPROFILE) dirs.push(win32.join(env.USERPROFILE, '.local', 'bin'))
+  for (const d of dirs) {
+    for (const ext of ['.exe', '.cmd', '.bat']) {
+      const p = win32.join(d, 'claude' + ext)
+      if (exists(p)) return p
+    }
+  }
+  return null
 }

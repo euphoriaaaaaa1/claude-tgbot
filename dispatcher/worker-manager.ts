@@ -28,7 +28,7 @@ import { takeHangArchive } from './hang_runtime'
 import { situAnchorLine } from './situation_bridge'
 import { applyInboundMarks, loadInboundState, testModeCheck } from './chat_guard'
 import { planInboxBatch, readInboxMeta } from './inbox_names'
-import { winCmdSpawnSpec } from './win_cmd'
+import { winCmdSpawnSpec, probeClaudeWin } from './win_cmd'
 
 // ─── 配置（与 dispatcher.ts 同源的 env）────────────────────────────────
 const BOT = process.env.BOT_NAME || ''
@@ -97,16 +97,16 @@ function looksLikeWorker(pid: number): boolean {
 export function resolveClaude(): { bin: string; viaCmd: boolean } {
   const override = process.env.CLAUDE_BIN
   if (override) return { bin: override, viaCmd: /\.(cmd|bat)$/i.test(override) }
-  const isWin = platform() === 'win32'
-  const probe = spawnSync(isWin ? 'where' : 'which', ['claude'], { encoding: 'utf8' })
-  const lines = (probe.stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)
-  // Windows: npm 装的 claude 会同时列出无扩展名的 bash shim(在前) + claude.cmd。
-  // 直接 spawn 那个 bash shim → WinError 193。必须优先挑可执行的 .exe/.cmd/.bat。
-  const found = isWin
-    ? (lines.find(l => /\.(exe|cmd|bat)$/i.test(l)) || lines[0])
-    : lines[0]
-  if (found) return { bin: found, viaCmd: /\.(cmd|bat)$/i.test(found) }
-  return { bin: 'claude', viaCmd: false } // 交给 PATH，起不来会在 spawn error 里报清楚
+  if (platform() === 'win32') {
+    // 不用 `where claude`：它的 stdout 是 OEM 码页字节，中文用户名按 utf8 解成 U+FFFD → 路径不存在（见 win_cmd.probeClaudeWin）
+    const found = probeClaudeWin(process.env)
+    if (found) return { bin: found, viaCmd: /\.(cmd|bat)$/i.test(found) }
+    return { bin: 'claude', viaCmd: false } // 交给 PATH，起不来会在 spawn error 里报清楚
+  }
+  const probe = spawnSync('which', ['claude'], { encoding: 'utf8' })
+  const found = (probe.stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0]
+  if (found) return { bin: found, viaCmd: false }
+  return { bin: 'claude', viaCmd: false }
 }
 
 // ─── 日志 ──────────────────────────────────────────────────────────────
