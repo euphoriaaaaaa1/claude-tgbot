@@ -6,6 +6,9 @@
 $ErrorActionPreference = "Stop"
 $RepoDir = Split-Path -Parent $PSScriptRoot
 $env:PYTHONUTF8 = '1'  # hub_bootstrap 读写 hub.env 走 UTF-8，防 cp936
+# PowerShell 按 [Console]::OutputEncoding 解码子进程 stdout；中文 Windows 默认 cp936，下面 Ask "dir"/"bin"
+# 返回的路径含用户名，不设的话中文段解成乱码 → 装进乱码目录，register-tasks/run-cliproxy 按 USERPROFILE 算的目录里没有 exe。
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 $Py = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $Py) { $Py = (Get-Command python3).Source }
 $BS = Join-Path $RepoDir "scripts\hub_bootstrap.py"
