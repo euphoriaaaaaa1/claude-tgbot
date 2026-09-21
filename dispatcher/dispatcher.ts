@@ -20,6 +20,7 @@ import { spawn } from 'child_process'
 import { join, extname, basename, dirname } from 'path'
 import { homedir, tmpdir } from 'os'
 import { getManager, unifiedSessionUuid, projectSlug, resolveClaude } from './worker-manager.ts'
+import { winCmdSpawnSpec } from './win_cmd'
 import { buildSendPlan } from './send_plan'
 import { startProviderWatch } from './provider_watch'
 import {
@@ -538,10 +539,10 @@ function runClaudeSummary(prompt: string): Promise<string | null> {
       const cleanup = () => { try { if (cwd) rmSync(cwd, { recursive: true, force: true }) } catch {} }
       const claude = resolveClaude()
       const args = ['-p', '--strict-mcp-config']
-      // Windows .cmd 得经 cmd /s /c 起（同 worker-manager 的 spawn 分支）
+      // Windows .cmd 得经 cmd /d /s /c 起，引号拼法与 worker-manager 共用 win_cmd.ts（两份内联复制曾修一处漏一处）
+      const spec = winCmdSpawnSpec(claude.bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
       const p = claude.viaCmd
-        ? spawn('cmd', ['/s', '/c', [claude.bin, ...args].map(a => /[\s&|<>^()"]/.test(a) ? `"${a}"` : a).join(' ')],
-          { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsVerbatimArguments: true })
+        ? spawn(spec.file, spec.args, spec.opts as any)
         : spawn(claude.bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
       let out = ''
       let err = ''

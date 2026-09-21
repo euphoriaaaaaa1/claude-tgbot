@@ -28,6 +28,7 @@ import { takeHangArchive } from './hang_runtime'
 import { situAnchorLine } from './situation_bridge'
 import { applyInboundMarks, loadInboundState, testModeCheck } from './chat_guard'
 import { planInboxBatch, readInboxMeta } from './inbox_names'
+import { winCmdSpawnSpec } from './win_cmd'
 
 // ─── 配置（与 dispatcher.ts 同源的 env）────────────────────────────────
 const BOT = process.env.BOT_NAME || ''
@@ -501,12 +502,11 @@ export class WorkerManager {
     env[pathKey] = [...extraPath, env[pathKey] || ''].join(delimiter)
 
     logSpawn(`spawn worker: ${resume ? '--resume' : '--session-id'} ${this.sessionUuid} (claude=${claude.bin})`)
-    // Windows .cmd：走 cmd /s /c + windowsVerbatimArguments，自己给含空格/特殊字符的参数加引号
-    // （路径可能含空格如 C:\Users\My Name\...，node 默认加引号规则在 cmd /c 下会碎）。
+    // Windows .cmd：经 cmd /d /s /c 起，引号拼法只在 win_cmd.ts 一处（含空格路径/元字符/尾反斜杠都靠它）。
     let proc
     if (claude.viaCmd) {
-      const line = [claude.bin, ...args].map(a => /[\s&|<>^()"]/.test(a) ? `"${a}"` : a).join(' ')
-      proc = spawn('cmd', ['/s', '/c', line], { cwd: botDir, env, stdio: ['pipe', 'pipe', 'pipe'], windowsVerbatimArguments: true })
+      const spec = winCmdSpawnSpec(claude.bin, args, { cwd: botDir, env, stdio: ['pipe', 'pipe', 'pipe'] })
+      proc = spawn(spec.file, spec.args, spec.opts as any)
     } else {
       proc = spawn(claude.bin, args, { cwd: botDir, env, stdio: ['pipe', 'pipe', 'pipe'] })
     }
