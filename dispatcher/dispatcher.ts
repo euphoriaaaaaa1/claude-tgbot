@@ -19,7 +19,7 @@ import {
 import { spawn } from 'child_process'
 import { join, extname, basename, dirname } from 'path'
 import { homedir, tmpdir } from 'os'
-import { getManager, unifiedSessionUuid, projectSlug, resolveClaude } from './worker-manager.ts'
+import { getManager, unifiedSessionUuid, projectSlug, resolveClaude, killTree } from './worker-manager.ts'
 import { winCmdSpawnSpec } from './win_cmd'
 import { buildSendPlan } from './send_plan'
 import { startProviderWatch } from './provider_watch'
@@ -546,7 +546,8 @@ function runClaudeSummary(prompt: string): Promise<string | null> {
         : spawn(claude.bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
       let out = ''
       let err = ''
-      const timer = setTimeout(() => { try { p.kill('SIGKILL') } catch {}; cleanup(); finish(null) }, SUMMARY_TIMEOUT_MS)
+      // Windows 上 p 是 cmd 壳，p.kill 只杀壳、claude(node.exe) 成孤儿且占着临时 cwd 删不掉 → 按进程树杀（POSIX 仍是 SIGKILL）
+      const timer = setTimeout(() => { killTree(p.pid ?? 0); cleanup(); finish(null) }, SUMMARY_TIMEOUT_MS)
       p.stdout.on('data', d => { if (out.length < 64_000) out += String(d) })
       p.stderr.on('data', d => { if (err.length < 4_000) err += String(d) })   // 只用于认错识别，不落日志
       p.on('error', () => { clearTimeout(timer); cleanup(); finish(null) })
