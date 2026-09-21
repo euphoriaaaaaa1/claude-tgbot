@@ -1,5 +1,7 @@
 // win_cmd.ts 白盒：cmd /s 剥首尾引号 + UCRT parse_command_line 往返（与 platform-compat-review 的 crt-roundtrip.mjs 同规则）。
 import { describe, expect, test } from 'bun:test'
+import { readdirSync, readFileSync } from 'fs'
+import { join } from 'path'
 import { quoteCmdArg, winCmdLine, winCmdSpawnSpec, probeClaudeWin } from './win_cmd'
 
 // UCRT 规则复刻：2N 个 \ + " → N 个 \ 并翻转引号态；2N+1 个 \ + " → N 个 \ + 字面 "；引号态内 "" → 字面 "
@@ -83,5 +85,19 @@ describe('probeClaudeWin（不解码 where 输出，中文用户名无损）', (
   })
   test('都没有 → null（交给 PATH，spawn error 里报清楚）', () => {
     expect(probeClaudeWin(env, () => false)).toBeNull()
+  })
+})
+
+describe('cmd.exe 消费者收敛（W-A2：修一条路漏另一条路——cliVersion 曾漏网）', () => {
+  test('dispatcher/*.ts 源码里除 win_cmd.ts 外没有裸 spawn("cmd"…) / ["/c", …]', () => {
+    const src = readdirSync(import.meta.dir).filter(f => f.endsWith('.ts') && !f.endsWith('.test.ts') && f !== 'win_cmd.ts')
+    expect(src.length).toBeGreaterThan(5)
+    const hits: string[] = []
+    for (const f of src) {
+      readFileSync(join(import.meta.dir, f), 'utf8').split('\n').forEach((line, i) => {
+        if (/\bspawn(?:Sync)?\(\s*['"`]cmd(?:\.exe)?['"`]/.test(line) || /['"`]\/[cC]['"`]\s*,/.test(line)) hits.push(`${f}:${i + 1}: ${line.trim()}`)
+      })
+    }
+    expect(hits).toEqual([])
   })
 })

@@ -9,12 +9,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { createBurstCollector } from './burst_inbox'
+import { winCmdLine } from './win_cmd'
 
 // 模块级 CHANNEL_DIR 在 import 时就定死，必须先设 env 再动态 import
 const TMP = mkdtempSync(join(tmpdir(), 'worker-exit-test-'))
 process.env.CHANNEL_DIR = TMP
 process.env.BOT_NAME = 'testbot'
-const { WorkerManager } = await import('./worker-manager')
+const { WorkerManager, cliVersion } = await import('./worker-manager')
 
 afterEach(() => { rmSync(TMP, { recursive: true, force: true }) })
 
@@ -208,4 +209,35 @@ test('burstWindowMs=0_关闭防抖_原件逐条直接入队', () => {
   r.at(1000); const a = r.add('A1'); const b = r.add('B2')
   r.m.drainInbox()
   expect(r.m.queue.map((q: any) => q.path)).toEqual([a, b])
+})
+
+// ─── cliVersion：Windows .cmd 经 win_cmd.ts（与 worker/摘要同源，不再裸 cmd /c）────────────
+type RunCall = { file: string; args: string[]; opts: any }
+function fakeRun(stdout: unknown, calls: RunCall[]) {
+  return ((file: string, args: string[], opts: any) => { calls.push({ file, args, opts }); return { stdout } }) as any
+}
+
+test('cliVersion viaCmd：cmd.exe /d /s /c + 整行外层引号 + verbatim（路径含括号/空格不截断）', () => {
+  const calls: RunCall[] = []
+  const bin = 'D:\\Tom (Work)\\npm\\claude.cmd'
+  expect(cliVersion(bin, true, fakeRun('2.1.0 (Claude Code)\nextra line', calls))).toBe('2.1.0 (Claude Code)')
+  expect(calls).toHaveLength(1)
+  expect(calls[0].file).toBe('cmd.exe')
+  expect(calls[0].args).toEqual(['/d', '/s', '/c', winCmdLine([bin, '--version'])])
+  expect(calls[0].args[3]).toBe('""D:\\Tom (Work)\\npm\\claude.cmd" "--version""')
+  expect(calls[0].opts.windowsVerbatimArguments).toBe(true)
+  expect(calls[0].opts.encoding).toBe('utf8')
+})
+
+test('cliVersion 非 viaCmd：直接起 claude --version，不经 cmd、不带 verbatim', () => {
+  const calls: RunCall[] = []
+  expect(cliVersion('/opt/homebrew/bin/claude', false, fakeRun(' 1.0.0 \n', calls))).toBe('1.0.0')
+  expect(calls[0].file).toBe('/opt/homebrew/bin/claude')
+  expect(calls[0].args).toEqual(['--version'])
+  expect(calls[0].opts.windowsVerbatimArguments).toBeUndefined()
+})
+
+test('cliVersion：stdout 空/缺失 → 空串（checkFingerprint 对空值不写指纹）', () => {
+  expect(cliVersion('x.cmd', true, fakeRun('', []))).toBe('')
+  expect(cliVersion('x', false, fakeRun(undefined, []))).toBe('')
 })

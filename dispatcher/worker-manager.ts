@@ -217,11 +217,19 @@ function providerFingerprint(): string {
     .digest('hex').slice(0, 16)
 }
 
-function cliVersion(claudeBin: string, viaCmd: boolean): string {
-  const r = viaCmd
-    ? spawnSync('cmd', ['/c', claudeBin, '--version'], { encoding: 'utf8' })
-    : spawnSync(claudeBin, ['--version'], { encoding: 'utf8' })
-  return (r.stdout || '').split('\n')[0].trim()
+// CLI 版本指纹（.clivfp）。Windows .cmd 同样经 win_cmd.ts 起（worker / 摘要 / 这里，三处 cmd 消费者同源）：
+// 裸 `cmd /c <path> --version` 在路径含 ( ) & ^ 时命令名被截断 → stdout 空 → checkFingerprint 对空值直接 false
+// → CLI 升级永远测不到、不 strip thinking → resume 400；缺 /d 时 AutoRun（clink 等）横幅还会混进首行成为指纹。
+// run 可注入，白盒测试用（worker_manager_exit.test.ts）。
+export function cliVersion(claudeBin: string, viaCmd: boolean, run: typeof spawnSync = spawnSync): string {
+  let r: { stdout?: string | Buffer | null }
+  if (viaCmd) {
+    const spec = winCmdSpawnSpec(claudeBin, ['--version'], { encoding: 'utf8' })
+    r = run(spec.file, spec.args, spec.opts as any)
+  } else {
+    r = run(claudeBin, ['--version'], { encoding: 'utf8' })
+  }
+  return String(r.stdout || '').split('\n')[0].trim()
 }
 
 // sidecar 指纹比对（.tokenfp/.providerfp/.clivfp 文件名与旧架构一致）：变了 → strip 全部 thinking
