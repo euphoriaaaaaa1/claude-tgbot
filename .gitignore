@@ -60,3 +60,6 @@ state.db-wal
 # install.sh 从 *.example.sh 复制出来的本机脚本（用户可改），不进 git
 restart-bots.sh
 stop-bots.sh
+
+# 项目开发账本：只在本地用，不公开（2026-09-30 用户裁定）
+PROJECT.md
