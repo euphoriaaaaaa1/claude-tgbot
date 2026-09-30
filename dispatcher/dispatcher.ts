@@ -959,8 +959,14 @@ bot.catch(err => process.stderr.write(`dispatcher: handler error: ${err.error}\n
 
 // ─── text chunking (for /send) ───────────────────────────────────────
 const MAX_CHUNK_LIMIT = 4096
+/** 单段发送的最长等待：超过它就不再同步死等（调用方 MCP 60s 超时，等下去必然被判超时 → AI 重发） */
+const MAX_RETRY_WAIT_MS = 25_000
 // /send 单段发送的最大尝试次数（循环上界与日志文案共用此值，勿再写死 3）
 const MAX_SEND_ATTEMPTS = 3
+/** 被 Telegram 限流且等不起：/send 据此回 429 + retry_after，让 AI 知道"发不出去"而不是"没发" */
+class RateLimited extends Error {
+  constructor(public retryAfterSec: number) { super(`rate_limited retry_after=${retryAfterSec}s`) }
+}
 function chunkText(text: string, limit: number, mode: 'length' | 'newline'): string[] {
   if (text.length <= limit) return [text]
   const out: string[] = []
@@ -1095,11 +1101,29 @@ const server = Bun.serve({
               if (info.cls === 'retryable' && a < MAX_SEND_ATTEMPTS) {
                 // 429：用 Telegram 的 retry_after；网络类(建连前失败)无该参数 → 固定短退避 400ms×尝试序号。
                 const wait = (info.retryAfterSec != null ? info.retryAfterSec : 0.4 * a) * 1000
+                // 上限 MAX_RETRY_WAIT_MS：Telegram 429 的 retry_after 能到 5-10 分钟，
+                // 而调用方（MCP telegram-worker/reply）60s 就超时 → AI 以为没发出去、
+                // 反复重发 → 请求更多、限流更重（9/8 实测：同一条消息发好几次的根因）。
+                // 等不起就别等：立刻抛 RateLimited，让 /send 如实回报"被限流、多久后可再试"，
+                // AI 看到明确原因就不会盲目重发。
+                if (wait > MAX_RETRY_WAIT_MS) {
+                  const sec = Math.ceil(wait / 1000)
+                  process.stderr.write(`dispatcher[${BOT_NAME}]: 429 限流 ${sec}s，超过等待上限，直接回报不重试\n`)
+                  throw new RateLimited(sec)
+                }
                 process.stderr.write(`dispatcher[${BOT_NAME}]: 发送失败(${describeSendError(info)})，${wait}ms 后重试(${a}/${MAX_SEND_ATTEMPTS})\n`)
                 await new Promise(r => setTimeout(r, wait))
                 continue
               }
               if (info.cls === 'retryable') {
+                // 429 即便在最后一跳也要走 RateLimited（与上面 a<MAX_SEND_ATTEMPTS 分支同一设计意图）：
+                // 持久限流恰是最可能"最后一次仍是 429"的场景，若只记泛化丢弃日志，调用方 AI 拿不到
+                // "被限流"原因 → 盲目重发。
+                if (info.retryAfterSec != null) {
+                  const sec = Math.ceil(info.retryAfterSec)
+                  process.stderr.write(`dispatcher[${BOT_NAME}]: 429 限流持续(第 ${MAX_SEND_ATTEMPTS} 次仍被限流,约 ${sec}s)，直接回报不重试\n`)
+                  throw new RateLimited(sec)
+                }
                 // 建连前失败等网络类：重试穷尽仍失败 → 不再静默丢——记一条含次数+原因的告警。
                 process.stderr.write(`dispatcher[${BOT_NAME}]: 发送失败(重试 ${MAX_SEND_ATTEMPTS} 次穷尽)，已丢弃该段 ${describeSendError(info)}\n`)
                 return null
@@ -1316,6 +1340,14 @@ const server = Bun.serve({
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       process.stderr.write(`dispatcher HTTP: ${msg}\n`)
+      // 429 单独成码：AI 拿到 500 会当"发送失败"重发，拿到明确的 rate_limited
+      // 才知道"消息没发出去、但重发只会更糟，等 N 秒"。
+      if (e instanceof RateLimited) {
+        return Response.json(
+          { ok: false, error: 'rate_limited', retry_after: e.retryAfterSec,
+            detail: `Telegram 限流，${e.retryAfterSec} 秒后才能再发。不要重试这条，等冷却结束。` },
+          { status: 429 })
+      }
       return new Response(msg, { status: 500 })
     }
   },
