@@ -19,6 +19,8 @@ LOG_DIR = ROOT / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
 HTTP_BASE = os.environ.get("VOICE_BRIDGE_URL", "http://127.0.0.1:7788")
+# HTTP 服务设了 VOICE_BRIDGE_TOKEN 才需要带；没设则原样请求（与以前行为一致）
+BRIDGE_TOKEN = os.environ.get("VOICE_BRIDGE_TOKEN", "").strip()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,9 +37,10 @@ async def http_post(path: str, payload: dict, timeout: float = 60.0) -> Any:
     """POST 到 HTTP 服务；拿 JSON 或 raw bytes 都 ok"""
     import httpx
     url = f"{HTTP_BASE}{path}"
+    headers = {"Authorization": f"Bearer {BRIDGE_TOKEN}"} if BRIDGE_TOKEN else {}
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            r = await client.post(url, json=payload)
+            r = await client.post(url, json=payload, headers=headers)
             r.raise_for_status()
             ct = r.headers.get("content-type", "")
             if "application/json" in ct:
@@ -48,6 +51,9 @@ async def http_post(path: str, payload: dict, timeout: float = 60.0) -> Any:
             f"无法连接 voice-bridge HTTP 服务 ({HTTP_BASE})。"
             "请先在 voice-bridge 目录里运行 ./start.sh 把它启动起来。"
         )
+    except httpx.HTTPStatusError as e:
+        # 把服务端的 403/413 等具体原因带出来（raise_for_status 默认不含响应体）
+        raise RuntimeError(f"voice-bridge HTTP {e.response.status_code}: {e.response.text[:300]}")
 
 
 # ---------- MCP Server ----------
@@ -65,11 +71,17 @@ async def list_tools() -> list[Tool]:
             name="transcribe_audio",
             description=(
                 "转写本地音频文件（OGG/WAV/MP3/FLAC）为中文文本 + 情绪 + 事件标签。"
+                "path 必须是**允许目录下的音频文件绝对路径**（默认放行：本模块目录、"
+                "~/.claude/channels/media、~/resource/media、~/resource/workspace、系统临时目录；"
+                "由 VOICE_BRIDGE_ALLOWED_ROOTS 调整）。不在允许目录会被服务端拒绝。"
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "音频文件绝对路径"},
+                    "path": {
+                        "type": "string",
+                        "description": "允许目录下的音频文件绝对路径（越界会被服务端 403 拒绝）",
+                    },
                 },
                 "required": ["path"],
             },

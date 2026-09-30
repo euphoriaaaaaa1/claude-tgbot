@@ -93,7 +93,7 @@ curl -s -X POST http://127.0.0.1:7788/transcribe_file \
 {"text":"欢迎大家来体验达摩院推出的语音识别模型。","emotion":"NEUTRAL","events":["Speech"],"language":"zh","duration_sec":5.55,"latency_ms":989}
 ```
 
-（`duration_sec` / `latency_ms` 每次不同，正常。）
+（`duration_sec` / `latency_ms` 每次不同，正常。`examples/` 就在本模块目录内，属于默认白名单；换成别的目录先看第八节的路径规则。）
 
 ---
 
@@ -207,6 +207,28 @@ systemctl --user daemon-reload && systemctl --user enable --now voice-bridge
 ## 八、安全边界（改之前先读）
 
 - **只绑本机**：服务固定监听 `127.0.0.1:7788`，局域网/外网访问不到。
-- **端点没有鉴权**：这是刻意的——它只服务本机的 dispatcher / bot / voicecall，用"只绑回环"当边界，和你机器上其它本地开发服务一样。
-- ⚠️ **不要把监听地址改成 `0.0.0.0`**：那会把"能合成语音、能读你 Telegram 文件"的接口暴露给同网段任何人，而它没有任何口令保护。要远程用请走 SSH 隧道或 Tailscale，不要改绑定地址。
-- 日志里的 token 已用 `mask()` 打码（只留头尾），但 `/transcribe_telegram` 的请求体里会带 `bot_token`——**别把这个端口反代到公网**。
+- **路径白名单**：`/transcribe_file`、`/send_file` 只读**允许目录内**的文件——路径先按真实路径（`realpath`）解析再比目录前缀，所以**软链接指向白名单外也拦得住**；不在白名单直接 **403**。默认允许：
+  - 本模块自己的目录（仓库自带 `examples/` 示例音频靠它）
+  - `~/.claude/channels/media`（dispatcher 收发 Telegram 媒体）
+  - `~/resource/media`、`~/resource/workspace`（生图产物 / 中间稿）
+  - 系统临时目录（`/var/folders/...`；voicecall 的录音 `in.wav` 在这里）
+
+  要改就设 `VOICE_BRIDGE_ALLOWED_ROOTS`（逗号分隔，支持 `~`），**设了就只认你列的这些，默认目录全部失效**——别漏掉自己在用的：
+
+  ```bash
+  export VOICE_BRIDGE_ALLOWED_ROOTS="~/.claude/channels/media,~/resource/media,~/resource/workspace,/tmp"
+  ```
+
+  不设 = 用上面的默认值。`/transcribe_telegram`（Telegram 语音下载→转写）用的是服务自己的内部临时文件，不受白名单影响。
+- **大小上限**：读文件之前先 `stat()` 查大小，超过 `VOICE_BRIDGE_MAX_FILE_MB`（默认 **50**，即 Telegram Bot API 的单文件上限）返回 **413**，不会整块读进内存。
+- **可选令牌**：`VOICE_BRIDGE_TOKEN` **设了才启用**；启用后除 `/health` 外所有端点都要 `Authorization: Bearer <token>`，不匹配返回 **401**（常数时间比较）。不设时行为与以前**完全一致**（默认部署不受影响）。几台机器共用一个服务、或者同机别的用户/服务能读到你环境变量时，建议设一个：
+
+  ```bash
+  export VOICE_BRIDGE_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+  ./start.sh restart
+  ```
+
+  **调用方也要带同一个 token**：MCP 代理 `server.py` 会自己读同一个环境变量带上；curl 手动验证时加 `-H "Authorization: Bearer $VOICE_BRIDGE_TOKEN"`。⚠️ 主项目 dispatcher 和 voicecall 目前**不带** token——在你同步改调用方之前，别单独把服务端的 token 设上，否则它们的请求会被 401 拒掉。
+- ⚠️ **不要把监听地址改成 `0.0.0.0`**：那会把「能合成语音、能读你本机白名单内文件、能借你的 bot_token 发消息」的接口暴露给同网段任何人。要远程用请走 SSH 隧道或 Tailscale，不要改绑定地址。
+- 日志里的 token 已用 `mask()` 打码（只留头尾），但 `/transcribe_telegram` 的请求体里会带 `bot_token`，**别把这个端口反代到公网**。
+- 已知限制：白名单检查与真正读文件之间仍有极小的 TOCTOU 窗口（检查完路径后被换掉），对「本机单用户 + 回环监听」的威胁模型可接受；要彻底堵死需要 O_NOFOLLOW + 校验已打开文件描述符，本模块没做。

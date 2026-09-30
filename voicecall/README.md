@@ -273,3 +273,4 @@ cloudflared tunnel --url http://127.0.0.1:8766
 - **只绑本机**：服务默认 `HOST=127.0.0.1`，只监听本机，靠 Tailscale 反代给你自己的设备用。**绝不要改成 `HOST=0.0.0.0`**——那会把服务暴露到所在网络，谁都能连。
 - **敏感接口全鉴权**：来电接口（订阅 / 触发 / 开关）+ **通话记录/备注读写接口**都要 `CALL_TOKEN`，fail-closed（没配一律 401）。通话记录含 NSFW 全文，读端点也凭它，避免 tailnet 里被无凭证读走。
 - **私密文件全部 gitignore**：`.env`、`*.pem`（VAPID 私钥）、`vapid_public.b64`、`push_state.json`、`call_aliases.json`、`call_history.json` 都已在仓库 `.gitignore` 里，**绝不入库**。fork 或改动后请自查，别把这些传上去。
+- **voice-bridge 侧有路径白名单**：它只转写白名单目录内的文件（本模块的录音在系统临时目录，默认已放行），超 50MB 拒收；若你给 voice-bridge 设了 `VOICE_BRIDGE_TOKEN`，先确认调用方（含本模块）也能带上同一个 token，否则会被 401 拒掉（详见 `voice-bridge/README.md` 第八节）。

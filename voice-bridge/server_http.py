@@ -12,12 +12,16 @@ voice-bridge HTTP Server
   GET  /health                                                              → { ok, model_loaded }
 
 运行：./start.sh  或  uvicorn server_http:app --host 127.0.0.1 --port 7788
+
+安全闸（见下方「安全闸」段）：吃路径的端点只读白名单目录内文件，且有大小上限；
+可选 VOICE_BRIDGE_TOKEN 鉴权（设了才启用，见 README「八、安全边界」）。
 """
 import os
 import re
 import sys
 import json
 import time
+import secrets
 import asyncio
 import logging
 from logging.handlers import RotatingFileHandler
@@ -57,6 +61,71 @@ def mask(s: str) -> str:
     if not s or len(s) < 12:
         return "***"
     return f"{s[:4]}...{s[-4:]}"
+
+
+# ---------- 安全闸：路径白名单 / 大小上限 / 可选令牌 ----------
+# /transcribe_file 和 /send_file 都吃路径，只查 exists 等于「本机任何进程都能
+# 让本服务读任意文件」。所有吃路径的端点在读文件之前必须先过 check_file_path()。
+
+
+def _default_allowed_roots() -> list[str]:
+    """默认允许目录——覆盖作者本机三条真实流程 + 模块自身目录（examples/ 示例音频，README 的验证命令要用）"""
+    return [
+        str(ROOT),                                        # 模块自身目录（含 examples/）
+        os.path.expanduser("~/.claude/channels/media"),   # dispatcher 收发 Telegram 媒体
+        os.path.expanduser("~/resource/media"),           # 生图产物（bot 发图）
+        os.path.expanduser("~/resource/workspace"),       # 生图中间稿
+        tempfile.gettempdir(),                            # voicecall 录音 in.wav（mkdtemp 建的）
+    ]
+
+
+def _load_allowed_roots() -> list[Path]:
+    raw = os.environ.get("VOICE_BRIDGE_ALLOWED_ROOTS", "").strip()
+    items = raw.split(",") if raw else _default_allowed_roots()
+    roots: list[Path] = []
+    for it in items:
+        it = it.strip()
+        if not it:
+            continue
+        # 先解析成 realpath：软链接指向白名单外时，解析后自然落在白名单外
+        try:
+            roots.append(Path(it).expanduser().resolve())
+        except (OSError, ValueError, RuntimeError):
+            log.warning(f"忽略无法解析的白名单目录: {it!r}")
+    return roots
+
+
+ALLOWED_ROOTS = _load_allowed_roots()
+log.info("路径白名单: " + ", ".join(str(r) for r in ALLOWED_ROOTS))
+# Telegram Bot API 单文件上限 50MB；超过就别整块读进内存了
+MAX_FILE_MB = int(os.environ.get("VOICE_BRIDGE_MAX_FILE_MB") or "50")
+MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024
+# 可选令牌：设了才启用鉴权，不设则与以前行为完全一致（作者本机没设）
+BRIDGE_TOKEN = os.environ.get("VOICE_BRIDGE_TOKEN", "").strip()
+
+
+def check_file_path(raw_path: str) -> Path:
+    """路径白名单 + 大小上限，都在读文件之前。返回解析后的路径，调用方一律用它读。
+
+    不在白名单 → 403（错误信息回显解析后路径便于排错，不泄露文件内容）；超限 → 413。
+    """
+    try:
+        p = Path(raw_path).expanduser().resolve()
+    except (OSError, ValueError, RuntimeError):
+        raise HTTPException(403, f"路径无法解析，已拒绝: {raw_path!r}")
+    if not any(p.is_relative_to(root) for root in ALLOWED_ROOTS):
+        raise HTTPException(403, f"文件不在允许目录内: {p}")
+    try:
+        size = p.stat().st_size
+    except OSError:
+        return p  # 不存在/不可读 → 交给原有错误路径处理，不在这里改错误码
+    if size > MAX_FILE_BYTES:
+        raise HTTPException(
+            413,
+            f"文件 {size / 1024 / 1024:.1f}MB 超过上限 {MAX_FILE_MB}MB"
+            f"（可用 VOICE_BRIDGE_MAX_FILE_MB 调整）",
+        )
+    return p
 
 
 # ---------- SenseVoice ----------
@@ -339,7 +408,7 @@ async def synthesize_voice(
 
 
 # ---------- FastAPI ----------
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 
@@ -374,6 +443,22 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _auth_middleware(request: Request, call_next):
+    """VOICE_BRIDGE_TOKEN 设了才启用：除 /health 外所有端点要 Authorization: Bearer <token>。
+    不设时直接放行——与加鉴权之前的行为完全一致。"""
+    if BRIDGE_TOKEN and request.url.path != "/health":
+        auth = request.headers.get("authorization", "")
+        got = auth[7:] if auth.startswith("Bearer ") else ""
+        # 常数时间比较，别用 == （防时序侧信道）；token 不落日志
+        if not got or not secrets.compare_digest(got.encode(), BRIDGE_TOKEN.encode()):
+            return JSONResponse(
+                {"detail": "unauthorized: 需要 Authorization: Bearer <VOICE_BRIDGE_TOKEN>"},
+                status_code=401,
+            )
+    return await call_next(request)
 
 
 class TranscribeFileReq(BaseModel):
@@ -422,8 +507,9 @@ async def health():
 
 @app.post("/transcribe_file")
 async def api_transcribe_file(req: TranscribeFileReq):
+    path = check_file_path(req.path)  # 白名单 403 / 超限 413，都在读文件之前
     try:
-        return await transcribe_file(req.path)
+        return await transcribe_file(str(path))
     except Exception as e:
         log.exception("transcribe_file 失败")
         raise HTTPException(500, str(e))
@@ -510,7 +596,7 @@ async def api_send_file(req: SendFileReq):
     import httpx
     if req.kind not in ("photo", "document"):
         raise HTTPException(400, f"kind must be photo or document, got {req.kind}")
-    fp = Path(req.file_path)
+    fp = check_file_path(req.file_path)  # 白名单 403 / 超限 413，都在读文件之前
     if not fp.exists():
         raise HTTPException(404, f"file not found: {req.file_path}")
     field = "photo" if req.kind == "photo" else "document"
