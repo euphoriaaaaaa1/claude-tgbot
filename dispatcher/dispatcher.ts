@@ -22,6 +22,7 @@ import { homedir, tmpdir } from 'os'
 import { getManager, unifiedSessionUuid, projectSlug, resolveClaude, killTree } from './worker-manager.ts'
 import { winCmdSpawnSpec } from './win_cmd'
 import { buildSendPlan } from './send_plan'
+import { classifySendError, describeSendError } from './send_error'
 import { startProviderWatch } from './provider_watch'
 import {
   extractRecentTurns, summarizeTurns, renderMemoryNote, upsertMemoryIndex, AUTH_FAILED,
@@ -958,6 +959,8 @@ bot.catch(err => process.stderr.write(`dispatcher: handler error: ${err.error}\n
 
 // ─── text chunking (for /send) ───────────────────────────────────────
 const MAX_CHUNK_LIMIT = 4096
+// /send 单段发送的最大尝试次数（循环上界与日志文案共用此值，勿再写死 3）
+const MAX_SEND_ATTEMPTS = 3
 function chunkText(text: string, limit: number, mode: 'length' | 'newline'): string[] {
   if (text.length <= limit) return [text]
   const out: string[] = []
@@ -1078,26 +1081,36 @@ const server = Bun.serve({
         const delay = access.splitOnParagraph ? (access.paragraphDelay ?? 0) : 0
 
         // 发送单段。核心坑：代理(7897)会在"Telegram 已收到并投递"之后掐断响应连接 →
-        // fetch 抛网络错误，但消息其实已送达。这种错误【绝不能重试】，否则重发已送达的段 →
-        // 用户看到 A A B B（实测 bug）。只对"确定没送达"的错误重试：429 限流。
-        // 其它错误一律不重试、返回 null 跳过该段（不抛错，避免整条 /send 500 → worker 整条重发）。
+        // fetch 抛网络错误，但消息其实已送达。这种(ambiguous)【绝不能重试】，否则重发已送达的段 →
+        // 用户看到 A A B B（实测 bug）。判据见 send_error.ts 三分类：只有 retryable
+        // （429 限流 / 建连前阶段失败）才退避重试；undelivered/ambiguous 一律不重发、返回 null 跳过该段
+        // （不抛错，避免整条 /send 500 → worker 整条重发）。
         const sendChunk = async (text: string, opts: any): Promise<{ message_id: number } | null> => {
-          for (let a = 1; a <= 3; a++) {
+          for (let a = 1; a <= MAX_SEND_ATTEMPTS; a++) {
             try { return await bot.api.sendMessage(chatId, text, opts) }
             catch (e) {
-              // 只有"确定没送达"才重试：429 限流，或连接根本没建立(拒连/DNS 失败)。
-              // 其它(连接重置/超时/SSL 中断——可能在 Telegram 已收到之后才断)一律不重试，
-              // 否则重发已送达的段 → 用户看到 A A B B。
-              const notDelivered = e instanceof GrammyError
-                ? e.error_code === 429
-                : /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(String((e as any)?.cause?.code ?? '') + ' ' + String(e))
-              if (notDelivered && a < 3) {
-                const wait = (e instanceof GrammyError ? (e.parameters?.retry_after ?? 1) : 0.4 * a) * 1000
-                process.stderr.write(`dispatcher[${BOT_NAME}]: 发送失败(确定未送达)，${wait}ms 后重试\n`)
+              // 三分类：只有 retryable 才退避重试；undelivered(4xx 确定性拒收)/ambiguous(可能已送达)
+              // 一律不重发。唯一可靠原则：失败发生在请求体发出【之前】才算"确定没送达"。
+              const info = classifySendError(e)
+              if (info.cls === 'retryable' && a < MAX_SEND_ATTEMPTS) {
+                // 429：用 Telegram 的 retry_after；网络类(建连前失败)无该参数 → 固定短退避 400ms×尝试序号。
+                const wait = (info.retryAfterSec != null ? info.retryAfterSec : 0.4 * a) * 1000
+                process.stderr.write(`dispatcher[${BOT_NAME}]: 发送失败(${describeSendError(info)})，${wait}ms 后重试(${a}/${MAX_SEND_ATTEMPTS})\n`)
                 await new Promise(r => setTimeout(r, wait))
                 continue
               }
-              process.stderr.write(`dispatcher[${BOT_NAME}]: 发送失败，跳过该段避免重复(${String(e).slice(0,120)})\n`)
+              if (info.cls === 'retryable') {
+                // 建连前失败等网络类：重试穷尽仍失败 → 不再静默丢——记一条含次数+原因的告警。
+                process.stderr.write(`dispatcher[${BOT_NAME}]: 发送失败(重试 ${MAX_SEND_ATTEMPTS} 次穷尽)，已丢弃该段 ${describeSendError(info)}\n`)
+                return null
+              }
+              if (info.cls === 'undelivered') {
+                // Telegram 4xx 确定性拒收（400/403/404/413…）：重试无益，记一条含原因告警。
+                process.stderr.write(`dispatcher[${BOT_NAME}]: 发送失败(确定未送达,不重试)，已丢弃该段 ${describeSendError(info)}\n`)
+                return null
+              }
+              // ambiguous：可能已送达 / 状态未知 → 绝不重发，跳过该段避免重复。
+              process.stderr.write(`dispatcher[${BOT_NAME}]: 发送失败，跳过该段避免重复(${describeSendError(info)})\n`)
               return null
             }
           }
