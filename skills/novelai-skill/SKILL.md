@@ -74,7 +74,7 @@ compatibility:
 
 ```json
 {
-  "prompt": "POV close-up shot, mature woman taking a selfie in bedroom by mirror with warm lamp light, 1girl, realistic, 1.7::looking_at_viewer::",
+  "prompt": "low angle shot, mature woman taking a mirror selfie in bedroom, standing by the bed, warm lamp light | 1girl, mature beautiful woman, 1.3::black long wavy hair::, fair skin, 2::wearing silk nightgown::, 1.7::looking_at_viewer::",
   "reply_text": "这次给你换一张。",
   "mode": "new"
 }
@@ -100,7 +100,11 @@ compatibility:
 - 标签必须和这一次的具体人物、动作、场景、镜头贴合
 - 用 danbooru 风格 tag 写，但不要写成一盘散沙，必须有层次
 - `prompt` 必须是英文；禁止把中文人物设定、中文动作描述、中文场景句子直接提交给 NovelAI
-- 第一段必须是简短英文画面描述，格式固定为：`镜头视角 + 角色动作 + 场景 + 位置 + 灯光`
+- **正文固定三段，严格按此顺序写**（硬结构，不是建议）：
+  1. **一句话画面描述（放最前，不加权重）**：`镜头视角 + 角色动作 + 场景 + 位置 + 灯光`
+  2. **每个角色一段**：段首是该角色的人数/性别标签（`1girl` / `1boy` / `2boys` …），随后是该角色的外貌特征、服装、表情、动作
+  3. **可选：细节/氛围**（光影质感、场景小物等）
+- **正文不得以质量标签开头，也不得在正文里堆叠质量/画风标签**：`best quality` / `masterpiece` / `absurdres` / `very aesthetic` / 画师名等由脚本前缀自动注入，正文再抄一遍等于把画面描述挤到最后
 - 只写一个瞬间，不写连续过程，不写“接下来”“然后”“正在一步步”
 - 只写正面内容，不写负面词
 - 不要把固定正面前缀里的内容重复抄一遍
@@ -131,22 +135,13 @@ compatibility:
 - 关键镜头和关键细节
 
 ### 多角色结构
-多角色必须采用 `|` 分隔符结构：
+多角色必须采用 `|` 分隔符结构，段序与上面的「正文三段」完全一致：
 
-`基础场景 | 角色1 | 角色2 | 角色3 ...`
+`画面描述 | 角色1 | 角色2 | 角色3 ...`
 
-基础场景部分必须包含：
-1. 画面简述
-2. 必需的质量标签
-3. NSFW 前缀（如适用）
-4. 人物总数标签
-5. 环境设定
-6. 整体风格
-7. 光照
-8. 视角/镜头
-9. 特殊元素
-10. 时间
-11. 场景氛围
+- **第 1 段 = 一句话画面描述**：`镜头视角 + 角色动作 + 场景 + 位置 + 灯光`；可一并带 NSFW 前缀（如适用）、人物总数标签（`2girls` / `1boy, 1girl` …）、环境、时间、场景氛围。**不写质量标签**（脚本前缀已注入）。
+- **之后每段 = 一个角色**：段首写该角色的性别标签（`1girl` / `1boy`），随后该角色外貌、服装、表情、动作。
+- **单角色同样按此段序**：画面描述句在前，角色段在后（即使不分段，也保持这个先后）。
 
 镜头视角示例：
 - `POV`
@@ -190,13 +185,7 @@ compatibility:
 
 画风前缀由激活预设自动注入，worker 无需读取或拼接任何画风/画师标签。
 
-必需质量标签示例（STYLE.txt 里已含时不必重复）：
-- `masterpiece`
-- `best quality`
-- `ultra-detailed`
-- `very aesthetic`
-- `highres`
-- `no watermark`
+**质量标签同样由脚本前缀（STYLE.txt / 激活预设）注入，正文一律不要写**——`masterpiece` / `best quality` / `ultra-detailed` / `very aesthetic` / `highres` / 画师名等都不要出现在正文里。
 
 人物总数标签示例：
 - `1girl`
