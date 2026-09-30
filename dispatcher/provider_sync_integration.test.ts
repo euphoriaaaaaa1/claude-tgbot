@@ -173,11 +173,14 @@ test('stop之后不再触发', async () => {
   expect(f.hits()).toBe(0)
 })
 
-test('日志与签名都不含token明文', () => {
+// 口径变更：token 轮换不算换 provider（见 provider_sync.ts ENV_FIELDS 注释）。
+// 本用例同时守住两点：轮换不触发重启；日志/签名都不泄漏 token 明文。
+test('token轮换_不触发重启且日志不含明文', () => {
   const f = fixture()
   f.tick(10_000)
   f.write(mkSettings({ ANTHROPIC_AUTH_TOKEN: 'sk-FAKE-int-zzz999' }))
   f.w.evaluate()
+  expect(f.hits()).toBe(0)                      // token 变化 → 签名不变 → 不重启 worker
   const all = f.logs.join('\n')
   expect(all.includes(FAKE_TOKEN)).toBe(false)
   expect(all.includes('abc123')).toBe(false)
