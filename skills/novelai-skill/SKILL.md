@@ -86,7 +86,7 @@ compatibility:
 {
   "reply_text": "再来一张，动作更放开一点",
   "mode": "revise",
-  "revision_instruction": "动作更放开一点"
+  "revision_instruction": "bolder pose"
 }
 ```
 
@@ -378,7 +378,7 @@ compatibility:
 
 **同场景续图（mode=revise）**：只写要改的部分，环境会自动从上次沿用。
 ```json
-{ "mode": "revise", "revision_instruction": "spread legs, lift skirt" }
+{ "mode": "revise", "revision_instruction": "nsfw, spread legs, lift skirt" }
 ```
 
 **强提醒**：用户说"再来一张"99% 是同场景。默认就该 `mode=revise + --reuse-seed`，除非显式判断他要换场景。
