@@ -321,7 +321,7 @@ async def synthesize_voice(
         if instruct:
             log.warning(
                 f"instruct 超过 {MAX_INSTRUCT_TAG_LEN} 字 ({len(instruct)} 字)，"
-                f"降级到 emotion={emotion}: {instruct[:30]}..."
+                f"降级到 emotion={emotion}（内容不写日志）"
             )
         tag = EMOTION_TAG.get(emotion, "")
         if tag:
