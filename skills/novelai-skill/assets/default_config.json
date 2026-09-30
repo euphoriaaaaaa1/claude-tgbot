@@ -1,6 +1,6 @@
 {
   "provider": "novelai",
-  "model": "nai-diffusion-4-5-full",
+  "model": "nai-diffusion-5-full",
   "width": 1024,
   "height": 1024,
   "steps": 28,
