@@ -260,16 +260,31 @@ compatibility:
 - `2.5::spread_legs::`
 - `lotus_position`
 
-角色互动写法：
-- `source#action`
-- `target#action`
-- `mutual#action`
+角色互动写法（**必须写清"谁对谁做"**，这是最容易画反的地方）：
 
-示例：
-- `2.0::source#princess carry::`
-- `2.0::target#vaginal_penetration::`
-- `mutual#kissing`
-- `mutual#hugging`
+- 语法：`<角色是谁>#<动作>`，**同一个动作两边各标一次**，分别写进各自角色的段里：
+  - `source#动作` = 这个角色是动作的**发起方**（他/她在做）
+  - `target#动作` = 这个角色是动作的**承受方**（动作落在他/她身上）
+  - `mutual#动作` = 双方对等（接吻、拥抱、互相抚摸）
+- 示例：
+  - `2.0::source#princess carry::`（这段的角色是抱人那个）
+  - `2.0::target#vaginal_penetration::`（这段的角色是被进入那个）
+  - `mutual#kissing` / `mutual#hugging`
+
+**三道防线（缺一就容易画反，三道都要做）：**
+
+1. **动作写进"做动作那个角色"的段里**，不要只写在开头那句话面描述段。三段结构里第②段是"每个角色一段"，动作写在谁的段里，模型就更可能认为是谁在动。
+2. **身体部位必须带归属**：写 `girl's nipples` / `boy's nipples` / `the woman's neck`，**绝不写裸的 `nipples` / `mouth` / `hand`**——不带归属时模型会自己挑一边，往往挑错。
+3. **禁止主语不明的裸动名词**：只写 `licking nipples` / `sucking` / `caressing` 而不写谁对谁做，模型默认按"被画面主体做"来画，最容易与用户意图相反。
+
+**按用户原话的施受关系写，不要按画面惯例猜：**
+
+- 用户说「**我来**舔她 / 我服侍她 / 我摸她」→ **用户段**标 `source#`，**角色段**标 `target#`
+  `角色段：2.0::target#nipple_licking:: the girl's nipples` + `用户段：2.0::source#nipple_licking::`
+- 用户说「**让她**舔我 / 她服侍我 / 她摸我」→ 反过来：**角色段**标 `source#`，**用户段**标 `target#`
+  `用户段：2.0::target#nipple_licking:: the boy's nipples` + `角色段：2.0::source#nipple_licking::`
+
+**写完自检一句**：把 prompt 读一遍，问自己"这段里到底是谁在动？"——与用户原话对不上就重写，不要指望模型自己纠正。
 
 
 ### Prompt 顺序
