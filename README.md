@@ -528,6 +528,7 @@ bot 名单、端口、记忆命名空间全部由 `configs/*.yml` 派生（`bots
 >
 > 多 bot 群聊由 `director.py` 调度（可选，单 bot 用不到）。
 >
+> - 多个 bot 的人设里有要保持一致的共用段落（如语音回复规则、群内互动规则），用 `persona-sync/` 一条命令幂等同步进每份人设，标记外内容不动；先 `--dry-run` 预览，细节见 `persona-sync/README.md`。
 > - **停用某个 bot**（管理台开关，或 `configs/<bot>.yml` 写 `enabled: false`）后，macOS 的 self-initiate plist 和 Windows 计划任务 `claude-tgbot-self-initiate-<bot>` 仍会按时触发，但脚本读到停用就立即退出：不发消息、不拉起 bot。想彻底卸掉：macOS 用 `launchctl bootout gui/$UID/<label>`，Windows 用 `Unregister-ScheduledTask claude-tgbot-self-initiate-<bot>`。
 > - 模板 bot 的 `.claude/settings.json` 挂了"上下文压缩后补群聊近况"的钩子。mac/Linux：命令用的是 `python3` 和 `$CLAUDEBOTLIFE_REPO`，PATH 里要能找到 `python3`。Windows：这两样都不成立（python.org 安装器没有 `python3.exe`，`$VAR` 只有 POSIX shell 会展开），要跑一次 `python scripts\install_compact_hook.py <bot 目录>`，它会把命令改写成解释器与脚本的绝对路径（含空格的路径自动加引号）。**安装器只改写已经存在的 `.claude/settings.json`，不会新建**：走 B 路 `cp -r channels/chenlulu` 建的 bot 自带这个文件，跑一次即可；走 A 路管理台新建的 bot 目录没有它，安装器会打印 `no settings.json, skip` 并以退出码 2 结束，这类 bot 在两个平台都没有这个钩子。想要就先从模板拷一份再说：mac/Linux `cp -r channels/chenlulu/.claude ~/.claude/channels/<新bot>/`（拷完即可用）；Windows `Copy-Item -Recurse channels\chenlulu\.claude $env:USERPROFILE\.claude\channels\<新bot>\` 之后再跑安装器。
 > - 改过 `DIRECTOR_GT_DIR`（群聊记录目录）的，给 worker 也配同名环境变量，否则钩子读不到群聊记录。
@@ -552,6 +553,7 @@ channels/_persona_template/  填空人设模板（做自己的角色照它填）
 skills/novelai-skill/  NovelAI 生图 skill（可选，复制到 ~/.claude/skills/ 启用）
 skills/comfyui-skill/  本机 ComfyUI 生图 skill（可选，与 novelai-skill 二选一）
 voice-bridge/   语音服务（可选）：本地 STT 转文字 + Fish Audio 合成语音。装它 bot 才能听懂/回复语音消息，voicecall/ 打电话模块也靠它；装法见 voice-bridge/README.md
+persona-sync/   多 bot 共用规则段的同步工具（可选）
 ```
 
 ---
