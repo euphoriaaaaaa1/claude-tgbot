@@ -1166,7 +1166,7 @@ const server = Bun.serve({
           if (asVoice) {
             const voiceId = access.voiceId
             if (!voiceId) {
-              // 语音是可选功能（voice-bridge 用户自备，见 voicecall/README）。没配 voiceId
+              // 语音是可选功能（服务实现见仓库 voice-bridge/，接口契约见 voicecall/README）。没配 voiceId
               // 时 AI 传了 as_voice 不该炸整条消息 —— 降级为纯文本发出，内容不丢。
               process.stderr.write(`dispatcher[${BOT_NAME}]: as_voice 但 access.json 无 voiceId，降级纯文本\n`)
               const sent = await sendChunk(item.chunk,
