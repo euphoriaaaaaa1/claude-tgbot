@@ -551,6 +551,7 @@ channels/chenlulu/  示例人设（CLAUDE.md 人设 + access.json + 出厂关系
 channels/_persona_template/  填空人设模板（做自己的角色照它填）
 skills/novelai-skill/  NovelAI 生图 skill（可选，复制到 ~/.claude/skills/ 启用）
 skills/comfyui-skill/  本机 ComfyUI 生图 skill（可选，与 novelai-skill 二选一）
+voice-bridge/   语音服务（可选）：本地 STT 转文字 + Fish Audio 合成语音。装它 bot 才能听懂/回复语音消息，voicecall/ 打电话模块也靠它；装法见 voice-bridge/README.md
 ```
 
 ---

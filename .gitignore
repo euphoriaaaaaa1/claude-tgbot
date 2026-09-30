@@ -49,6 +49,10 @@ voicecall/tests/
 voicecall/.devflow/
 .devflow/
 
+# ── voice-bridge 模块：模型缓存（约 1 GB）、虚拟环境与运行日志绝不入库 ──
+voice-bridge/models/
+voice-bridge/logs/
+
 # ── cliproxy：二进制与配置都装在 ~/.claude-tgbot/（仓库外），这里只兜底 ──
 # 万一有人在仓库根手动跑 cli-proxy-api：57 MB 的二进制 + 它往 CWD 拉的 2.7 MB 管理面板
 /cli-proxy-api

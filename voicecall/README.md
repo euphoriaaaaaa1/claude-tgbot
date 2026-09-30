@@ -31,7 +31,7 @@
 | 档 | 要准备什么 | 缺了会怎样 |
 |---|---|---|
 | **① 必需（基础）** | ① 主 bot（claude-tgbot）已装好、能在 TG 正常聊天；② 本机有 **Python 3.10+**；③ 本机装了 **ffmpeg**（把浏览器录音转成识别能用的格式，命令行敲 `ffmpeg -version` 能出版本就算有） | 缺主 bot → 没 bot 可打；缺 Python/ffmpeg → 服务起不来 / 一说话就报「音频转码失败」 |
-| **② 语音必需** | 本机跑一个 **voice-bridge**（一个同时提供「语音转文字 STT」和「文字转语音 TTS」的本地小服务，默认地址 `127.0.0.1:7788`） | 缺它 → 收不到你说的话、bot 也发不出声，等于哑巴电话。**主项目不含这个服务，需你自备**（详见第五步） |
+| **② 语音必需** | 本机跑一个 **voice-bridge**（一个同时提供「语音转文字 STT」和「文字转语音 TTS」的本地小服务，默认地址 `127.0.0.1:7788`）。**本仓已自带实现，见 `voice-bridge/`**（装法见第 4 步） | 缺它 → 收不到你说的话、bot 也发不出声，等于哑巴电话 |
 | **③ 手机上打（可选）** | **Tailscale**（一个把你的设备组进同一个私有网的工具）+ 开它的 HTTPS（`tailscale serve`） | 缺它 → 只能在**电脑本机**浏览器打；手机浏览器因为不是 HTTPS，**不给授权麦克风**，打不了 |
 | **④ 主动来电推送（可选）** | 自己生成一对 **VAPID 密钥**（Web 推送用的钥匙）+ 手机把网页「添加到主屏」当 App 打开 | 缺它 → 没有「bot 主动来电」的推送通知；但你主动打给它、以及上面所有通话功能都照常 |
 
@@ -108,34 +108,35 @@ HOST=127.0.0.1                            # 只绑本机，别改成 0.0.0.0（�
 通话的「大脑」（人设、要发到哪个 TG 会话）**自动从主项目 `configs/<bot>.yml` 读，不用在这里重配**。只有两项需要你去那个文件里补（以示例 bot `chenlulu` 为例，编辑 `configs/chenlulu.yml`）：
 
 ```yaml
-voice_id: "你在 voice-bridge/TTS 里的音色 ID"   # 决定 bot 用什么嗓子说话；留空 → 用 voice-bridge 的默认音色
+voice_id: "你在 Fish Audio 里的音色 ID（reference_id）"   # 决定 bot 用什么嗓子说话；留空 → 用 Fish Audio 的默认音色
 user_name: "小明"                               # 电话里 bot 内部第三人称怎么称呼你（如 小明/哥哥），默认"对方"
 ```
 
-- **`voice_id`**：这是你在自备的 voice-bridge / TTS 服务里选的那个音色的编号，格式取决于你用的 TTS，这里照填即可。不知道填啥就先留空，用默认嗓子，能通话了再回来换。
+- **`voice_id`**：在 voice-bridge（Fish Audio）里选的那个音色 ID（在 Fish Audio 控制台的音色页能拿到，API 里叫 `reference_id`）。不知道填啥就先留空，用默认嗓子，能通话了再回来换。
 - **`user_name`**：只影响 bot 在「去 TG 办事」时提示里怎么指代你，纯文案，可选。
 
 **验证**：这两行加进去、缩进对齐、存盘即可，无需重启主 bot。电话服务下次启动时会自动读到。
 
-### 第 4 步：起 voice-bridge（语音的耳朵和嘴，需自备）
+### 第 4 步：起 voice-bridge（语音的耳朵和嘴）
 
-这是**唯一需要你自己准备的外部服务**。它要在本机 `127.0.0.1:7788` 上提供两个接口：
+**本仓已自带这个服务**，在仓库根目录的 `voice-bridge/`。安装（Python 3.10+ / ffmpeg / pip 依赖 / 模型下载）按 `voice-bridge/README.md` 走一遍，然后 `./start.sh start` 即可。
+
+它要在本机 `127.0.0.1:7788` 上提供两个接口（本模块按这张表对接）：
 
 | 接口 | 干什么 | 本模块怎么调 |
 |------|--------|-------------|
 | `POST /transcribe_file` | 把一段录音**转成文字**（STT） | 传 `{"path": "录音的wav路径"}`，返回 `{"text": "识别结果"}` |
 | `POST /synthesize_voice` | 把一句文字**合成语音**（TTS） | 传 `{"text": "要说的话", "voice_id": "音色", "emotion": "NEUTRAL", "format": "ogg"}`，返回音频字节（ogg，Chrome 能直接放） |
 
-任何能满足这两个接口的本地服务都行（常见组合：SenseVoice 做 STT + 某个 TTS）。地址不是 `127.0.0.1:7788` 的话，改第 2 步 `.env` 里的 `VOICE_BRIDGE_URL`；接口路径/字段和你的服务对不上，就改 `server.py` 顶部的 `VB` 常量或相关调用。
+用别的服务替代也行（任何满足这两个接口的本地服务都可以）。地址不是 `127.0.0.1:7788` 的话，改第 2 步 `.env` 里的 `VOICE_BRIDGE_URL`；接口路径/字段和你的服务对不上，就改 `server.py` 顶部的 `VB` 常量或相关调用。
 
 **验证**：voice-bridge 起好后，本机能通就行，例如：
 
 ```bash
-curl -s -X POST http://127.0.0.1:7788/synthesize_voice \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"测试","voice_id":"","emotion":"NEUTRAL","format":"ogg"}' --output /tmp/test.ogg && \
-  ls -l /tmp/test.ogg      # 文件有大小（不是 0 字节）= TTS 通
+curl -s http://127.0.0.1:7788/health        # 返回 {"ok":true,...} = 服务在
 ```
+
+（TTS 那条 curl 会真实调用 Fish Audio 产生费用，确认服务存活用 /health 就够了；STT 可以用 voice-bridge 自带的 `examples/asr_example_zh.wav` 试一次，本地免费。）
 
 ### 第 5 步：启动电话服务，本机验证能打电话
 
@@ -257,7 +258,7 @@ cloudflared tunnel --url http://127.0.0.1:8766
 |------|-------------|
 | **点接通后提示麦克风授权失败 / 用不了麦克风** | 多半是**没走 HTTPS**。电脑本机要用 `http://127.0.0.1:8766`（不能用局域网 IP）；手机必须走第 6 步的 Tailscale HTTPS 地址，直接敲 IP 不行。 |
 | **一说话就报「音频转码失败」** | ffmpeg 没装或不在 PATH。`ffmpeg -version` 确认；装在别处就在 `.env` 里设 `FFMPEG_BIN=/完整路径/ffmpeg`。 |
-| **能接通但 bot 不出声 / 听不到你** | voice-bridge 没起，或地址不对。确认 `127.0.0.1:7788` 起着、`/transcribe_file` 和 `/synthesize_voice` 都通（第 4 步的 curl 验证）；地址不同改 `.env` 的 `VOICE_BRIDGE_URL`。 |
+| **能接通但 bot 不出声 / 听不到你** | voice-bridge 没起，或地址不对。确认 `127.0.0.1:7788` 起着、`/health` 通（第 4 步）；地址不同改 `.env` 的 `VOICE_BRIDGE_URL`。 |
 | **bot 出声了但嗓子不对 / 用的默认音** | `configs/<bot>.yml` 里 `voice_id` 没填或填错。填成你 TTS 服务里真实存在的音色 ID，重启电话服务。 |
 | **手机连不上那个 `.ts.net` 地址** | ① Tailscale 后台没开 MagicDNS（证书没签发）；② 手机没登同一个 tailnet 账号；③ `tailscale serve --bg 8766` 没在跑。逐条排查。 |
 | **来电推送收不到** | ① iOS 必须从**主屏 PWA 图标**打开、不能在浏览器标签里；② 页面上的「来电通知」开关要打开；③ `CALL_TOKEN` 要和 `.env` 里一致；④ VAPID 密钥要生成好、`vapid_public.b64` 存在。 |
