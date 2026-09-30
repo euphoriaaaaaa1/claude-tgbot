@@ -17,8 +17,9 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'child_pro
 import { createHash } from 'crypto'
 import {
   readFileSync, writeFileSync, appendFileSync, readdirSync, rmSync, renameSync,
-  mkdirSync, existsSync, statSync, copyFileSync, watch, type FSWatcher,
+  mkdirSync, existsSync, statSync, watch, type FSWatcher,
 } from 'fs'
+import { backupSessionJsonl } from './backup_retention'
 import { join, delimiter } from 'path'
 import { homedir, tmpdir, platform } from 'os'
 import { buildTimePrefix } from './time_annotate'
@@ -251,7 +252,7 @@ export function stripThinking(jsonlPath: string, stripAll: boolean): void {
   try { txt = readFileSync(jsonlPath, 'utf8') } catch { return }
   if (!txt.includes('"type":"thinking"')) return
   const cutoff = Date.now() / 1000 - 12 * 3600
-  try { copyFileSync(jsonlPath, `${jsonlPath}.bak.${Math.floor(Date.now() / 1000)}`) } catch {}
+  backupSessionJsonl(jsonlPath, 'strip')
   const kept: string[] = []
   let nStripped = 0, nKept = 0
   for (const line of txt.split('\n')) {
@@ -295,7 +296,7 @@ export function compactSessionIfHuge(jsonlPath: string): void {
   const total = lines.reduce((s, l) => s + (l.trim() ? sizeOf(l) : 0), 0)
   if (total <= 170_000) return
   logSpawn(`session ctx ~${total} tokens > 170k，结构化压缩…`)
-  try { copyFileSync(jsonlPath, `${jsonlPath}.bak.${Math.floor(Date.now() / 1000)}`) } catch {}
+  backupSessionJsonl(jsonlPath, 'compact')
   // 从最新往回给 user/assistant 行配额（~100k），配额外的老对话丢弃；非对话行全保留。
   let budget = 100_000
   const keepDialog = new Set<number>()
