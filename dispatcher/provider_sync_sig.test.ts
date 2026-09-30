@@ -50,11 +50,12 @@ test('providerSig_非法JSON_只返回空不抛异常', () => {
   expect(() => providerSig('{oops')).not.toThrow()
 })
 
-// ---- 五个 provider 字段：逐个单独变化 → 签名必变 ----
+// ---- 参与签名的 provider 字段：逐个单独变化 → 签名必变 ----
+// 口径变更：ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY 不再参与签名（见 provider_sync.ts
+// ENV_FIELDS 注释：token 轮换与 provider 无关，算进去会每轮 OAuth 续期白重启 worker），
+// 故它们从本「必变」表移到下方 IRRELEVANT「必不变」表。
 const CHANGED: [string, string][] = [
   ['env.ANTHROPIC_BASE_URL', mk({ ANTHROPIC_BASE_URL: 'https://api.other-fake.test/anthropic' })],
-  ['env.ANTHROPIC_AUTH_TOKEN', mk({ ANTHROPIC_AUTH_TOKEN: 'sk-FAKE-zzz999' })],
-  ['env.ANTHROPIC_API_KEY', mk({ ANTHROPIC_API_KEY: 'sk-FAKE-key000' })],
   ['env.ANTHROPIC_MODEL', mk({ ANTHROPIC_MODEL: 'fake-model-x2' })],
   ['顶层 model', mk({}, { model: 'fake-top-model-2' })],
 ]
@@ -64,11 +65,11 @@ for (const [field, json] of CHANGED) {
   })
 }
 
-test('providerSig_删掉一个provider字段_签名必变', () => {
-  const { ANTHROPIC_API_KEY, ...rest } = BASE_ENV
-  const withoutKey = JSON.stringify({ env: rest, model: 'fake-top-model' })
-  const withKey = JSON.stringify({ env: BASE_ENV, model: 'fake-top-model' })
-  expect(providerSig(withoutKey)).not.toBe(providerSig(withKey))
+test('providerSig_删掉一个参与签名的provider字段_签名必变', () => {
+  const { ANTHROPIC_MODEL, ...rest } = BASE_ENV
+  const withoutModel = JSON.stringify({ env: rest, model: 'fake-top-model' })
+  const withModel = JSON.stringify({ env: BASE_ENV, model: 'fake-top-model' })
+  expect(providerSig(withoutModel)).not.toBe(providerSig(withModel))
 })
 
 // ---- 反向用例：无关字段变化 → 签名不变 ----
@@ -77,6 +78,8 @@ const IRRELEVANT: [string, string][] = [
   ['statusLine', mk({}, { statusLine: { type: 'command', command: 'echo changed' } })],
   ['env 里的无关变量', mk({ SOME_OTHER_VAR: 'whatever' })],
   ['新增顶层无关键', mk({}, { permissions: { allow: ['Read'] }, theme: 'dark' })],
+  ['env.ANTHROPIC_AUTH_TOKEN（token 轮换，不算换 provider）', mk({ ANTHROPIC_AUTH_TOKEN: 'sk-FAKE-zzz999' })],
+  ['env.ANTHROPIC_API_KEY（key 轮换，不算换 provider）', mk({ ANTHROPIC_API_KEY: 'sk-FAKE-key000' })],
 ]
 for (const [field, json] of IRRELEVANT) {
   test(`providerSig_只改${field}_签名不变`, () => {
@@ -106,7 +109,8 @@ test('providerSig_缺env块与空env块_签名相同', () => {
   expect(providerSig('{}')).toBe(providerSig('{"env":{}}'))
 })
 
-test('providerSig_五字段显式空串与字段缺失_签名相同', () => {
+test('providerSig_参与字段显式空串与字段缺失_签名相同', () => {
+  // token/key 空串不参与签名，一并放入以佐证它们空不空都不影响结果。
   const allEmpty = JSON.stringify({
     env: { ANTHROPIC_BASE_URL: '', ANTHROPIC_AUTH_TOKEN: '', ANTHROPIC_API_KEY: '', ANTHROPIC_MODEL: '' },
     model: '',
@@ -115,6 +119,7 @@ test('providerSig_五字段显式空串与字段缺失_签名相同', () => {
 })
 
 // ---- 反向用例：签名里 grep 不到敏感明文（S6）----
+// 口径变更后 token/key 根本不参与签名，此条恒成立，仍保留作回归护栏。
 test('providerSig_签名不含token和key明文', () => {
   const sig = providerSig(mk())
   expect(sig.includes(FAKE_TOKEN)).toBe(false)
@@ -138,10 +143,10 @@ test('providerSig_字段含Unicode与emoji_签名确定且非空', () => {
   expect(providerSig(json)).not.toBe('')
 })
 
-test('providerSig_超长token_签名仍非空且与短token不同', () => {
+test('providerSig_超长token_不影响签名', () => {
   const long = 'sk-FAKE-' + 'x'.repeat(10000)
   expect(providerSig(mk({ ANTHROPIC_AUTH_TOKEN: long }))).not.toBe('')
-  expect(providerSig(mk({ ANTHROPIC_AUTH_TOKEN: long }))).not.toBe(providerSig(mk()))
+  expect(providerSig(mk({ ANTHROPIC_AUTH_TOKEN: long }))).toBe(providerSig(mk()))
 })
 
 test('providerSig_字段值只差一个字符_签名必变', () => {

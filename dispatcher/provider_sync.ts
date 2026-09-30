@@ -7,11 +7,13 @@
  */
 import { createHash } from 'crypto'
 
-// 参与签名的 provider 字段：env 里四个 + 顶层 model。改这张表 = 改「什么算换了 provider」。
+// 参与签名的 provider 字段：env 里两个 + 顶层 model。改这张表 = 改「什么算换了 provider」。
+// ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY 明确**不参与**：token 轮换与 provider 无关，
+// 而 OAuth 续期会周期性改写 token —— 若把它算进签名，每轮续期签名必变 → 误判「换了 provider」
+// → onProviderChanged 白重启 worker（用户侧表现为对话莫名中断）。故只认真正的 provider 身份：
+// BASE_URL 与 MODEL。
 const ENV_FIELDS = [
   'ANTHROPIC_BASE_URL',
-  'ANTHROPIC_AUTH_TOKEN',
-  'ANTHROPIC_API_KEY',
   'ANTHROPIC_MODEL',
 ] as const
 
