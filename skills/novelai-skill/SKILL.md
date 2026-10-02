@@ -207,6 +207,8 @@ compatibility:
 - `lower_body`
 - `between_legs`
 
+**禁止在正文里写 `user` / `viewer` 这类词**（NovelAI 不认，等于噪声）：第一人称视角一律用标准 tag `pov` / `pov_hands` / `pov_arm`；要角色看向镜头写 `looking_at_viewer`；POV 图里的"对话方"（镜头对面的人）**不写进正文**——镜头本身就是他，写了反而画蛇添足。
+
 场景氛围示例：
 - `passionate_atmosphere`
 - `fantasy_atmosphere`
