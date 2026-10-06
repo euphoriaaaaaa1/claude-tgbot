@@ -40,20 +40,35 @@ MODEL_CACHE.mkdir(exist_ok=True)
 os.environ["MODELSCOPE_CACHE"] = str(MODEL_CACHE)
 os.environ["HF_HOME"] = str(MODEL_CACHE / "hf")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        # 5MB 一轮，保留 3 份（http_server.log + .1 + .2 + .3）→ 上限 ~20MB
-        RotatingFileHandler(
-            LOG_DIR / "http_server.log",
-            maxBytes=5_000_000,
-            backupCount=3,
-            encoding="utf-8",
-        ),
-        logging.StreamHandler(sys.stderr),
-    ],
-)
+# Telegram 请求 URL 里带 bot token（/bot<id>:<secret>/…）：日志行（含异常栈）与回给调用方的错误文本一律抹掉
+_TG_TOKEN_RE = re.compile(r"bot\d+:[A-Za-z0-9_-]{30,}")
+
+
+def _redact(s: str) -> str:
+    return _TG_TOKEN_RE.sub("bot[已隐去]", s)
+
+
+class _RedactFormatter(logging.Formatter):
+    def format(self, record):
+        return _redact(super().format(record))
+
+
+_log_handlers = [
+    # 5MB 一轮，保留 3 份（http_server.log + .1 + .2 + .3）→ 上限 ~20MB
+    RotatingFileHandler(
+        LOG_DIR / "http_server.log",
+        maxBytes=5_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    ),
+    logging.StreamHandler(sys.stderr),
+]
+for _h in _log_handlers:
+    _h.setFormatter(_RedactFormatter("%(asctime)s [%(levelname)s] %(message)s"))
+logging.basicConfig(level=logging.INFO, handlers=_log_handlers)
+# httpx/httpcore 的 INFO 每个请求打一行完整 URL：压到 WARNING，上面的 Formatter 只做兜底
+for _name in ("httpx", "httpcore"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
 log = logging.getLogger("voice-bridge-http")
 
 
@@ -114,6 +129,9 @@ def check_file_path(raw_path: str) -> Path:
     except (OSError, ValueError, RuntimeError):
         raise HTTPException(403, f"路径无法解析，已拒绝: {raw_path!r}")
     if not any(p.is_relative_to(root) for root in ALLOWED_ROOTS):
+        raise HTTPException(403, f"文件不在允许目录内: {p}")
+    # 模块目录在白名单里是为了读自带资源；日志与虚拟环境不许外发
+    if any(p.is_relative_to((ROOT / d).resolve()) for d in ("logs", ".venv")):
         raise HTTPException(403, f"文件不在允许目录内: {p}")
     try:
         size = p.stat().st_size
@@ -512,7 +530,7 @@ async def api_transcribe_file(req: TranscribeFileReq):
         return await transcribe_file(str(path))
     except Exception as e:
         log.exception("transcribe_file 失败")
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, _redact(str(e)))
 
 
 @app.post("/transcribe_telegram")
@@ -521,7 +539,7 @@ async def api_transcribe_telegram(req: TranscribeTelegramReq):
         return await transcribe_telegram(req.file_id, req.bot_token or "")
     except Exception as e:
         log.exception("transcribe_telegram 失败")
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, _redact(str(e)))
 
 
 @app.post("/synthesize_voice")
@@ -534,7 +552,7 @@ async def api_synthesize(req: SynthesizeReq):
         return Response(content=audio, media_type="audio/ogg")
     except Exception as e:
         log.exception("synthesize_voice 失败")
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, _redact(str(e)))
 
 
 
@@ -587,7 +605,7 @@ async def api_send_voice(req: SendVoiceReq):
         raise
     except Exception as e:
         log.exception("send_voice 失败")
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, _redact(str(e)))
 
 
 @app.post("/send_file")
@@ -637,7 +655,7 @@ async def api_send_file(req: SendFileReq):
         raise
     except Exception as e:
         log.exception("send_file 失败")
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, _redact(str(e)))
 
 
 if __name__ == "__main__":
