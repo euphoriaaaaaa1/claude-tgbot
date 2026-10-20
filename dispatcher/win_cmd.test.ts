@@ -43,7 +43,7 @@ describe('quoteCmdArg', () => {
 
 describe('winCmdLine 往返', () => {
   const CASES: Array<[string, string[]]> = [
-    ['用户名含空格（致命-1 原案）', ['C:\\Users\\John Smith\\AppData\\Roaming\\npm\\claude.cmd', '-p', '--add-dir', 'C:\\Users\\John Smith\\.claude\\channels\\bot']],
+    ['用户名含空格（致命-1 原案）', ['C:\\work dir\\example user\\AppData\\Roaming\\npm\\claude.cmd', '-p', '--add-dir', 'C:\\work dir\\example user\\.claude\\channels\\bot']],
     ['CHANNEL_DIR 带尾反斜杠', ['C:\\npm\\claude.cmd', '--add-dir', 'C:\\bots\\chenlulu\\']],
     ['仓路径含括号', ['D:\\Tom (Work)\\npm\\claude.cmd', '--session-id', 'x']],
     ['元字符/空格/内嵌引号', ['C:\\npm\\claude.cmd', 'mcp<2', 'a&b', 'x|y', 'p^q', 'has space', 'say "hi"', 'next']],
@@ -54,10 +54,10 @@ describe('winCmdLine 往返', () => {
   ]
   for (const [name, toks] of CASES) test(name, () => expect(roundtrip(toks)).toEqual(toks))
 
-  test('整行以外层引号包住：cmd /s 剥掉后命令名仍完整（不再截成 C:\\Users\\John）', () => {
-    const line = winCmdLine(['C:\\Users\\John Smith\\npm\\claude.cmd', '-p'])
-    expect(line.startsWith('""C:\\Users\\John Smith')).toBe(true)
-    expect(crtParse(cmdStrip(line))[0]).toBe('C:\\Users\\John Smith\\npm\\claude.cmd')
+  test('整行以外层引号包住：cmd /s 剥掉后命令名仍完整（不再截成 C:\Users\example）', () => {
+    const line = winCmdLine(['C:\\work dir\\example user\\npm\\claude.cmd', '-p'])
+    expect(line.startsWith('""C:\\work dir\\example user')).toBe(true)
+    expect(crtParse(cmdStrip(line))[0]).toBe('C:\\work dir\\example user\\npm\\claude.cmd')
   })
 })
 
@@ -104,7 +104,7 @@ describe('cmd.exe 消费者收敛（W-A2：修一条路漏另一条路——cliV
 
 describe('%…% / !…! 守卫（G-5：cmd 在引号内照样展开，命中即静默换参数 → 拒绝并抛错）', () => {
   test('成对 % 或 ! → 抛错，错误里带被拒的片段', () => {
-    expect(() => winCmdLine(['C:\\npm\\claude.cmd', '--add-dir', 'C:\\Users\\a%b%c\\.claude\\channels\\bot'])).toThrow(/%b%/)
+    expect(() => winCmdLine(['C:\\npm\\claude.cmd', '--add-dir', 'C:\\work dir\\example%b%c\\.claude\\channels\\bot'])).toThrow(/%b%/)
     expect(() => winCmdLine(['C:\\Users\\%USERNAME%\\npm\\claude.cmd', '-p'])).toThrow(/%USERNAME%/)
     expect(() => winCmdLine(['C:\\npm\\claude.cmd', 'D:\\!x!\\bots'])).toThrow(/!x!/)
     expect(() => assertNoCmdExpansion('%TEMP%')).toThrow(/%TEMP%/)
@@ -113,7 +113,7 @@ describe('%…% / !…! 守卫（G-5：cmd 在引号内照样展开，命中即�
     expect(() => winCmdSpawnSpec('C:\\npm\\claude.cmd', ['--add-dir', 'C:\\%TEMP%\\x'])).toThrow(/%TEMP%/)
   })
   test('落单的 % 或 !（cmd 原样保留）不拦，正常路径不受影响', () => {
-    for (const t of ['C:\\Users\\100%\\bots', 'D:\\wow!\\x', '50% done!', '%', '!', 'C:\\Users\\John Smith\\.claude'])
+    for (const t of ['C:\\work dir\\example%\\bots', 'D:\\wow!\\x', '50% done!', '%', '!', 'C:\\work dir\\example user\\.claude'])
       expect(() => winCmdLine(['C:\\npm\\claude.cmd', t])).not.toThrow()
     expect(() => assertNoCmdExpansion('')).not.toThrow()
   })

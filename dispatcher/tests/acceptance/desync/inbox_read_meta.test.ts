@@ -18,12 +18,12 @@ function put(name: string, body: string, ageMs: number): string {
   utimesSync(p, t, t);
   return p;
 }
-const META = JSON.stringify({ chat_id: "123456", text: "hi", ts: new Date(NOW).toISOString() });
+const META = JSON.stringify({ chat_id: "123456789", text: "hi", ts: new Date(NOW).toISOString() });
 
 test("真人消息文件、刚写入 → 返回 meta（chat_id 可读），文件保留", () => {
   const p = put("1700000000000-1.json", META, 10_000);
   const m = readInboxMeta(p, NOW);
-  expect(m && String(m.chat_id)).toBe("123456");
+  expect(m && String(m.chat_id)).toBe("123456789");
   expect(existsSync(p)).toBe(true);
 });
 

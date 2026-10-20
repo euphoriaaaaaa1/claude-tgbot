@@ -64,7 +64,7 @@ export function unifiedSessionUuid(bot: string): string {
 
 // ─── project slug（官方规则：非字母数字全部替换为 '-'）──────────────────
 // mac:  /Users/you/.claude/channels/bot → -Users-you--claude-channels-bot
-// win:  C:\Users\you\.claude\channels\bot → C--Users-you--claude-channels-bot
+// win:  C:\Users\user\.claude\channels\bot → C--Users-user--claude-channels-bot
 // ⚠️ Windows 真实规则以 Phase 0 实测为准；spawn 后有断言兜底（不匹配 fail-loud）。
 export function projectSlug(absDir: string): string {
   return absDir.replace(/[^a-zA-Z0-9]/g, '-')

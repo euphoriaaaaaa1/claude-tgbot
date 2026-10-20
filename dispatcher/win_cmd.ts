@@ -6,8 +6,8 @@
 //   3. 紧邻 " 之前的反斜杠翻倍、token 结尾的反斜杠翻倍（UCRT：2N 个 \ + " → N 个 \）；
 //   4. 整行再包一层外层引号 + `/d /s /c` + windowsVerbatimArguments：
 //      cmd /s 的规则是"剥掉首个与最后一个引号、中间原样"，没有外层引号时，
-//      首 token 一旦被引号包住（如 C:\Users\John Smith\...\claude.cmd），
-//      命令名就被截成 C:\Users\John → "不是内部或外部命令"，worker 永远起不来。
+//      首 token 一旦被引号包住（如 C:\Users\example user\...\claude.cmd），
+//      命令名就被截成 C:\Users\example → "不是内部或外部命令"，worker 永远起不来。
 //      /d 关掉注册表 AutoRun（clink 等会往 stdout 混输出）。
 // 验收：node ~/.claude/skills/platform-compat-review/scripts/crt-roundtrip.mjs dispatcher/win_cmd.ts → 15/15。
 // %…% 与 !…!（G-5）：cmd 在引号内照样展开，winCmdLine 检测到成对形态直接抛错（见 assertNoCmdExpansion）。

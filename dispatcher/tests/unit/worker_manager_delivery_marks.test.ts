@@ -15,21 +15,21 @@ function mgr() {
 
 test('party 标记插在场景标注之前', () => {
   const m = mgr()
-  const out = m.buildDeliveryContent([{ chat_id: '100001', text: 'hi', party_chat_id: '-100123' }])
-  expect(out).toContain('[party] 线下聚会进行中（群 -100123）')
+  const out = m.buildDeliveryContent([{ chat_id: '123456789', text: 'hi', party_chat_id: '-1001234567890' }])
+  expect(out).toContain('[party] 线下聚会进行中（群 -1001234567890）')
   expect(out.indexOf('[party]')).toBeLessThan(out.indexOf('【私聊】'))
 })
 
 test('多个群聚会 → party-ambiguous 标记', () => {
   const m = mgr()
-  const out = m.buildDeliveryContent([{ chat_id: '100001', text: 'hi', party_ambiguous: true }])
+  const out = m.buildDeliveryContent([{ chat_id: '123456789', text: 'hi', party_ambiguous: true }])
   expect(out).toContain('[party-ambiguous]')
   expect(out).not.toContain('[party] 线下')
 })
 
 test('拍照标记同样插在场景标注之前', () => {
   const m = mgr()
-  const base = m.buildDeliveryContent([{ chat_id: '100001', text: 'hi' }])
+  const base = m.buildDeliveryContent([{ chat_id: '123456789', text: 'hi' }])
   const out = m.injectDeliveryMarks(base, ['[auto-photo] 第2轮：x'])
   expect(out.indexOf('[auto-photo]')).toBeLessThan(out.indexOf('【私聊】'))
 })

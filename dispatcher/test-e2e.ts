@@ -65,14 +65,14 @@ const check = (ok: boolean, label: string) => { console.log(`${ok ? '✅' : '❌
 console.log('── T1: inbox → stdin → claude → MCP reply → /send ──')
 const ms1 = Date.now()
 writeFileSync(join(CHAN, 'inbox', `test-${ms1}.json`), JSON.stringify({
-  text: '你好，请回复', chat_id: '10001', from_id: '10001',
+  text: '你好，请回复', chat_id: '123456789', from_id: '123456789',
   from_username: 'tester', chat_type: 'private', scene: 'private',
   is_bot_sender: false, ts: new Date().toISOString(), message_id: String(ms1),
 }))
 await mgr.ensure()
 check(await waitFor(() => received.length >= 1, 120_000, '等 reply 到达 mock /send'), 'T1 reply 送达 /send')
 check(received.some(r => String(r.text ?? '').includes('E2E-OK')), 'T1 回复内容含 E2E-OK')
-check(received.some(r => String(r.chat_id) === '10001'), 'T1 chat_id 路由正确(=10001)')
+check(received.some(r => String(r.chat_id) === '123456789'), 'T1 chat_id 路由正确(=123456789)')
 
 // ─── T2: slash /compact ───
 console.log('── T2: sendSlash(/compact) → compact_boundary ──')
@@ -90,7 +90,7 @@ await sleep(3000)
 const before = received.length
 const ms2 = Date.now()
 writeFileSync(join(CHAN, 'inbox', `test-${ms2}.json`), JSON.stringify({
-  text: '又是我，请再回复一次', chat_id: '10001', from_id: '10001',
+  text: '又是我，请再回复一次', chat_id: '123456789', from_id: '123456789',
   from_username: 'tester', chat_type: 'private', scene: 'private',
   is_bot_sender: false, ts: new Date().toISOString(), message_id: String(ms2),
 }))

@@ -45,7 +45,7 @@ async function rpc(channel: string, opts: { list?: boolean; tool?: string; args?
       ...process.env, CHANNEL_DIR: channel, TELEGRAM_WORKER_BOT: 't18bot',
       TELEGRAM_DISPATCHER_URL: base, DISPATCHER_URL: base, BOT_NAME: 't18bot',
       CLAUDEBOTLIFE_TEST: '1', CLAUDEBOTLIFE_TEST_ROOT: channel,
-      HOME: channel, TELEGRAM_WORKER_CHAT_ID: '100001',
+      HOME: channel, TELEGRAM_WORKER_CHAT_ID: '123456789',
     },
   })
   const out: Session = { raw: [] }
@@ -135,22 +135,22 @@ describe('工具列表与功能开关', () => {
 describe('party 与承诺工具接线', () => {
   test('set_party_mode 绑定当前投递件 message_id，成功文案一致', async () => {
     const ch = channel({
-      '.last-chat-id': '-100123',
-      '.last-delivery.json': { chat_id: '-100123', message_id: '77', party_chat_id: '', party_ambiguous: false, promise_ids: [], promise_due: false, human_chat_id: '-100123', human_user_id: '100001', at_ms: Date.now() + 60_000 },
-      'access.json': { allowFrom: ['100001'], groups: { '-100123': {} } },
+      '.last-chat-id': '-1001234567890',
+      '.last-delivery.json': { chat_id: '-1001234567890', message_id: '77', party_chat_id: '', party_ambiguous: false, promise_ids: [], promise_due: false, human_chat_id: '-1001234567890', human_user_id: '123456789', at_ms: Date.now() + 60_000 },
+      'access.json': { allowFrom: ['123456789'], groups: { '-1001234567890': {} } },
     })
     seen.length = 0
     const s = await rpc(ch, { tool: 'set_party_mode', args: { on: true, note: '线下' } })
     expect(s.call?.isError ?? false).toBe(false)
-    expect(textOf(s.call)).toBe('party on: chat=-100123 source=bot')
+    expect(textOf(s.call)).toBe('party on: chat=-1001234567890 source=bot')
     const req = seen.find(x => x.path === '/party')
-    expect(req?.body).toMatchObject({ chat_id: '-100123', on: true, note: '线下', message_id: '77' })
+    expect(req?.body).toMatchObject({ chat_id: '-1001234567890', on: true, note: '线下', message_id: '77' })
   })
 
   test('promise_list 无真人投递 → chat_not_allowed，不发请求', async () => {
-    const ch = channel({ '.last-chat-id': '100001' })
+    const ch = channel({ '.last-chat-id': '123456789' })
     seen.length = 0
-    const s = await rpc(ch, { tool: 'promise_list', args: { chat_id: '100001' } })
+    const s = await rpc(ch, { tool: 'promise_list', args: { chat_id: '123456789' } })
     expect(s.call?.isError).toBe(true)
     expect(textOf(s.call)).toContain('chat_not_allowed')
     expect(seen.some(x => x.path === '/promise')).toBe(false)
@@ -158,29 +158,29 @@ describe('party 与承诺工具接线', () => {
 
   test('promise_list 绑定当前聊天，请求体带 scope_chat_id', async () => {
     const ch = channel({
-      '.last-chat-id': '100001',
-      '.last-delivery.json': { chat_id: '100001', message_id: '5', party_chat_id: '', party_ambiguous: false, promise_ids: [], promise_due: false, human_chat_id: '100001', human_user_id: '100001', at_ms: Date.now() + 60_000 },
+      '.last-chat-id': '123456789',
+      '.last-delivery.json': { chat_id: '123456789', message_id: '5', party_chat_id: '', party_ambiguous: false, promise_ids: [], promise_due: false, human_chat_id: '123456789', human_user_id: '123456789', at_ms: Date.now() + 60_000 },
     })
     seen.length = 0
-    const s = await rpc(ch, { tool: 'promise_list', args: { chat_id: '100001' } })
+    const s = await rpc(ch, { tool: 'promise_list', args: { chat_id: '123456789' } })
     expect(s.call?.isError ?? false).toBe(false)
     const req = seen.find(x => x.path === '/promise')
-    expect(req?.body).toEqual({ action: 'list', scope_chat_id: '100001' })
+    expect(req?.body).toEqual({ action: 'list', scope_chat_id: '123456789' })
   })
 })
 
 describe('party 改投下的 reply 路由', () => {
   test('无显式 chat_id 时发到 party 群，且不转发私聊的 reply_to', async () => {
     const ch = channel({
-      '.last-chat-id': '100001',
-      '.last-inbound-ts.json': { _human_by_chat: { '100001': Date.now() }, _director_by_chat: {}, _mentions_group_by_chat: {}, _human: Date.now() },
-      '.last-delivery.json': { chat_id: '100001', message_id: '6', party_chat_id: '-100123', party_ambiguous: false, promise_ids: [], promise_due: false, human_chat_id: '100001', human_user_id: '100001', at_ms: Date.now() + 60_000 },
+      '.last-chat-id': '123456789',
+      '.last-inbound-ts.json': { _human_by_chat: { '123456789': Date.now() }, _director_by_chat: {}, _mentions_group_by_chat: {}, _human: Date.now() },
+      '.last-delivery.json': { chat_id: '123456789', message_id: '6', party_chat_id: '-1001234567890', party_ambiguous: false, promise_ids: [], promise_due: false, human_chat_id: '123456789', human_user_id: '123456789', at_ms: Date.now() + 60_000 },
     })
     seen.length = 0
     const s = await rpc(ch, { tool: 'reply', args: { text: '好', reply_to: '6' } })
     expect(s.call?.isError ?? false).toBe(false)
     const req = seen.find(x => x.path === '/send')
-    expect(req?.body.chat_id).toBe('-100123')
+    expect(req?.body.chat_id).toBe('-1001234567890')
     expect(req?.body.reply_to).toBeUndefined()
   })
 })
