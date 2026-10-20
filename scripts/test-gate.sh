@@ -48,12 +48,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# 记录仓库根已有的 state.db*，跑完对比，抓出绕过 CLAUDEBOT_DB_PATH 的写入。
+state_db_snapshot() {
+  ( cd "$ROOT" || exit 1
+    for f in state.db*; do
+      [ -e "$f" ] && printf '%s\n' "$f"
+    done )
+}
+STATE_DB_BEFORE="$OUT/state-db-before.txt"
+state_db_snapshot | sort > "$STATE_DB_BEFORE"
+
 # Isolation: never inherit a real HOME, channel dir or dispatcher port.
 export HOME="$OUT/home"
 export TMPDIR="$OUT/tmp"
 export DISPATCHER_PORT=0
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+# 状态库也放进一次性目录：任何测试都不许在仓库根留下 state.db*。
+export CLAUDEBOT_DB_PATH="$OUT/state.db"
 mkdir -p "$HOME" "$TMPDIR"
 unset HUB_CONFIGS_DIR HUB_ENV_FILE HUB_CHANNELS_DIR HUB_TELEGRAM_API_BASE \
       CLAUDE_SETTINGS_PATH CLAUDEBOT_CONFIG_DIR CLAUDEBOTLIFE_TEST_ROOT 2>/dev/null || true
@@ -167,6 +179,17 @@ fi
 # parseable failure line is recorded above as process-exit-<code>, so it cannot
 # slip through as "all baseline".
 if [ -s "$OUT/new-failures.txt" ]; then
+  exit 1
+fi
+
+# 仓库根不许新增 state.db*（CLAUDEBOT_DB_PATH 没接住的写入）
+STATE_DB_AFTER="$OUT/state-db-after.txt"
+state_db_snapshot | sort > "$STATE_DB_AFTER"
+STATE_DB_NEW="$OUT/state-db-new.txt"
+comm -13 "$STATE_DB_BEFORE" "$STATE_DB_AFTER" > "$STATE_DB_NEW"
+if [ -s "$STATE_DB_NEW" ]; then
+  echo "NEW state.db* files in repo root:"
+  sed 's/^/  + /' "$STATE_DB_NEW"
   exit 1
 fi
 exit 0

@@ -11,7 +11,11 @@ import json
 import contextlib
 from datetime import datetime, timezone
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.db")
+# 默认落在仓库根的 state.db；测试/门禁可用 CLAUDEBOT_DB_PATH 指到临时目录，
+# 避免运行产物污染公开仓。
+DB_PATH = os.path.abspath(os.path.expanduser(
+    os.environ.get("CLAUDEBOT_DB_PATH")
+    or os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.db")))
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
