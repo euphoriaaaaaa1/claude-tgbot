@@ -50,14 +50,15 @@ def test_不支持的能力抛501():
     base.require_capability({"capabilities": {"bot.persona": True}}, "bot.persona")
 
 
-def test_占位适配器的meta形状():
+def test_适配器的meta形状():
     from adapters.claude_local import ClaudeLocalAdapter
     from adapters.dsh_http import DshHttpAdapter
 
-    for cls, backend in ((ClaudeLocalAdapter, "claude"), (DshHttpAdapter, "dsh")):
+    for cls, backend, adapter in ((ClaudeLocalAdapter, "claude", "v1"),
+                                  (DshHttpAdapter, "dsh", "placeholder")):
         meta = cls().meta()
         assert meta["backend"] == backend
-        assert meta["adapter"] == "placeholder"
+        assert meta["adapter"] == adapter
         assert isinstance(meta["capabilities"], dict)
         assert set(meta["capabilities"]) == set(base.CAPABILITY_KEYS)
         assert tuple(meta["effort_levels"]) == base.EFFORT_LEVELS
