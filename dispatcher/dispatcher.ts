@@ -13,7 +13,7 @@
 import { Bot, GrammyError, type Context } from 'grammy'
 import type { ReactionTypeEmoji } from 'grammy/types'
 import {
-  readFileSync, writeFileSync, mkdirSync, statSync, renameSync, appendFileSync, existsSync,
+  readFileSync, writeFileSync, mkdirSync, statSync, renameSync, appendFileSync, existsSync, chmodSync,
   readdirSync, rmSync, mkdtempSync, openSync, readSync, closeSync,
 } from 'fs'
 import { spawn } from 'child_process'
@@ -25,6 +25,30 @@ import { winCmdSpawnSpec } from './win_cmd'
 import { buildSendPlan } from './send_plan'
 import { classifySendError, describeSendError } from './send_error'
 import { startProviderWatch } from './provider_watch'
+import { createPromiseRuntime } from './promise_runtime'
+import {
+  makeAsleepProbe, makeBotDisabledCheck, makeInboxRetract, makeSessionScanner, makeStopCheck, markOutbound,
+} from './promise_wire'
+import { makePauseCheck } from './pause_gate'
+import { sanitizePromiseIds } from './promise_plan'
+import { readProviderFpStatus } from './provider_fp'
+import { telegramApiBase, planFileDrops } from './feature_gate'
+import { readFeatures, featureOn, type FeatureFlags } from './features'
+import {
+  deletePhotoState, isValidPhotoChatId, isPhotoExit, nextPhotoRound, nowMsFromEnv, parsePhotoTrigger,
+  photoExpiresAtMs, photoMeta, photoModeRoot, photoStatePath, readPhotoState, triggerPhotoState, writePhotoState,
+} from './photo_mode'
+import {
+  deletePartyState, inboundItemSendersAllOwner, isPartyEndPhrase, isPartyOptOutPrefix, isValidGroupId,
+  newPartyState, normalizePartyChatId, normalizePartyNote, ownerOf, ownerWindowOpen, participatingPartyGroups,
+  partyModeRoot, partyStatePath, partyStateResponse, readPartyState, refreshPartyState, writePartyState,
+  type InboundSenderRecord,
+} from './party_mode'
+import {
+  applyGroupMessage, applyMyChatMember, isoSeconds, minIntervalSecondsFromEnv,
+  readGroupsSeenFile, withGroupsSeenLock, writeGroupsSeenFile, writeJsonAtomic,
+} from './groups_seen'
+import { parseBotCtl } from './botctl'
 import {
   parseRecentTurns, summarizeTurns, runClearSummary, AUTH_FAILED,
   RECEIPT_CLEARED_SKIP, RECEIPT_NO_SUMMARY,
@@ -40,6 +64,13 @@ const CHANNEL_DIR = process.env.CHANNEL_DIR || ''
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || ''
 const DISPATCHER_PORT = Number(process.env.DISPATCHER_PORT || '17801')
 const BOT_NAME = process.env.BOT_NAME || ''
+// Bot API 根的测试接缝：只收回环地址（请求 URL 里带令牌）；未设时照旧走官方地址。
+const TELEGRAM_API_BASE = telegramApiBase(process.env.DISPATCHER_TELEGRAM_API_BASE)
+if (!TELEGRAM_API_BASE.ok) {
+  process.stderr.write('dispatcher: DISPATCHER_TELEGRAM_API_BASE 不合规（只收 http://127.0.0.1:<端口>），拒绝启动\n')
+  process.exit(1)
+}
+const TELEGRAM_FILE_ROOT = TELEGRAM_API_BASE.apiRoot ?? 'https://api.telegram.org'
 
 // ─── peer dispatchers (for bot-to-bot cross-inject; groups only) ─────
 type PeerConfig = { name: string; url: string; username: string }
@@ -145,8 +176,124 @@ function loadAccess(): Access {
   }
 }
 
-const bot = new Bot(TOKEN)
+// ─── 功能开关 ─────────────────────────────────────────────────────────
+// 开关存在 <CHANNEL_DIR>/features.json，唯一写者是 Python 侧 bot_features；这里只读、
+// 用到时现读（readFeatures 按修改时间缓存），改完下一条消息生效，不用重启调度器。
+// 读不出按八项全关；这种情况每小时最多记一行日志，免得每条消息都刷一遍。
+const FEATURES_UNREADABLE_LOG_MS = 3600_000
+let featuresUnreadableLoggedAt = -Infinity
+function botFeatures(): FeatureFlags {
+  const r = readFeatures(CHANNEL_DIR)
+  if (!r.readable) {
+    const now = Date.now()
+    if (now - featuresUnreadableLoggedAt >= FEATURES_UNREADABLE_LOG_MS) {
+      featuresUnreadableLoggedAt = now
+      process.stderr.write(`dispatcher[${BOT_NAME}]: features_unreadable 读不出 features.json，功能开关按全关处理\n`)
+    }
+  }
+  return r.features
+}
+// 发往群而群聊关着（/send）、群聊关着时调 /add_group_alias：同一个 409 正文
+const GROUP_FEATURE_OFF_BODY = { ok: false, code: 'feature_off', message: '群聊功能关着' }
+// /send 出口兜底的两个目录：生图目录与表情库图片根
+const IMAGE_OUTPUT_DIR = join(homedir(), 'resource', 'media', BOT_NAME)
+function stickerImageRoot(): string {
+  const raw = process.env.STICKERS_DIR || '~/resource/stickers'
+  return raw === '~' || raw.startsWith('~/') ? join(homedir(), raw.slice(1)) : raw
+}
+
+// ─── party-camera：状态目录与 owner 观测 ─────────────────────────────
+// 拍照按 bot/chat 独立；聚会是群级共享（文件名不含 bot）。
+const PHOTO_MODE_DIR = photoModeRoot(CHANNEL_DIR)
+const PARTY_MODE_DIR = partyModeRoot()
+// owner 判定只认 dispatcher 亲见的群消息（不信任 worker 自报）：预筛后记录本群最后一条
+// 真人消息发送者与 owner 最近发言时刻；/party 要求两者都在 10 分钟窗口内。
+const OWNER_GROUP_WINDOW_MS = 10 * 60_000
+const lastHumanSenderId = new Map<string, string>()
+const lastOwnerGroupMsgAtMs = new Map<string, number>()
+// 已路由真人入站件 `${chatId}|${messageId}` → 发送者；/party 必须绑定当前投递件的 message_id。
+const inboundHumanSenders = new Map<string, InboundSenderRecord>()
+function rememberInboundHumanSender(chatId: string, messageId: string, senderId: string, atMs: number): void {
+  inboundHumanSenders.set(`${chatId}|${messageId}`, { senderId, atMs })
+  if (inboundHumanSenders.size > 500) {
+    for (const [k, v] of inboundHumanSenders) if (atMs - v.atMs > OWNER_GROUP_WINDOW_MS) inboundHumanSenders.delete(k)
+  }
+}
+
+// ─── 刚发现的群与 .telegram-me.json ───────────────────────────────────
+// 两条记录路径（my_chat_member 与陌生群消息）都不看 groups 开关。
+const GROUPS_SEEN_FILE = join(CHANNEL_DIR, 'groups-seen.json')
+const TELEGRAM_ME_FILE = join(CHANNEL_DIR, '.telegram-me.json')
+
+function logGroupsSeenError(what: string, e: unknown): void {
+  process.stderr.write(`dispatcher[${BOT_NAME}]: groups_seen ${what}: ${e instanceof Error ? e.message : String(e)}\n`)
+}
+
+/** 群消息发现：陌生群建一条；已有记录只更新 title/last_seen（限频由 applyGroupMessage 判）。 */
+function recordSeenGroupMessage(chat: { id: number | string; title?: string; type?: string }, createIfMissing: boolean): void {
+  const interval = minIntervalSecondsFromEnv(process.env.DISPATCHER_GROUPS_SEEN_MIN_INTERVAL_S)
+  try {
+    withGroupsSeenLock(GROUPS_SEEN_FILE, () => {
+      const { doc, error } = readGroupsSeenFile(GROUPS_SEEN_FILE)
+      if (error) logGroupsSeenError('读不出，按空记录处理', error)
+      const changed = applyGroupMessage(doc, { chatId: String(chat.id), title: chat.title, type: chat.type },
+        Date.now(), interval, createIfMissing)
+      if (changed) writeGroupsSeenFile(GROUPS_SEEN_FILE, doc)
+    })
+  } catch (e) {
+    logGroupsSeenError('写入失败', e)
+  }
+}
+
+/** my_chat_member：身份变化不受限频；added_by_owner 以私聊白名单为准。 */
+function recordMyChatMember(ctx: Context): void {
+  const upd = ctx.myChatMember
+  const chat = upd?.chat as { id: number; type?: string; title?: string; migrate_to_chat_id?: number } | undefined
+  if (!chat || (!chat.migrate_to_chat_id && chat.type !== 'group' && chat.type !== 'supergroup')) return
+  try {
+    withGroupsSeenLock(GROUPS_SEEN_FILE, () => {
+      const { doc, error } = readGroupsSeenFile(GROUPS_SEEN_FILE)
+      if (error) logGroupsSeenError('读不出，按空记录处理', error)
+      applyMyChatMember(doc, {
+        chatId: String(chat.id),
+        title: chat.title,
+        type: chat.type,
+        status: upd!.new_chat_member?.status,
+        actorId: upd!.from?.id,
+        ownerIds: loadAccess().allowFrom.map(String),
+        migrateTo: chat.migrate_to_chat_id,
+      }, Date.now())
+      writeGroupsSeenFile(GROUPS_SEEN_FILE, doc)
+    })
+  } catch (e) {
+    logGroupsSeenError('写入失败', e)
+  }
+}
+
+/** .telegram-me.json：只写这四个值与时间，不含令牌；写失败只记一行。 */
+function writeTelegramMe(info: { id: number; username?: string; can_join_groups?: boolean; can_read_all_group_messages?: boolean }): void {
+  try {
+    writeJsonAtomic(TELEGRAM_ME_FILE, {
+      username: typeof info.username === 'string' ? info.username : null,
+      id: info.id,
+      can_read_all: typeof info.can_read_all_group_messages === 'boolean' ? info.can_read_all_group_messages : null,
+      can_join_groups: typeof info.can_join_groups === 'boolean' ? info.can_join_groups : null,
+      at: isoSeconds(),
+    })
+  } catch (e) {
+    process.stderr.write(`dispatcher[${BOT_NAME}]: telegram_me_write_failed: ${e instanceof Error ? e.message : String(e)}\n`)
+  }
+}
+
+const bot = TELEGRAM_API_BASE.apiRoot ? new Bot(TOKEN, { client: { apiRoot: TELEGRAM_API_BASE.apiRoot } }) : new Bot(TOKEN)
 let botUsername = ''
+// 应用层健康信号：最近一次 getUpdates 成功的时间戳（/health 以秒暴露）。
+let lastPollOk = Date.now()
+bot.api.config.use((prev, method, payload, signal) =>
+  prev(method, payload, signal).then(res => {
+    if (method === 'getUpdates') lastPollOk = Date.now()
+    return res
+  }))
 
 // ─── gate / mention / group router (ported verbatim) ─────────────────
 function isMentioned(ctx: Context, extraPatterns?: string[]): boolean {
@@ -284,6 +431,8 @@ function gate(ctx: Context): GateResult {
     return { action: 'drop' }
   }
   if (chatType === 'group' || chatType === 'supergroup') {
+    // 这只 bot 的群聊关着 → 群消息一律不收（access.json 的 groups 原样留着，打开就恢复）
+    if (!featureOn(botFeatures(), 'groups')) return { action: 'drop' }
     const groupId = String(ctx.chat!.id)
     // 导演模式：开关开 → 群消息全 drop（bot 不自己判断该不该回，只被 director.py 注入的 [director]
     // inbox 驱动）。真人消息已在 gate 之前 writeGroupTranscript（供导演读），故 drop 不丢事件。
@@ -392,7 +541,7 @@ async function downloadTelegramFile(fileId: string): Promise<Buffer | undefined>
   try {
     const file = await bot.api.getFile(fileId)
     if (!file.file_path) return undefined
-    const url = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`
+    const url = `${TELEGRAM_FILE_ROOT}/file/bot${TOKEN}/${file.file_path}`
     const res = await fetchWithTimeout(url, {}, VOICE_TIMEOUT_MS)
     if (!res.ok) return undefined
     return Buffer.from(await res.arrayBuffer())
@@ -406,7 +555,7 @@ async function downloadToMedia(fileId: string, chatType: string | undefined): Pr
   try {
     const file = await bot.api.getFile(fileId)
     if (!file.file_path) return undefined
-    const url = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`
+    const url = `${TELEGRAM_FILE_ROOT}/file/bot${TOKEN}/${file.file_path}`
     let res: Response
     try {
       res = await fetchWithTimeout(url, {}, DOWNLOAD_TIMEOUT_MS)   // H-14：下载有上界
@@ -495,13 +644,19 @@ if (HANG_ON) {
       log: line => process.stderr.write(`dispatcher[${BOT_NAME}]: ${line}\n`),
     })
   }
-  setInterval(() => { hangGuard('tick', hang.tick); hangGuard('sweep', sweepInbox) }, HANG_TICK_MS)
+  // 被晾追问归「生活作息」，关着时 tick 不跑（出站那头同样不武装）
+  setInterval(() => {
+    if (featureOn(botFeatures(), 'life')) hangGuard('tick', hang.tick)
+    hangGuard('sweep', sweepInbox)
+  }, HANG_TICK_MS)
 }
 
 // ─── group transcript (post-gate) ─────────────────────────────────────
 function writeGroupTranscript(ctx: Context, text: string, imagePath?: string, attachment?: { kind: string; file_id: string }): void {
   const chatType = ctx.chat?.type
   if (chatType !== 'group' && chatType !== 'supergroup') return
+  // 这只 bot 的群聊关着 → 它的调度器不写任何群记录
+  if (!featureOn(botFeatures(), 'groups')) return
   try {
     // 跨 bot 去重：同群的 N 个 dispatcher 进程都会收到同一条消息，若各写一行，director
     // 会看到同一句话 ×N → 误判热度爆表 → 连续指派多个 bot 全部回复（实测 bug）。
@@ -574,6 +729,9 @@ const RECEIPT_TIMEOUT_MS = 10_000
 // H-12：等旧 worker exit 事件的上限；超时强制放行门禁并照常移会话文件（记 wm_clear_exit_timeout）
 const CLEAR_EXIT_TIMEOUT_MS = 10_000
 let clearInProgress = false
+// 清理进行中压下没拉的 worker（消息照常进 inbox）：杀 worker 到移走会话文件之间拉起，
+// 会 --resume 那份旧会话，清了等于没清。
+let clearDeferredSpawn = ''
 
 function readTailFile(path: string, maxBytes: number): string {
   let fd = -1
@@ -775,6 +933,92 @@ async function slashBridgeIfApplicable(ctx: Context, text: string): Promise<bool
 // ─── inbound handler ──────────────────────────────────────────────────
 type AttachmentMeta = { kind: string; file_id: string; size?: number; mime?: string; name?: string }
 
+// ─── party-camera：入站判定（gate 之后、写 inbox 之前）──────────────────
+// 只按 meta 给 worker 打标；日志只记聊天号/轮次/原因码，绝不带用户正文。
+function logPhotoStateProblem(chatId: string, status: 'unreadable' | 'clock_skew' | 'expired'): void {
+  const reason = status === 'clock_skew' ? 'state_clock_skew'
+    : status === 'expired' ? 'photo_state_expired' : 'photo_state_unreadable'
+  process.stderr.write(`dispatcher[${BOT_NAME}]: ${reason} kind=photo chat=${chatId}\n`)
+}
+
+/** 聚会状态不可用：不可读/时钟回拨/过期各记固定原因码，只带聊天号。 */
+function logPartyStateProblem(chatId: string, status: string): void {
+  const reason = status === 'clock_skew' ? 'state_clock_skew'
+    : status === 'expired' ? 'party_state_expired'
+    : status === 'unreadable' ? 'party_state_unreadable' : ''
+  if (reason !== '') process.stderr.write(`dispatcher[${BOT_NAME}]: ${reason} kind=party chat=${chatId}\n`)
+}
+
+/** 拍照：image 关 → 删状态；退出 → photo_mode_off；触发 → 建/重置状态；否则读状态给 active。 */
+function inboundPhotoMeta(chatId: string, messageId: string, text: string, nowMs: number): Record<string, unknown> | null {
+  if (!isValidPhotoChatId(chatId)) return null
+  const path = photoStatePath(PHOTO_MODE_DIR, BOT_NAME, chatId)
+  if (!featureOn(botFeatures(), 'image')) {
+    if (existsSync(path)) {
+      deletePhotoState(path)
+      process.stderr.write(`dispatcher[${BOT_NAME}]: photo_feature_off chat=${chatId}\n`)
+    }
+    return null
+  }
+  if (isPhotoExit(text)) {
+    deletePhotoState(path)
+    return { photo_mode_off: true }
+  }
+  if (parsePhotoTrigger(text)) {
+    const current = readPhotoState(path, nowMs)
+    // 同一 trigger_message_id 重复到达：不重置轮次与开启时刻
+    if (current.status === 'ok' && current.state && messageId !== '' && current.state.trigger_message_id === messageId) {
+      return { photo_mode: photoMeta(current.state) }
+    }
+    const state = triggerPhotoState(chatId, messageId, nowMs)
+    if (!writePhotoState(path, state)) {
+      process.stderr.write(`dispatcher[${BOT_NAME}]: photo_state_write_failed chat=${chatId}\n`)
+      return null
+    }
+    return { photo_mode: photoMeta(state) }
+  }
+  const current = readPhotoState(path, nowMs)
+  if (current.status === 'ok' && current.state) return { photo_mode: photoMeta(current.state) }
+  if (current.status !== 'missing') {
+    logPhotoStateProblem(chatId, current.status)
+    deletePhotoState(path)
+  }
+  return null
+}
+
+/** 聚会改投：只对 owner 私聊；逃生口前缀只打 party_opt_out；多个有效群 → party_ambiguous。 */
+function inboundPartyMeta(chatId: string, text: string, nowMs: number, access: Access): Record<string, unknown> | null {
+  const owner = ownerOf(access)
+  if (owner === '' || chatId !== owner) return null
+  if (!featureOn(botFeatures(), 'groups')) return null
+  if (isPartyOptOutPrefix(text)) return { party_opt_out: true }
+  const found = participatingPartyGroups({
+    partyRoot: PARTY_MODE_DIR, accessGroups: access.groups, botName: BOT_NAME,
+    owner, groupsFeatureOn: true, nowMs,
+  })
+  for (const bad of found.invalid) {
+    logPartyStateProblem(bad.chat_id, bad.status)
+    deletePartyState(partyStatePath(PARTY_MODE_DIR, bad.chat_id))
+  }
+  if (found.invalidNames.length > 0) {
+    process.stderr.write(`dispatcher[${BOT_NAME}]: party_state_invalid_name kind=party count=${found.invalidNames.length}\n`)
+  }
+  if (isPartyEndPhrase(text)) {
+    if (found.groups.length === 1) {
+      const g = found.groups[0]!
+      if (deletePartyState(partyStatePath(PARTY_MODE_DIR, g.chat_id))) {
+        process.stderr.write(`dispatcher[${BOT_NAME}]: party_off chat=${g.chat_id} reason=phrase_private\n`)
+      }
+    }
+    return null
+  }
+  if (found.groups.length === 0) return null
+  if (found.groups.length > 1) return { party_ambiguous: true }
+  const g = found.groups[0]!
+  process.stderr.write(`dispatcher[${BOT_NAME}]: cross_chat_party src=${chatId} dst=${g.chat_id}\n`)
+  return { party_chat_id: g.chat_id, party_source: g.state.source }
+}
+
 async function handleInbound(
   ctx: Context,
   text: string,
@@ -783,6 +1027,8 @@ async function handleInbound(
   voiceText?: string,
   options?: { synthetic?: boolean },
 ): Promise<void> {
+  // party-camera：触发/退出/结束短语一律用入站原文匹配；系统附加提示不进匹配。
+  const originalText = text
   const chatType = ctx.chat?.type
   const isGroup = chatType === 'group' || chatType === 'supergroup'
   const isBotSender = ctx.from?.is_bot === true
@@ -812,6 +1058,9 @@ async function handleInbound(
   if (isGroup && groupChatId) {
     const preAccess = loadAccess()
     const prePolicy = preAccess.groups[groupChatId]
+    // 发现记录：陌生群建一条（added_by_owner=null），已有记录只更新 title/last_seen。
+    // 不看 groups 开关，也不管后面这条消息会不会被路由。
+    recordSeenGroupMessage({ id: ctx.chat!.id, title: ctx.chat!.title, type: ctx.chat!.type }, !prePolicy)
     if (!prePolicy) return
     const preAllowFrom = prePolicy.allowFrom ?? []
     const preFromUsername = ctx.from?.username ? `@${ctx.from.username}` : ''
@@ -819,6 +1068,20 @@ async function handleInbound(
       (prePolicy.otherBotUsernames ?? []).some(u => u.toLowerCase() === preFromUsername.toLowerCase())
     if (!preIsOtherBot && preAllowFrom.length > 0 &&
         !preAllowFrom.includes(String(ctx.from?.id ?? ''))) return
+    // party-camera：过 allowlist 预筛后记录本群最后一条真人消息发送者与 owner 最近发言时刻。
+    if (!isBotSender && !options?.synthetic) {
+      const senderId = String(ctx.from?.id ?? '')
+      lastHumanSenderId.set(groupChatId, senderId)
+      const preOwner = ownerOf(preAccess)
+      if (preOwner !== '' && senderId === preOwner) lastOwnerGroupMsgAtMs.set(groupChatId, nowMsFromEnv())
+    }
+  }
+
+  // 群聊关着：群消息过了白名单预筛就到此为止——不加 👀、不执行群命令、不写收件与群记录、
+  // 不拉起。放在 /clearall 之前，避免关着也走完整个清理流程。
+  if (isGroup && !featureOn(botFeatures(), 'groups')) {
+    process.stderr.write(`dispatcher[${BOT_NAME}]: group_feature_off 群聊功能关着，群消息不往下处理 chat=${groupChatId}\n`)
+    return
   }
 
   // 1a. 清空类命令（/clear、/clearall、别名、@后缀）统一鉴权（H-13）。
@@ -901,10 +1164,30 @@ async function handleInbound(
     }
   }
 
+  // party-camera：群内 owner 的整句结束短语在 gate 前处理——导演模式下群消息会被 gate 全 drop，
+  // 也仍要能结束聚会。只认 owner；删除幂等。
+  if (isGroup && groupChatId && isValidGroupId(groupChatId) && !isBotSender && !options?.synthetic && isPartyEndPhrase(originalText)) {
+    const endOwner = ownerOf(loadAccess())
+    if (endOwner !== '' && String(ctx.from?.id ?? '') === endOwner) {
+      const path = partyStatePath(PARTY_MODE_DIR, groupChatId)
+      const had = existsSync(path)
+      if (!deletePartyState(path)) {
+        process.stderr.write(`dispatcher[${BOT_NAME}]: party_off_failed chat=${groupChatId} reason=phrase\n`)
+      } else if (had) {
+        process.stderr.write(`dispatcher[${BOT_NAME}]: party_off chat=${groupChatId} reason=phrase\n`)
+      }
+    }
+  }
+
   // 3. Gate
   const result = gate(ctx)
   if (result.action === 'drop') { process.stderr.write(`dispatcher[${BOT_NAME}]: gate DROP chat=${ctx.chat?.id} from=${ctx.from?.id}\n`); return }
   const access = result.access
+
+  // party-camera 安全：记录已路由的真人入站件（chat|message_id → 发送者），供 /party 绑定校验。
+  if (isGroup && groupChatId && !isBotSender && !options?.synthetic && ctx.message?.message_id != null) {
+    rememberInboundHumanSender(groupChatId, String(ctx.message.message_id), String(ctx.from!.id), nowMsFromEnv())
+  }
 
   // 4. Bot-sender budget check (after alias filter in gate, before routing)
   //    transcript 已在步骤 2（gate 之前）落盘，这里只决定"要不要路由给本 worker"。
@@ -936,8 +1219,9 @@ async function handleInbound(
 
   const imagePath = typeof imageSource === 'function' ? await imageSource() : imageSource
 
-  // ensure worker
-  ensureWorkerRunning(chatId)
+  // ensure worker。/clear、/clearall 进行中不拉起（见 clearDeferredSpawn），消息照常写 inbox。
+  if (clearInProgress) clearDeferredSpawn = chatId
+  else ensureWorkerRunning(chatId)
 
   const meta: Record<string, unknown> = {
     chat_id: chatId,
@@ -965,6 +1249,13 @@ async function handleInbound(
   }
   // crossmem 已作废：unified session 天然跨场景（群+私聊同一会话、记忆相通），
   // 不再需要把"另一个场景"的尾巴当背景注入。此处不做任何注入。
+  // party-camera：只在「已过 gate 的真人、非合成、非斜杠」上判定；入站只决定是否处于拍照
+  // 模式（不增加轮次）；轮次由投递时的 /photo_round 增加。
+  if (!meta.is_bot_sender && !options?.synthetic && !originalText.trim().startsWith('/')) {
+    const nowMs = nowMsFromEnv()
+    Object.assign(meta, inboundPhotoMeta(chatId, msgId != null ? String(msgId) : '', originalText, nowMs) ?? {})
+    if (!isGroup) Object.assign(meta, inboundPartyMeta(chatId, originalText, nowMs, access) ?? {})
+  }
   const inboxKey = msgId != null ? String(msgId) : `t${Date.now()}-${++__inboxFallbackSeq}`
   writeInbox(chatId, inboxKey, meta)
   process.stderr.write(`dispatcher[${BOT_NAME}]: routed chat=${chatId} inboxKey=${inboxKey} synthetic=${!!options?.synthetic}\n`)
@@ -992,6 +1283,7 @@ function safeName(s: string | undefined): string | undefined {
 }
 
 // ─── grammY handlers ──────────────────────────────────────────────────
+bot.on('my_chat_member', ctx => recordMyChatMember(ctx))
 bot.on('message:text', ctx => handleInbound(ctx, ctx.message.text))
 bot.on('message:photo', ctx => {
   const caption = ctx.message.caption ?? '(photo)'
@@ -1010,6 +1302,12 @@ bot.on('message:document', ctx => {
 bot.on('message:voice', async ctx => {
   const voice = ctx.message.voice
   const chatId = String(ctx.chat!.id)
+  // 群聊关着：群里来的语音不下载、不转写，原样交给 handleInbound 走群开关那一步。
+  const voiceChatType = ctx.chat?.type
+  if ((voiceChatType === 'group' || voiceChatType === 'supergroup') && !featureOn(botFeatures(), 'groups')) {
+    return handleInbound(ctx, ctx.message.caption ?? '(voice message)', undefined,
+      { kind: 'voice', file_id: voice.file_id, size: voice.file_size, mime: voice.mime_type })
+  }
   // H-14：先过白名单再转写 —— 非白名单直接跳过，绝不调转写服务、绝不上送令牌。
   if (!inboundSenderAllowed(ctx)) {
     process.stderr.write(`dispatcher[${BOT_NAME}]: voice_skipped reason=not_allowed chat=${chatId}\n`)
@@ -1167,7 +1465,7 @@ async function sendFileBuffered(
   parts.push(Buffer.from(`--${boundary}${CRLF}Content-Disposition: form-data; name="${field}"; filename="${basename(filePath)}"${CRLF}Content-Type: application/octet-stream${CRLF}${CRLF}`))
   parts.push(data)
   parts.push(Buffer.from(`${CRLF}--${boundary}--${CRLF}`))
-  const r = await fetch(`https://api.telegram.org/bot${TOKEN}/${method}`, {
+  const r = await fetch(`${TELEGRAM_FILE_ROOT}/bot${TOKEN}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
     body: Buffer.concat(parts),
@@ -1275,6 +1573,20 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
       const body = await req.json() as any
 
       if (url.pathname === '/send') {
+        // 入口校验：请求体不是普通对象 / chat_id 不合法 → 400 bad_request
+        const badRequest = (detail: 'body' | 'chat_id') =>
+          Response.json({ ok: false, error: 'bad_request', detail, message_ids: [], parts: [] }, { status: 400 })
+        if (!body || typeof body !== 'object' || Array.isArray(body)) return badRequest('body')
+        const chatIdOk = (typeof body.chat_id === 'string' && body.chat_id.length > 0) ||
+          (typeof body.chat_id === 'number' && Number.isFinite(body.chat_id))
+        if (!chatIdOk) return badRequest('chat_id')
+        const chatId = String(body.chat_id)
+        // 这一条按同一份开关判（现读一次），发往群而群聊关着 → 整条不发
+        const feats = botFeatures()
+        if (chatId.startsWith('-') && !featureOn(feats, 'groups')) {
+          process.stderr.write(`dispatcher[${BOT_NAME}]: group_feature_off /send chat=${chatId} 群聊功能关着，整条不发\n`)
+          return Response.json(GROUP_FEATURE_OFF_BODY, { status: 409 })
+        }
         // H-16 幂等：带 batch_id 且命中台账 → 直接回放首次结果（逐字），零发送。
         const batchId = typeof body.batch_id === 'string' && body.batch_id ? body.batch_id : undefined
         if (batchId) {
@@ -1282,7 +1594,6 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
           if (hit) return new Response(hit.text, { status: hit.status, headers: { 'content-type': 'application/json' } })
         }
         const deadline = now() + SEND_TOTAL_BUDGET_MS   // H-17：整条请求耗时上界
-        const chatId = String(body.chat_id)
         const text = String(body.text ?? '')
         const replyToNum = body.reply_to != null ? Number(body.reply_to) : undefined
         const replyTo = (replyToNum != null && Number.isFinite(replyToNum)) ? replyToNum : undefined
@@ -1292,15 +1603,30 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
           try { const p = JSON.parse(body.files); if (Array.isArray(p)) files = p }
           catch { files = [body.files] }
         }
-        const asVoice = body.as_voice === true || body.as_voice === 'true'
+        // 出口兜底：落在生图目录、表情库图片根目录下而对应功能关着的文件不发，其余照发。
+        // 只按下标跳过、不改 files（[[图N]] 按下标对应）；回应正文带上没发的文件名。
+        const fileDrops = planFileDrops(files, { image: IMAGE_OUTPUT_DIR, stickers: stickerImageRoot() },
+          { image: featureOn(feats, 'image'), stickers: featureOn(feats, 'stickers') })
+        if (fileDrops.counts.image > 0) process.stderr.write(`dispatcher[${BOT_NAME}]: image_feature_off 生图功能关着，${fileDrops.counts.image} 个文件不发\n`)
+        if (fileDrops.counts.stickers > 0) process.stderr.write(`dispatcher[${BOT_NAME}]: sticker_feature_off 表情包功能关着，${fileDrops.counts.stickers} 个文件不发\n`)
+        // 只表示请求要求发语音；这次真发不发还要看语音开关
+        const wantVoice = body.as_voice === true || body.as_voice === 'true'
+        const voiceFeatureOn = featureOn(feats, 'voice')
+        const voiceDropped = wantVoice && !voiceFeatureOn
+        if (voiceDropped) process.stderr.write(`dispatcher[${BOT_NAME}]: voice_feature_off 语音功能关着，只发文字\n`)
+        const featureNotes: Record<string, unknown> = {}
+        if (voiceDropped) featureNotes.voice_dropped = 'feature_off'
+        if (fileDrops.names.length > 0) Object.assign(featureNotes, { dropped_files: fileDrops.names, dropped_reason: 'feature_off' })
+        const asVoice = wantVoice && voiceFeatureOn
         const voiceEmotion = body.voice_emotion != null ? String(body.voice_emotion) : 'NEUTRAL'
         const voiceInstruct = body.voice_instruct != null ? String(body.voice_instruct) : ''
-        // 如果 worker 没传 voice_text 但 as_voice=true，自动从 text 剥掉 @username 作为
+        // 如果 worker 没传 voice_text 但要求发语音，自动从 text 剥掉 @username 作为
         // TTS 源（气泡 text 保留 @ 才能触发对方 bot；语音不念 @xxx_bot 才自然）
         const stripMentions = (s: string) => s.replace(/@[A-Za-z0-9_]+/g, '').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+\n/g, '\n').trim()
         const voiceTextRaw = body.voice_text != null
           ? String(body.voice_text)
-          : ((body.as_voice === true || body.as_voice === 'true') ? stripMentions(String(body.text ?? '')) : '')
+          : (wantVoice ? stripMentions(String(body.text ?? '')) : '')
+        const promiseIds = sanitizePromiseIds(body.promise_ids)
         const access = loadAccess()
         const limit = Math.max(1, Math.min(access.textChunkLimit ?? MAX_CHUNK_LIMIT, MAX_CHUNK_LIMIT))
         const mode = access.chunkMode ?? 'length'
@@ -1319,7 +1645,7 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
             for (const p of paragraphs) for (const c of chunkText(p, limit, mode)) items.push({ kind: 'text', chunk: c })
           } else {
             const f = files[it.index]
-            if (f) items.push({ kind: 'file', path: f })
+            if (f && !fileDrops.dropped.has(it.index)) items.push({ kind: 'file', path: f })
           }
         }
         const voiceChunks: string[] = asVoice && voiceTextRaw
@@ -1434,8 +1760,11 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
             raced = await raceBudget(doText(item.chunk, i, shouldReplyTo), deadline - now())
           }
           if (raced.timedOut) { dropped.push({ index: n, reason: 'timeout' }); continue }
-          if (raced.v.ok) { sent++; sentIds.push(...raced.v.ids) }
-          else dropped.push({ index: n, reason: raced.v.reason || 'network' })
+          if (raced.v.ok) {
+            // 出站事实源：第一段成功送出时绑定本轮消费的承诺件（只写一次出站时刻）
+            if (sent === 0 && promiseIds.length > 0) markOutbound(CHANNEL_DIR, chatId, promiseIds)
+            sent++; sentIds.push(...raced.v.ids)
+          } else dropped.push({ index: n, reason: raced.v.reason || 'network' })
         }
         // （旧的"图片统一压尾"循环已并入上方计划循环：无标记时行为不变，仍是压尾）
         // Peer inject (groups only; fire-and-forget). Bypass Telegram's
@@ -1476,14 +1805,14 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
               `dispatcher[${BOT_NAME}]: peer inject ${peer.name} failed: ${e}\n`))
           }
         }
-        // 被晾感知：只有私聊、且真发出去了才武装（群聊不算被晾；一条没发成就没有"等回音"）
-        if (HANG_ON && sentIds.length > 0 && !String(chatId).startsWith('-')) {
+        // 被晾感知：只有私聊、且真发出去了才武装；生活作息功能关着就不武装
+        if (HANG_ON && sentIds.length > 0 && !String(chatId).startsWith('-') && featureOn(feats, 'life')) {
           hangGuard('arm', () => hang.onOutbound(String(chatId)))
         }
         // H-16/H-17：恒含 planned/sent/dropped/idempotent；部分送达=2xx，全丢=502。
         const planned = items.length
         const status = (sent === 0 && planned > 0) ? 502 : 200
-        const respText = JSON.stringify({ ok: sent > 0, planned, sent, dropped, idempotent: !!batchId, message_ids: sentIds, ts: now() })
+        const respText = JSON.stringify({ ok: sent > 0, planned, sent, dropped, idempotent: !!batchId, message_ids: sentIds, ts: now(), ...featureNotes })
         if (batchId) ledgerStore(ledger, batchId, status, respText, now())
         return new Response(respText, { status, headers: { 'content-type': 'application/json' } })
       }
@@ -1509,6 +1838,11 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
       }
 
       if (url.pathname === '/add_group_alias') {
+        // 群聊关着 → 409，access.json 一个字节不动
+        if (!featureOn(botFeatures(), 'groups')) {
+          process.stderr.write(`dispatcher[${BOT_NAME}]: group_feature_off /add_group_alias 群聊功能关着，不改 access.json\n`)
+          return Response.json(GROUP_FEATURE_OFF_BODY, { status: 409 })
+        }
         const groupId = String(body.group_id)
         const aliasRaw = String(body.alias ?? '').trim()
         const kind = String(body.kind)
@@ -1609,9 +1943,12 @@ void (async () => {
   for (let attempt = 1; ; attempt++) {
     try {
       await bot.start({
+        // 显式声明收哪些更新：不传会沿用同一账号上的既有设置，拿不到 my_chat_member 就发现不了被拉进的群。
+        allowed_updates: ['message', 'my_chat_member'],
         onStart: info => {
           botUsername = info.username
           sourceBotUserId = info.id
+          writeTelegramMe(info)
           process.stderr.write(`dispatcher[${BOT_NAME}]: polling as @${info.username} (id=${info.id}, peers=${PEERS.length})\n`)
           // Peer config 自检：每个 peer 的 @username 必须在至少一个 group 的 otherBotUsernames 里，
           // 否则该 peer 发来的 /peer_inbound 会被 prefilter 静默 drop。
