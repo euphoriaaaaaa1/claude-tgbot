@@ -5,8 +5,8 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import {
   CLOCK_SKEW_MS, PHOTO_DELIVERY_KEY_MAX, PHOTO_TTL_MS, deletePhotoState, isPhotoExit,
-  nextPhotoRound, normalizePhotoDeliveryKey, parsePhotoStateText, parsePhotoTrigger, photoDeliveryKeyFromMeta,
-  photoExpiresAtMs, photoMeta, photoModeRoot, photoStatePath, readPhotoState, stripWrappingParens,
+  nextPhotoRound, normalizePhotoDeliveryKey, parsePhotoStateText, parsePhotoTrigger, photoBotDir,
+  photoDeliveryKeyFromMeta, photoExpiresAtMs, photoMeta, photoModeRoot, photoStatePath, readPhotoState, stripWrappingParens,
   topLevelBracketContents, triggerPhotoState, writePhotoState,
 } from './photo_mode'
 
@@ -104,6 +104,27 @@ describe('状态文件', () => {
   test('photoModeRoot 覆盖与默认', () => {
     expect(photoModeRoot('/c', { DISPATCHER_PHOTO_MODE_DIR: '/tmp/p' })).toBe('/tmp/p')
     expect(photoModeRoot('/c', { DISPATCHER_PHOTO_MODE_DIR: 'relative' })).toBe('/c/.photo-mode')
+  })
+})
+
+describe('路径校验（防穿越）', () => {
+  test('合法 bot 名与群号正常拼路径', () => {
+    expect(photoBotDir('/r', 'bot_1')).toBe('/r/bot_1')
+    expect(photoStatePath('/r', 'bot-1', '-100')).toBe('/r/bot-1/-100.json')
+    expect(photoStatePath('/r', 'bot', '123')).toBe('/r/bot/123.json')
+  })
+
+  test('非法 botName 抛错', () => {
+    for (const b of ['../evil', 'a/b', 'a b', '', '.', '..', 'x'.repeat(65), '名字']) {
+      expect(() => photoBotDir('/r', b)).toThrow()
+      expect(() => photoStatePath('/r', b, '-100')).toThrow()
+    }
+  })
+
+  test('非法 chatId 抛错', () => {
+    for (const c of ['../evil', '/', '', '0', '-01', 'abc', '-1/2', '1e3']) {
+      expect(() => photoStatePath('/r', 'bot', c)).toThrow()
+    }
   })
 })
 
