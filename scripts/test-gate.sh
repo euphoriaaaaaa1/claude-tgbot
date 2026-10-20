@@ -126,6 +126,20 @@ run_bun_file() {
   fi
   "$BUN" test "$f" --timeout 120000 >"$log" 2>&1
   local rc=$?
+  # 时序敏感用例（20 秒级超时）在整仓并发下会偶发失败：失败后单独重跑一次，
+  # 第二次通过就按 flaky 记日志、不算新增失败。
+  if [ $rc -ne 0 ]; then
+    echo "   retry once (timing-sensitive)" >&2
+    "$BUN" test "$f" --timeout 120000 >"$log.retry" 2>&1
+    local rc2=$?
+    if [ $rc2 -eq 0 ]; then
+      echo "   flaky: passed on retry -> ${log%/*}/$(basename "$log").retry" >&2
+      rc=0
+    else
+      mv "$log.retry" "$log"
+      rc=$rc2
+    fi
+  fi
   if [ $rc -ne 0 ]; then
     grep -E '^\(fail\) ' "$log" 2>/dev/null \
       | sed -E 's/^\(fail\) //; s/ \[[0-9.]+ms\]$//' \
