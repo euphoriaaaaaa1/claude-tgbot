@@ -4,9 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>NovelAI 画风预设</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<!-- 公开版不引用站外字体，使用本机字体栈回退。 -->
 <style>
 :root {
   --bg:           #ededed;
@@ -36,8 +34,12 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
 .topbar { position:sticky; top:0; z-index:10; background:var(--bg);
   border-bottom:1px solid var(--hairline);
   padding:16px 20px; display:flex; align-items:center; justify-content:space-between;
+  flex-wrap:wrap; gap:8px 12px;
   max-width:900px; margin:0 auto; }
 .topbar h1 { font-size:18px; font-weight:600; }
+/* 顶栏右侧工具栏：内联只设了 display/gap/align-items，这里补 flex-wrap，
+   手机窄屏时各控件换行而不是把整页撑出横向滚动。 */
+.topbar-actions { flex-wrap:wrap; }
 .btn { border:none; border-radius:8px; padding:8px 16px; font-size:14px;
   cursor:pointer; font-family:var(--font-body); transition:opacity .15s; }
 .btn:hover { opacity:.85; }
@@ -65,7 +67,7 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
 .card-name { font-weight:600; font-size:15px; display:flex; align-items:center; gap:6px; }
 .badge-active { font-size:11px; background:var(--wxgreen); color:#fff;
   padding:2px 7px; border-radius:999px; font-weight:400; }
-.card-prefix { font-family:var(--font-mono); font-size:11px; color:var(--ink-faint);
+.card-prefix { font-family:var(--font-mono); font-size:12px; color:var(--ink-faint);
   margin-top:6px; max-height:2.8em; overflow:hidden; text-overflow:ellipsis;
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
 .card-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
@@ -78,7 +80,7 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
   border:1px solid var(--hairline-strong); background:var(--card); color:var(--ink-soft);
   font-family:var(--font-body); transition:all .15s; }
 .bot-tab.on { background:var(--wxgreen); color:#fff; border-color:var(--wxgreen); }
-.card-users { font-size:11px; color:var(--wxgreen); margin-top:4px; font-weight:500; }
+.card-users { font-size:12px; color:var(--wxgreen); margin-top:4px; font-weight:500; }
 .keybar { max-width:900px; margin:10px auto 0; padding:0 20px;
   display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .keybar .lbl { font-size:13px; color:var(--ink-soft); }
@@ -106,15 +108,27 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
   background:var(--ink); color:var(--card); padding:10px 20px; border-radius:8px;
   font-size:13px; z-index:200; opacity:0; pointer-events:none; transition:opacity .2s; }
 .toast.show { opacity:1; }
+
+/* ── 手机（≤430px）：窄留白、表单行纵向、卡片按钮放大触控目标 ────────── */
+@media (max-width:430px) {
+  .topbar { padding:12px 14px; }
+  .topbar-actions { flex-wrap:wrap; }
+  .grid { padding:0 14px; margin:14px auto; gap:12px;
+    grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); }
+  .bot-tabs, .keybar { padding:0 14px; }
+  .field-row { flex-direction:column; gap:14px; }
+  .card-actions .btn { min-height:36px; }
+}
 </style>
 </head>
 <body>
 
 <div class="topbar">
   <h1>NovelAI 画风预设</h1>
-  <div>
-    <a class="btn btn-ghost" href="/hub" title="模型来源与 bot 状态"
-       style="text-decoration:none;display:inline-block;">← 管理台</a>
+  <div class="topbar-actions" style="display:flex; gap:8px; align-items:center;">
+    <a class="btn btn-ghost" href="/">朋友圈</a>
+    <a class="btn btn-ghost" href="/provider">Provider</a>
+    <form method="post" action="/logout" style="display:inline"><button class="btn btn-ghost" type="submit">登出</button></form>
     <button class="btn btn-primary" onclick="openModal()">+ 新建预设</button>
   </div>
 </div>
@@ -123,9 +137,7 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
 
 <div class="keybar">
   <span class="lbl">🔑 NovelAI Key</span>
-  <span id="keyStatus" class="keystat">…</span>
-  <input type="password" id="keyInput" placeholder="粘贴新 token 覆盖（不回显）" autocomplete="off">
-  <button class="btn btn-ghost" id="keySaveBtn">保存</button>
+  <span class="keystat">可选：用 <code>python3 scripts/set_novelai_key.py</code> 配置</span>
 </div>
 
 <div class="grid" id="grid"></div>
@@ -181,6 +193,16 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
 <div class="toast" id="toast"></div>
 
 <script>
+const _origFetch = fetch;
+async function apiFetch(url, opts) {
+  const res = await _origFetch(url, opts);
+  if (res.status === 401) {
+    location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
 let stylesData = { active: "", styles: [] };
 
 function showToast(msg) {
@@ -197,27 +219,35 @@ function el(tag, cls, text) {
   return e;
 }
 
-// bot 列表由后端从 configs/*.yml 动态注入（id → 显示名），不再硬编码
-const BOTS = {{ bots|tojson }};
-const BOT_NAMES = Object.fromEntries(BOTS.map(b => [b.id, b.name || b.id]));
-const BOT_ORDER = BOTS.map(b => b.id);
-let selectedBot = BOT_ORDER[0] || '';
+// bot 清单由后端下发（GET /api/styles 的 bots 字段），前端不维护第二份名单；
+// has_config=false（无 yml）的 bot 追加"未配置人设"标注。
+let botList = [];
+let selectedBot = '';
+
+function botName(id) {
+  const b = botList.find(x => x.id === id);
+  return b ? b.name + (b.has_config === false ? '（未配置人设）' : '') : id;
+}
 
 function renderBotTabs() {
   const box = document.getElementById('botTabs');
   box.replaceChildren();
   box.appendChild(el('span', 'lbl', '正在为谁选画风：'));
-  for (const b of BOT_ORDER) {
-    const t = el('button', 'bot-tab' + (b === selectedBot ? ' on' : ''), BOT_NAMES[b]);
-    t.onclick = () => { selectedBot = b; renderBotTabs(); render(); };
+  for (const b of botList) {
+    const t = el('button', 'bot-tab' + (b.id === selectedBot ? ' on' : ''), botName(b.id));
+    t.onclick = () => { selectedBot = b.id; renderBotTabs(); render(); };
     box.appendChild(t);
   }
 }
 
 async function loadStyles() {
-  const res = await fetch('/api/styles');
+  const res = await apiFetch('/api/styles');
   stylesData = await res.json();
   if (!stylesData.active_by_bot) stylesData.active_by_bot = {};
+  botList = stylesData.bots || [];
+  if (!botList.some(b => b.id === selectedBot)) {
+    selectedBot = botList.length ? botList[0].id : '';   // 默认选中列表首项
+  }
   renderBotTabs();
   render();
 }
@@ -240,7 +270,7 @@ function render() {
     }
     if (s.sample_image) {
       const img = document.createElement('img');
-      img.src = '/image' + s.sample_image + (s.sample_ts ? '?t=' + s.sample_ts : '');
+      img.src = '/styles/sample/' + encodeURIComponent(s.id) + (s.sample_ts ? '?t=' + s.sample_ts : '');
       img.alt = s.name;
       thumb.appendChild(img);
     } else {
@@ -250,17 +280,17 @@ function render() {
 
     const body = el('div', 'card-body');
     const nameRow = el('div', 'card-name', s.name + ' ');
-    if (isActive) nameRow.appendChild(el('span', 'badge-active', BOT_NAMES[selectedBot] + '当前'));
+    if (isActive) nameRow.appendChild(el('span', 'badge-active', botName(selectedBot) + '当前'));
     body.appendChild(nameRow);
     body.appendChild(el('div', 'card-prefix',
       s.positive_prefix ? s.positive_prefix : '（无追加前缀，用默认画师串）'));
     // 显示哪些 bot 正在用这个画风
-    const users = BOT_ORDER.filter(b => abb[b] === s.id).map(b => BOT_NAMES[b]);
+    const users = botList.filter(b => abb[b.id] === s.id).map(b => botName(b.id));
     if (users.length) body.appendChild(el('div', 'card-users', '★ ' + users.join(' · ') + ' 在用'));
 
     const actions = el('div', 'card-actions');
     if (!isActive) {
-      const b = el('button', 'btn btn-primary', '设为' + BOT_NAMES[selectedBot] + '的');
+      const b = el('button', 'btn btn-primary', '设为' + botName(selectedBot) + '的');
       b.onclick = () => setActive(s.id);
       actions.appendChild(b);
     }
@@ -308,7 +338,7 @@ function fillParamOptions() {
 function renderModalUsers(styleId) {
   const box = document.getElementById('modalUsers');
   const abb = stylesData.active_by_bot || {};
-  const users = BOT_ORDER.filter(b => abb[b] === styleId).map(b => BOT_NAMES[b]);
+  const users = botList.filter(b => abb[b.id] === styleId).map(b => botName(b.id));
   box.textContent = users.length
     ? '当前被 ' + users.length + ' 个 bot 使用：' + users.join(' · ') + '，改动会同时影响它们'
     : '';
@@ -379,7 +409,7 @@ async function saveStyle() {
     negative_prefix: document.getElementById('fNegative').value.trim(),
     params,
   };
-  const res = await fetch('/api/styles', {
+  const res = await apiFetch('/api/styles', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body),
   });
@@ -395,18 +425,18 @@ async function saveStyle() {
 }
 
 async function setActive(id) {
-  const res = await fetch('/api/styles/active', {
+  const res = await apiFetch('/api/styles/active', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({id, bot: selectedBot}),
   });
   if (!res.ok) { showToast('切换失败'); return; }
-  showToast(BOT_NAMES[selectedBot] + ' 画风已设置');
+  showToast(botName(selectedBot) + ' 画风已设置');
   loadStyles();
 }
 
 async function deleteStyle(id) {
   if (!confirm('确定删除这个预设吗？')) return;
-  const res = await fetch('/api/styles/' + id, { method: 'DELETE' });
+  const res = await apiFetch('/api/styles/' + id, { method: 'DELETE' });
   if (!res.ok) { showToast('删除失败'); return; }
   showToast('已删除');
   loadStyles();
@@ -414,18 +444,22 @@ async function deleteStyle(id) {
 
 const generating = new Set();   // 正在生成示例图的预设 id
 
+// 生图在后台跑（最长 180s）：POST 立即回 {task_id, poll_url}，前端轮询到出图/失败为止。
 async function genSample(id) {
   if (generating.has(id)) { showToast('这个预设正在生成中'); return; }
   generating.add(id);
   render();                      // 立刻盖上遮罩
   try {
-    const res = await fetch(`/api/styles/${id}/sample`, { method: 'POST' });
+    const res = await apiFetch(`/api/styles/${id}/sample`, { method: 'POST' });
     if (!res.ok) {
       // 409 = 后端已有同预设的生成在跑（比如另一个窗口点的）
       showToast(res.status === 409 ? '已有一个生成在进行中' : '生成失败');
       return;
     }
-    showToast('示例图已生成');
+    const body = await res.json().catch(() => ({}));
+    const pollUrl = body.poll_url || `/api/styles/${id}/sample`;   // 与 POST 同路径的 GET
+    const ok = await pollSample(id, pollUrl);
+    if (ok) showToast('示例图已生成');
   } catch (e) {
     showToast('生成失败：网络错误');
   } finally {
@@ -434,31 +468,24 @@ async function genSample(id) {
   }
 }
 
-async function loadKey() {
-  const st = document.getElementById('keyStatus');
-  try {
-    const d = await (await fetch('/api/novelai_key')).json();
-    st.textContent = d.set ? ('已设置 ' + d.masked) : '未设置';
-  } catch (e) { st.textContent = '读取失败'; }
+// 轮询示例图任务：返回 true=已出图；失败/超时给 toast 由调用方兜底（遮罩照常摘掉）
+async function pollSample(id, pollUrl) {
+  for (let i = 0; i < 200; i++) {          // 生图上限 180s，轮询窗口留到 ~200s
+    await new Promise(r => setTimeout(r, 1000));
+    let d;
+    try { d = await (await apiFetch(pollUrl)).json(); } catch (e) { continue; }
+    if (!d || !d.done) continue;
+    if (d.ok) return true;
+    showToast('生成失败：' + (d.error || '未知错误'));
+    return false;
+  }
+  showToast('仍在生成，稍后刷新看结果');
+  return false;
 }
 
-async function saveKey() {
-  const inp = document.getElementById('keyInput');
-  const t = inp.value.trim();
-  if (!t) { showToast('请粘贴 token'); return; }
-  const r = await fetch('/api/novelai_key', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({token: t}),
-  });
-  if (!r.ok) { showToast('保存失败'); return; }
-  inp.value = '';
-  showToast('Key 已保存');
-  loadKey();
-}
-document.getElementById('keySaveBtn').addEventListener('click', saveKey);
+
 
 loadStyles();
-loadKey();
 </script>
 </body>
 </html>
