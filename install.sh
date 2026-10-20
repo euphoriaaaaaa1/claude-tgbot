@@ -41,10 +41,14 @@ ok "python3 / bun / claude 都在"
 if [ "$DRY_RUN" = 1 ]; then
   say "DRY_RUN=1：只检查依赖并打印计划，不写盘、不装依赖、不注册服务"
   echo "  ② $PYTHON_BIN -m pip install -r requirements.txt；cd dispatcher && bun install"
-  echo "  ③ 铺 configs/_global.yml、restart-bots.sh（仅缺失时复制）"
+  echo "  ③ 铺 configs/_global.yml、configs/providers.json（从 example 复制，0600）、restart-bots.sh（仅缺失时复制）"
   echo "  ④ 密钥体检（不写入；实际运行时可当场粘贴）"
   echo "  ⑤ $PYTHON_BIN platform_services.py register autostart --repo $PWD"
+  echo "  ⑤ $PYTHON_BIN platform_services.py register provider-web --repo $PWD"
   echo "  只预览服务命令：$PYTHON_BIN platform_services.py register autostart --repo $PWD --dry-run"
+  echo "                  $PYTHON_BIN platform_services.py register provider-web --repo $PWD --dry-run"
+  echo "  设置/修改面板口令：$PYTHON_BIN -m moments.panel_auth --set-password"
+  echo "  管理台地址：http://127.0.0.1:8767/login"
   exit 0
 fi
 
@@ -78,6 +82,21 @@ grep -q bots_registry restart-bots.sh 2>/dev/null || {
   todo "restart-bots.sh 是旧版（硬编码 bot 名单，加 bot 不生效）→ cp restart-bots.example.sh restart-bots.sh"; left=1; }
 ok "configs/_global.yml、restart-bots.sh 就位"
 
+# 供应商清单：管理台（8767）和 provider_config 都读它。缺失时给一份空白清单，
+# 否则管理台供应商页首次保存会失败。原子写（同目录 tmp + mv）、0600；绝不覆盖已有文件。
+if [ ! -e configs/providers.json ]; then
+  if [ -f configs/providers.example.json ]; then
+    providers_tmp="$(mktemp configs/.providers.json.XXXXXX)"
+    cp configs/providers.example.json "$providers_tmp"
+    chmod 600 "$providers_tmp"
+    mv -f "$providers_tmp" configs/providers.json
+    ok "已创建 configs/providers.json（空白清单，0600）"
+  else
+    todo "缺 configs/providers.example.json，无法创建 configs/providers.json → 重新 clone 仓库或手写 {\"providers\": [], \"bindings\": {}}"
+    left=1
+  fi
+fi
+
 # ── 手填项体检 ────────────────────────────────────────────
 say "④ 三把必填密钥（脚本没法替你申请，但会告诉你去哪拿、填哪，能当场填）"
 # 逐项：缺什么 → 怎么拿 → 填哪 → 终端里直接粘贴就写进文件（非交互时只打说明）。
@@ -109,6 +128,17 @@ else
   todo "开机自启注册失败（退出码 $rc）。手动重跑：$PYTHON_BIN platform_services.py register autostart --repo \"$PWD\""
 fi
 
+# 8767 管理台单独注册：只装 autostart 时它不会起，用户 clone 后打不开 8767。
+# 同样幂等（先卸后装），失败不中断安装，但必须置 left，不能静默成功。
+say "⑤ 注册 8767 管理台（provider-web）"
+if "$PYTHON_BIN" platform_services.py register provider-web --repo "$PWD"; then
+  ok "管理台已注册（http://127.0.0.1:8767/login）"
+else
+  rc=$?
+  left=1
+  todo "管理台注册失败（退出码 $rc）。手动重跑：$PYTHON_BIN platform_services.py register provider-web --repo \"$PWD\""
+fi
+
 
 echo
 if [ "$left" = 0 ]; then
@@ -124,3 +154,9 @@ if [ "$autostart_on" = 1 ]; then
   echo "以后开机自动起 bot，不想要就卸掉："
   echo "  $PYTHON_BIN platform_services.py unregister autostart"
 fi
+
+echo
+say "面板口令与访问地址"
+echo "  设置/修改面板口令：$PYTHON_BIN -m moments.panel_auth --set-password"
+echo "  访问地址：http://127.0.0.1:8767/login"
+echo "  首次用 claude 新建 bot 前，需信任 ~/.claude/channels（按 README §5 的说明；管理台和启动脚本也会提示）"
