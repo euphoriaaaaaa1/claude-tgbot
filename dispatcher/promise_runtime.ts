@@ -6,7 +6,7 @@
  * 形状照抄 hang_runtime，但状态机独立——hang 是"入站即取消"，承诺是"到点必须发"，语义相反。
  *
  * 铁律：
- * - **tick 内零同步阻塞子进程调用**：作息 probe 与拉活都是异步的（dispatcher 是 4 个 bot
+ * - **tick 内零同步阻塞子进程调用**：作息 probe 与拉活都是异步的（dispatcher 是全部 bot
  *   的命脉，spawnSync 卡住 = 全线失联）。
  * - 先置 fired 并落盘、**再**写 inbox：顺序反了宁可漏发一次（重投兜住），绝不重发。
  * - 送达判据是会话 jsonl 里真出现了这条 user 行，**不是** inbox 文件还在不在。

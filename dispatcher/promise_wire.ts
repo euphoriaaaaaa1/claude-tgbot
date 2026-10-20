@@ -7,7 +7,7 @@
  * 以上两个只在 `PROMISE_TEST_MODE=1` 时生效（见 testHook）
  * - `DISABLED_DIR`：整体关停开关 `<DISABLED_DIR>/promise-<bot>` 的所在目录
  *
- * 铁律：这里给出的 probe 是**异步**的。tick 里绝不允许 spawnSync——dispatcher 是 4 个 bot
+ * 铁律：这里给出的 probe 是**异步**的。tick 里绝不允许 spawnSync——dispatcher 是全部 bot
  * 的命脉，同步等子进程就是全线失联。
  */
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeSync } from 'fs'
@@ -21,7 +21,7 @@ import { DONE_WINDOW_MS, sanitizePromiseIds, type ProbeOutcome } from './promise
 
 /** 作息探测脚本取本检出内的副本（§12-2）：开发与测试时绝不调生产目录那份；部署后二者是同一个目录 */
 export const HANG_SITUATION_PY = join(import.meta.dir, '..', 'hang_situation.py')
-const BOTLIFE_DIR = join(import.meta.dir, '..')
+const PROJECT_ROOT = join(import.meta.dir, '..')
 export const PROBE_TIMEOUT_MS = 3000
 /** 探测解释器：显式 PYTHON_BIN 优先，否则 PATH 里的 python3（跨平台约定）。 */
 export const PYTHON_BIN = process.env.PYTHON_BIN || 'python3'
@@ -29,7 +29,7 @@ export const PYTHON_BIN = process.env.PYTHON_BIN || 'python3'
 /** 作息配置目录：与 config_loader.config_dir() 同一优先级（环境变量非空串优先），每次现读 */
 export function botConfigDir(): string {
   const env = process.env.CLAUDEBOT_CONFIG_DIR
-  return env ? env : join(BOTLIFE_DIR, 'configs')
+  return env ? env : join(PROJECT_ROOT, 'configs')
 }
 
 /** 该 bot 有没有作息配置 `<configs>/<bot>.yml`（普通文件）。坏 bot 名 / 任何异常 → false；只读不建目录 */
@@ -229,7 +229,7 @@ export function makeSessionScanner(channelDir: string, botName: string, pathOver
  * atMs 有值则第 2 参传 Math.floor(atMs/1000)（登记告知用）。全异步：spawn + 超时 kill，事件循环一刻都不阻塞。
  */
 export function makeAsleepProbe(
-  botName: string, scriptPath = HANG_SITUATION_PY, cwd = BOTLIFE_DIR,   // 后三个参数只供单测注入，生产用默认值
+  botName: string, scriptPath = HANG_SITUATION_PY, cwd = PROJECT_ROOT,   // 后三个参数只供单测注入，生产用默认值
   log: (line: string) => void = () => {},
 ): (atMs?: number) => Promise<ProbeOutcome> {
   return (atMs?: number) => new Promise<ProbeOutcome>(resolve => {
