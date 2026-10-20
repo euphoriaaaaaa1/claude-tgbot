@@ -9,6 +9,8 @@ set -u
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDEBOT_REPO_DIR="$REPO_DIR"
+# voice-bridge 共享令牌（install.sh 生成）。dispatcher 调 /send_voice、/transcribe_* 时带上。
+export VOICE_BRIDGE_TOKEN_FILE="${VOICE_BRIDGE_TOKEN_FILE:-$HOME/.claude/secrets/voice-bridge.token}"
 # shellcheck source=dispatcher/bot-enabled.sh
 . "$REPO_DIR/dispatcher/bot-enabled.sh"
 

@@ -34,6 +34,8 @@ case "$cmd" in
     # 瞎设一个本机不存在的代理端口，会让所有外网请求连接失败）。
     # NO_PROXY 保证访问本机 127.0.0.1 的请求不走代理。
     export NO_PROXY="${NO_PROXY:-127.0.0.1,localhost}"
+    # 共享令牌（install.sh 生成）。服务端默认 fail-closed，没有它除 /health 外都会 401。
+    export VOICE_BRIDGE_TOKEN_FILE="${VOICE_BRIDGE_TOKEN_FILE:-$HOME/.claude/secrets/voice-bridge.token}"
     if [ ! -x .venv/bin/python ]; then
       echo "✗ 没找到 .venv/bin/python，先建虚拟环境装依赖："
       echo "    python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"

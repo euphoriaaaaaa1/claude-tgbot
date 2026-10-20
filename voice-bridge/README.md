@@ -221,14 +221,28 @@ systemctl --user daemon-reload && systemctl --user enable --now voice-bridge
 
   不设 = 用上面的默认值。`/transcribe_telegram`（Telegram 语音下载→转写）用的是服务自己的内部临时文件，不受白名单影响。
 - **大小上限**：读文件之前先 `stat()` 查大小，超过 `VOICE_BRIDGE_MAX_FILE_MB`（默认 **50**，即 Telegram Bot API 的单文件上限）返回 **413**，不会整块读进内存。
-- **可选令牌**：`VOICE_BRIDGE_TOKEN` **设了才启用**；启用后除 `/health` 外所有端点都要 `Authorization: Bearer <token>`，不匹配返回 **401**（常数时间比较）。不设时行为与以前**完全一致**（默认部署不受影响）。几台机器共用一个服务、或者同机别的用户/服务能读到你环境变量时，建议设一个：
+- **令牌默认强制（fail-closed）**：没有令牌时，除 `/health` 外所有端点一律 **401**。仅当显式设置 `VOICE_BRIDGE_ALLOW_INSECURE=1` 才允许无鉴权（只建议本机临时调试用）。令牌按顺序读取：
+  1. `VOICE_BRIDGE_TOKEN` 环境变量；
+  2. `VOICE_BRIDGE_TOKEN_FILE` 指向的文件，默认 `~/.claude/secrets/voice-bridge.token`。
+
+  主项目 `install.sh` 会自动生成这个文件（0600、随机 32 字节 hex），并把 `VOICE_BRIDGE_TOKEN_FILE` 导出给 dispatcher / voicecall / moments。手动部署时自己生成：
 
   ```bash
-  export VOICE_BRIDGE_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+  mkdir -p ~/.claude/secrets && chmod 700 ~/.claude/secrets
+  python3 -c 'import secrets; print(secrets.token_hex(32))' > ~/.claude/secrets/voice-bridge.token
+  chmod 600 ~/.claude/secrets/voice-bridge.token
+  export VOICE_BRIDGE_TOKEN_FILE=~/.claude/secrets/voice-bridge.token
   ./start.sh restart
   ```
 
-  **调用方也要带同一个 token**：MCP 代理 `server.py` 会自己读同一个环境变量带上；curl 手动验证时加 `-H "Authorization: Bearer $VOICE_BRIDGE_TOKEN"`。⚠️ 主项目 dispatcher 和 voicecall 目前**不带** token——在你同步改调用方之前，别单独把服务端的 token 设上，否则它们的请求会被 401 拒掉。
+  **调用方也读同一个文件并带 `Authorization: Bearer <token>`**：dispatcher、voicecall、moments 语音预览、MCP 代理 `server.py` 都支持。curl 手动验证：
+
+  ```bash
+  curl -H "Authorization: Bearer $(cat ~/.claude/secrets/voice-bridge.token)" \
+       http://127.0.0.1:7788/health
+  ```
+
+  文件缺失时调用方不会回退成无鉴权，请求会按 401 失败。
 - ⚠️ **不要把监听地址改成 `0.0.0.0`**：那会把「能合成语音、能读你本机白名单内文件、能借你的 bot_token 发消息」的接口暴露给同网段任何人。要远程用请走 SSH 隧道或 Tailscale，不要改绑定地址。
 - 日志里的 token 已用 `mask()` 打码（只留头尾），但 `/transcribe_telegram` 的请求体里会带 `bot_token`，**别把这个端口反代到公网**。
 - 已知限制：白名单检查与真正读文件之间仍有极小的 TOCTOU 窗口（检查完路径后被换掉），对「本机单用户 + 回环监听」的威胁模型可接受；要彻底堵死需要 O_NOFOLLOW + 校验已打开文件描述符，本模块没做。

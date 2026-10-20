@@ -24,6 +24,21 @@ import uvicorn
 _SENT_END = re.compile(r'[，,。！？；;…~\n]')  # 停顿点（含逗号）：切一段就送去合成，第一段尽快出声
 
 VB = os.environ.get("VOICE_BRIDGE_URL", "http://127.0.0.1:7788")  # STT/TTS 服务
+VOICE_BRIDGE_TOKEN_FILE = "~/.claude/secrets/voice-bridge.token"
+
+
+def _bridge_auth_headers() -> dict:
+    """voice-bridge 共享令牌：读 VOICE_BRIDGE_TOKEN_FILE（缺省同一路径）。
+    文件缺失就不带 —— 服务端默认 fail-closed，请求自然 401，绝不静默降级成无鉴权。"""
+    path = os.environ.get("VOICE_BRIDGE_TOKEN_FILE") or VOICE_BRIDGE_TOKEN_FILE
+    try:
+        with open(os.path.expanduser(path), "r", encoding="utf-8") as f:
+            token = f.read(4096).strip()
+    except OSError:
+        return {}
+    if not token or not token.isascii() or not token.isprintable():
+        return {}
+    return {"Authorization": "Bearer " + token}
 FFMPEG = os.environ.get("FFMPEG_BIN") or shutil.which("ffmpeg") or "ffmpeg"
 MAX_AUDIO = 25 * 1024 * 1024  # /turn 音频上传上限 25MB，防内存/临时盘耗尽（盲审 R2）
 
@@ -331,7 +346,8 @@ def _recap_call_to_inbox(bot: str) -> bool:
 
 def _post_json(path, payload, want_bytes=False):
     req = urllib.request.Request(VB + path, data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json"}, method="POST")
+                                 headers={"Content-Type": "application/json", **_bridge_auth_headers()},
+                                 method="POST")
     with urllib.request.urlopen(req, timeout=60) as r:
         raw = r.read()
     return raw if want_bytes else json.loads(raw)
@@ -454,7 +470,8 @@ async def _tts_bytes(text: str, voice_id: str) -> bytes:
     15s 约为实测冷启动耗时的 5 倍；60s 会把两行 NDJSON 间的最大静默撑到前端等不起。"""
     async with httpx.AsyncClient(timeout=15.0) as c:
         r = await c.post(VB + "/synthesize_voice",
-                         json={"text": text, "voice_id": voice_id, "emotion": "NEUTRAL"})
+                         json={"text": text, "voice_id": voice_id, "emotion": "NEUTRAL"},
+                         headers=_bridge_auth_headers())
         r.raise_for_status()
         return r.content
 

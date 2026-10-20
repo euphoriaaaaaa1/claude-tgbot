@@ -97,6 +97,25 @@ if [ ! -e configs/providers.json ]; then
   fi
 fi
 
+# ── 语音桥共享令牌 ────────────────────────────────────────
+# voice-bridge 默认 fail-closed；dispatcher/voicecall 从同一个文件读 Bearer 令牌。
+# 0600、随机 32 字节 hex；已存在就只校正权限，绝不覆盖（覆盖会让正在跑的调用方立刻 401）。
+SECRETS_DIR="$HOME/.claude/secrets"
+VOICE_BRIDGE_TOKEN_FILE="$SECRETS_DIR/voice-bridge.token"
+export VOICE_BRIDGE_TOKEN_FILE
+mkdir -p "$SECRETS_DIR"
+chmod 700 "$SECRETS_DIR" 2>/dev/null || true
+if [ ! -f "$VOICE_BRIDGE_TOKEN_FILE" ]; then
+  token_tmp="$(mktemp "$SECRETS_DIR/.voice-bridge.token.XXXXXX")"
+  "$PYTHON_BIN" -c 'import secrets; print(secrets.token_hex(32))' > "$token_tmp"
+  chmod 600 "$token_tmp"
+  mv -f "$token_tmp" "$VOICE_BRIDGE_TOKEN_FILE"
+  ok "已生成 voice-bridge 令牌（0600）：$VOICE_BRIDGE_TOKEN_FILE"
+else
+  chmod 600 "$VOICE_BRIDGE_TOKEN_FILE" 2>/dev/null || true
+  ok "voice-bridge 令牌已存在：$VOICE_BRIDGE_TOKEN_FILE"
+fi
+
 # ── 手填项体检 ────────────────────────────────────────────
 say "④ 三把必填密钥（脚本没法替你申请，但会告诉你去哪拿、填哪，能当场填）"
 # 逐项：缺什么 → 怎么拿 → 填哪 → 终端里直接粘贴就写进文件（非交互时只打说明）。

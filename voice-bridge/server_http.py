@@ -14,7 +14,8 @@ voice-bridge HTTP Server
 运行：./start.sh  或  uvicorn server_http:app --host 127.0.0.1 --port 7788
 
 安全闸（见下方「安全闸」段）：吃路径的端点只读白名单目录内文件，且有大小上限；
-可选 VOICE_BRIDGE_TOKEN 鉴权（设了才启用，见 README「八、安全边界」）。
+默认 fail-closed：除 /health 外都需要令牌；仅显式 VOICE_BRIDGE_ALLOW_INSECURE=1 才放行无鉴权。
+令牌来自 VOICE_BRIDGE_TOKEN 或 VOICE_BRIDGE_TOKEN_FILE（默认 ~/.claude/secrets/voice-bridge.token）。
 """
 import os
 import re
@@ -115,8 +116,16 @@ log.info("路径白名单: " + ", ".join(str(r) for r in ALLOWED_ROOTS))
 # Telegram Bot API 单文件上限 50MB；超过就别整块读进内存了
 MAX_FILE_MB = int(os.environ.get("VOICE_BRIDGE_MAX_FILE_MB") or "50")
 MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024
-# 可选令牌：设了才启用鉴权，不设则与以前行为完全一致（作者本机没设）
-BRIDGE_TOKEN = os.environ.get("VOICE_BRIDGE_TOKEN", "").strip()
+from auth_gate import load_token, insecure_allowed, request_allowed  # noqa: E402
+
+# fail-closed：没有令牌就拒绝；只有显式 VOICE_BRIDGE_ALLOW_INSECURE=1 才放行。
+BRIDGE_TOKEN = load_token()
+ALLOW_INSECURE = insecure_allowed()
+if not BRIDGE_TOKEN:
+    log.warning("voice-bridge 未配置令牌：除 /health 外一律 401"
+                + ("（VOICE_BRIDGE_ALLOW_INSECURE=1，已显式放行）" if ALLOW_INSECURE else ""))
+elif ALLOW_INSECURE:
+    log.warning("VOICE_BRIDGE_ALLOW_INSECURE=1 已设置，但令牌存在，仍按令牌校验")
 
 
 def check_file_path(raw_path: str) -> Path:
@@ -465,17 +474,15 @@ app = FastAPI(lifespan=lifespan)
 
 @app.middleware("http")
 async def _auth_middleware(request: Request, call_next):
-    """VOICE_BRIDGE_TOKEN 设了才启用：除 /health 外所有端点要 Authorization: Bearer <token>。
-    不设时直接放行——与加鉴权之前的行为完全一致。"""
-    if BRIDGE_TOKEN and request.url.path != "/health":
-        auth = request.headers.get("authorization", "")
-        got = auth[7:] if auth.startswith("Bearer ") else ""
-        # 常数时间比较，别用 == （防时序侧信道）；token 不落日志
-        if not got or not secrets.compare_digest(got.encode(), BRIDGE_TOKEN.encode()):
-            return JSONResponse(
-                {"detail": "unauthorized: 需要 Authorization: Bearer <VOICE_BRIDGE_TOKEN>"},
-                status_code=401,
-            )
+    """除 /health 外所有端点要 Authorization: Bearer <token>。
+    没有令牌时默认拒绝；只有显式 VOICE_BRIDGE_ALLOW_INSECURE=1 才放行。"""
+    if not request_allowed(request.url.path,
+                           request.headers.get("authorization", ""),
+                           BRIDGE_TOKEN, ALLOW_INSECURE):
+        return JSONResponse(
+            {"detail": "unauthorized: 需要 Authorization: Bearer <token>"},
+            status_code=401,
+        )
     return await call_next(request)
 
 
