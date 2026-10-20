@@ -123,13 +123,14 @@ function readDelivery(): DeliveryInfo {
 const turn = { promiseIdsByChat: new Map<string, string[]>(), promiseSet: new Set<string>(), hinted: new Set<string>() }
 // 与旧行为一致：worker 刚重启时"最近真人"为空，直到它启动后真的投递过一条真人消息。
 const START_MS = Date.now()
-let _turnAtMs = -1
+let _turnKey = ''
 // A1-15：到期提醒交给 bot 的时刻（按 chat）；收到带 promise_due 的投递就记，10 分钟内放行回该聊天。
 let _promise_due_delivered_ms: Record<string, number> = {}
 function delivery(): DeliveryInfo {
   const d = readDelivery()
-  if (d.at_ms !== _turnAtMs) {
-    _turnAtMs = d.at_ms
+  const key = `${d.at_ms}|${d.chat_id}|${d.message_id}`
+  if (key !== _turnKey) {
+    _turnKey = key
     turn.promiseSet.clear()
     turn.hinted.clear()
   }
