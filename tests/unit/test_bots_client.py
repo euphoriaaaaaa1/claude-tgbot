@@ -14,7 +14,7 @@ import pytest
 
 from moments import bots_client
 
-TG_TOKEN = "123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"   # §6.0 给的形状，假值
+TG_TOKEN = "123456789:AA-your-telegram-bot-token-here"   # §6.0 给的形状，假值
 
 
 @pytest.fixture(autouse=True)

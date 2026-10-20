@@ -24,7 +24,7 @@ def wait_op(op_id, timeout=5.0):
 
 
 def bot(bot_id="mybot", backend="claude", polling=True, enabled=True, moved_to=None,
-        username="mybot_bot", chat_id="12345"):
+        username="mybot_bot", chat_id="123456789"):
     return {"bot_id": bot_id, "person": bot_id, "display_name": bot_id, "enabled": enabled,
             "state": "running" if polling else ("idle" if enabled else "stopped"),
             "polling": polling, "username": username, "moved_to": moved_to, "chat_id": chat_id,
@@ -176,7 +176,7 @@ class FakeAdapter:
         return list(self._templates)
 
     def chat_id_default(self):
-        return "12345"
+        return "123456789"
 
     def set_voice(self, bot_id, body):
         self.calls.append(("set_voice", bot_id, dict(body)))
@@ -214,7 +214,7 @@ def reg(monkeypatch):
 
 
 def body(**over):
-    data = {"backend": "claude", "bot_id": "mybot", "telegram_token": TOKEN, "chat_id": "12345",
+    data = {"backend": "claude", "bot_id": "mybot", "telegram_token": TOKEN, "chat_id": "123456789",
             "persona_text": "你是一只测试 bot", "enabled": True}
     data.update(over)
     return data

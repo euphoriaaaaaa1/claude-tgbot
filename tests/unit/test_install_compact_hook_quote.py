@@ -20,15 +20,15 @@ def test_posix_plain_path_unchanged():
     assert ich.quote_hook_path("/opt/homebrew/bin/python3.12", windows=False) == "/opt/homebrew/bin/python3.12"
 
 
-@pytest.mark.parametrize("p", ["/Users/john smith/venv/bin/python", "/repo/a&b/scripts/compact_group_context.py"])
+@pytest.mark.parametrize("p", ["/Users/example user/venv/bin/python", "/repo/a&b/scripts/compact_group_context.py"])
 def test_posix_special_path_quoted_and_roundtrips(p):
     q = ich.quote_hook_path(p, windows=False)
     assert q != p and shlex.split(q) == [p]
 
 
 @pytest.mark.parametrize("p", [
-    r"C:\Users\John Smith\AppData\Local\Programs\Python\Python312\python.exe",
-    r"C:\Users\zhang\AppData\Local\Programs\Python\Python312\python.exe",
+    r"C:\Users\example user\AppData\Local\Programs\Python\Python312\python.exe",
+    r"C:\Users\user\AppData\Local\Programs\Python\Python312\python.exe",
 ])
 def test_windows_always_double_quoted(p):
     assert ich.quote_hook_path(p, windows=True) == f'"{p}"'
@@ -37,18 +37,18 @@ def test_windows_always_double_quoted(p):
 
 
 def test_hook_command_two_segments_with_spaces(monkeypatch):
-    monkeypatch.setattr(ich.sys, "executable", r"C:\Users\John Smith\Python\python.exe")
-    monkeypatch.setattr(ich, "HOOK_SCRIPT", r"C:\Users\John Smith\claudebotlife\scripts\compact_group_context.py")
+    monkeypatch.setattr(ich.sys, "executable", r"C:\Users\example user\Python\python.exe")
+    monkeypatch.setattr(ich, "HOOK_SCRIPT", r"C:\Users\example user\claudebotlife\scripts\compact_group_context.py")
     cmd = ich.hook_command(windows=True)
-    assert cmd == '"C:\\Users\\John Smith\\Python\\python.exe" "C:\\Users\\John Smith\\claudebotlife\\scripts\\compact_group_context.py"'
+    assert cmd == r'"C:\Users\example user\Python\python.exe" "C:\Users\example user\claudebotlife\scripts\compact_group_context.py"'
 
 
 def test_our_command_recognizes_quoted_posix_paths_with_spaces(monkeypatch):
     # 幂等识别（_our_command）仍认得带引号形态；反斜杠形态的 basename 只有 ntpath 会切，这里用 POSIX 路径验
-    monkeypatch.setattr(ich.sys, "executable", "/Users/john smith/venv/bin/python")
-    monkeypatch.setattr(ich, "HOOK_SCRIPT", "/Users/john smith/repo/scripts/compact_group_context.py")
+    monkeypatch.setattr(ich.sys, "executable", "/Users/example user/venv/bin/python")
+    monkeypatch.setattr(ich, "HOOK_SCRIPT", "/Users/example user/repo/scripts/compact_group_context.py")
     cmd = ich.hook_command(windows=False)
-    assert cmd == "'/Users/john smith/venv/bin/python' '/Users/john smith/repo/scripts/compact_group_context.py'"
+    assert cmd == "'/Users/example user/venv/bin/python' '/Users/example user/repo/scripts/compact_group_context.py'"
     assert ich._our_command({"hooks": [{"type": "command", "command": cmd}]}) == cmd
 
 

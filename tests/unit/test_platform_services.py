@@ -407,7 +407,7 @@ def test_cli_dry_run零写入(tmp_path, capsys):
 def test_self_initiate接受中文bot_id(tmp_path):
     """T04 的注册表允许中文 bot id；服务名不能把它挡掉。"""
     spec = ps.service_spec(
-        "self-initiate-小助手", repo=tmp_path, bot="小助手", chat_id="123456"
+        "self-initiate-小助手", repo=tmp_path, bot="小助手", chat_id="123456789"
     )
     assert spec.name == "self-initiate-小助手"
     backend = ps.LaunchdBackend(

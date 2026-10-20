@@ -126,7 +126,7 @@ def test_stdin传值_密钥不进argv(tmp_path, monkeypatch):
     env = tmp_path / ".claude" / "channels" / "chenlulu" / ".env"
     env.parent.mkdir(parents=True)
     env.write_text("TELEGRAM_BOT_TOKEN=\n", encoding="utf-8")
-    monkeypatch.setattr("sys.stdin", io.StringIO("123456789:AAstdin-secret-token-abcdefghij\n"))
+    monkeypatch.setattr("sys.stdin", io.StringIO("123456789:AA-your-telegram-bot-token-here\n"))
     rc = sk.main(["set-token", "-", "--home", str(tmp_path)])
     assert rc == 0
-    assert "AAstdin-secret-token" in env.read_text(encoding="utf-8")
+    assert "AA-your-telegram-bot-token" in env.read_text(encoding="utf-8")

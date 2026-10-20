@@ -49,7 +49,7 @@ def _write_bot(cfgdir, bot_id, **fields):
     (cfgdir / ("%s.yml" % bot_id)).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _write_channel(tmp_path, bot_id, token="123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"):
+def _write_channel(tmp_path, bot_id, token="123456789:AA-your-telegram-bot-token-here"):
     d = tmp_path / "channels" / bot_id
     d.mkdir(parents=True, exist_ok=True)
     (d / ".env").write_text("TELEGRAM_BOT_TOKEN=%s\n" % token, encoding="utf-8")
@@ -124,7 +124,7 @@ def test_shellcheck可用时对核心脚本零错误():
 
 def test_脚本里没有个人路径与真实bot名单():
     skip = {".git", "node_modules", "__pycache__", "tests", ".devflow"}
-    bad = re.compile(r"/Users/wsxwj|com\.wsxwj|\byasuna\b|\bbot[234]\b|\blili\b|\bchenlulu\b")
+    bad = re.compile(r"/Users/" + "wsxwj" + r"|com\.wsxwj|\byasuna\b|\bbot[234]\b|\blili\b|\bchenlulu\b")
     hits = []
     for p in REPO_ROOT.rglob("*"):
         if not p.is_file() or p.suffix not in (".sh", ".ps1"):

@@ -41,17 +41,17 @@ def test_posix_slug():
 
 def test_windows_slug_matches_worker_manager(windows_paths):
     # 与 dispatcher/worker-manager.ts projectSlug() 注释里的期望一致
-    assert chat_history._project_slug_for(r"C:\Users\you\.claude\channels\bot") == "C--Users-you--claude-channels-bot"
+    assert chat_history._project_slug_for(r"C:\Users\user\.claude\channels\bot") == "C--Users-user--claude-channels-bot"
 
 
 def test_memory_path_uses_windows_slug(windows_paths, monkeypatch):
     monkeypatch.setattr(os.path, "expanduser", lambda p: p.replace("~", "HOME"))
-    p = memory_inject.memory_path(r"C:\Users\x\.claude\channels\b")
-    assert p == "HOME/.claude/projects/C--Users-x--claude-channels-b/memory/MEMORY.md"
+    p = memory_inject.memory_path(r"C:\Users\user\.claude\channels\b")
+    assert p == "HOME/.claude/projects/C--Users-user--claude-channels-b/memory/MEMORY.md"
 
 
 def test_jiwen_project_dir_uses_windows_slug(tick, windows_paths, monkeypatch):
     seen = []
     monkeypatch.setattr(os.path, "isdir", lambda p: (seen.append(p), False)[1])
-    assert tick.find_recent_messages(r"C:\Users\x\.claude\channels\b", 0) == ([], 0)
-    assert seen and os.path.basename(seen[-1]) == "C--Users-x--claude-channels-b"
+    assert tick.find_recent_messages(r"C:\Users\user\.claude\channels\b", 0) == ([], 0)
+    assert seen and os.path.basename(seen[-1]) == "C--Users-user--claude-channels-b"
