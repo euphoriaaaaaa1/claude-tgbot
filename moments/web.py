@@ -1,806 +1,304 @@
-"""朋友圈 web 服务（Flask）。
+# -*- coding: utf-8 -*-
+"""8767 管理台壳（Flask）。
 
-启动：python3 -m moments.web
-访问：http://localhost:8765
+启动：``MOMENTS_WEB_MODE=provider python3 -m moments.web``
+访问：http://127.0.0.1:8767
+
+T06 只落地“壳”本身：登录门、登录限速、同源 + JSON 写请求校验、安全响应头、
+``next`` 站内路径校验，以及可启动的 ``/provider`` 占位页。console / lifecycle /
+features / providers / styles 等页面和 API 蓝图由后续任务注册；本模块不 import
+已删除的旧 Hub 模块，也不提供旧 8765 朋友圈页面。
 """
 import os
 import sys
-import importlib.util
-import json
-import time
-import secrets
-import subprocess
-from datetime import datetime, timezone
-from flask import Flask, render_template, send_from_directory, request, jsonify
+from urllib.parse import quote, unquote, urlsplit
+
+from flask import (Flask, abort, jsonify, make_response, redirect,
+                   render_template, request)
 from werkzeug.exceptions import HTTPException
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from moments import panel_auth
 
-import db
-import config_loader
-from moments.styles_routes import styles_bp
-from moments import env_file
-from moments import hub_auth
-from moments import redact
+# 公众版只有供应商模式；cookie 名按 INTERFACE §2.1 固定为 cb_provider。
+COOKIE_NAME = panel_auth.COOKIE_NAME
 
 app = Flask(__name__,
             template_folder=os.path.join(os.path.dirname(__file__), "templates"))
-app.register_blueprint(styles_bp)
-
-# 管理台蓝图挂载点（M1 落地 moments/hub_routes.py 后自动生效）。
-# 用 find_spec 只判"模块在不在"，模块内部真出 ImportError 仍会照常抛出，不被吞掉。
-_hub_routes = None
-if importlib.util.find_spec("moments.hub_routes") is not None:
-    from moments import hub_routes as _hub_routes
-    app.register_blueprint(_hub_routes.hub_bp)
-
-# 安审 S4：隧道（cloudflare tunnel / frp / nginx）到本进程是明文 http，Flask 默认不信
-# 转发头，于是 request.scheme 恒为 "http" —— 浏览器侧明明是 https，签出去的
-# hub_session / hub_admin 却一律不带 Secure，那道锁的凭据能被降级到明文信道带出去。
-# 默认关：直连 http://127.0.0.1:8765 时信转发头等于让任何人伪造 X-Forwarded-Proto。
-# 只认 x_proto 一跳，不认 X-Forwarded-For/Host（我们不按 IP 判权，认了只是白送伪造面）。
-# 经 env_file 读：三条自启路径（launchd plist / systemd unit / Windows 计划任务）都不 source
-# hub.env，只读 os.environ 的话，README 让人写进 hub.env 的这一行在出货机器上恒为空
-# —— 口径与 hub_auth 读两把口令、cliproxy 三键完全一致（INTERFACE §0.3）。
-if env_file.get("HUB_TRUST_PROXY") == "1":
-    from werkzeug.middleware.proxy_fix import ProxyFix
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_for=0, x_host=0, x_port=0, x_prefix=0)
-
-# 鉴权门必须最先挂：它注册的 before_request 要跑在下面的体积闸之前
-hub_auth.install(app)
-
-# ---- 框架级错误 JSON 化 + /hub/api 出站兜底（INTERFACE §0.1 / §0.2 / §0.2b）----
-# 边界就是路径前缀：体积闸与出站脱敏**只**挂 /hub/api/*，
-# `/`、`/styles`、`/api/*`、`/image/*` 的响应不经过它们（§0.2b 裁决 / §9.1 逐字节不变）。
-HUB_API_PREFIX = "/hub/api/"
-HUB_MAX_BODY = 1024 * 1024
-# 框架级 404/405 回 JSON 的路径前缀。§0.1 只对 /hub/api/* "强制"，
-# 但它允许回 HTML 的例外只列了 `/`、`/styles`、`/hub*` 三类**页面**路由 ——
-# `/api/*` 不是页面路由，回 HTML 错误页会让前端 fetch 解不出东西，故一并 JSON 化。
-# 成功响应一个字节没动，§9.1 的承诺不受影响。
-JSON_ERROR_PREFIXES = (HUB_API_PREFIX, "/api/")
-
-_HUB_ERROR_CODES = {404: "not_found", 405: "method_not_allowed",
-                    413: "payload_too_large", 500: "internal"}
 
 
-def _hub_error(code):
-    resp = jsonify({"error": _HUB_ERROR_CODES[code]})
-    resp.status_code = code
+# ── 安全响应头 ─────────────────────────────────────────────────────────────
+@app.after_request
+def _security_headers(resp):
+    # 面板可能被挂到隧道后面，是 iframe 点击劫持的目标。只加 frame-ancestors：
+    # 页面模板是内联样式/脚本，加 default-src 之类会把页面自身一起挡掉。
+    if resp.headers.get("X-Frame-Options") != "SAMEORIGIN":
+        resp.headers["X-Frame-Options"] = "DENY"
+    if "Content-Security-Policy" not in resp.headers:
+        resp.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
     return resp
 
 
-def _hub_error_handler(code):
-    def handler(e):
-        if request.path.startswith(JSON_ERROR_PREFIXES):
-            return _hub_error(code)
-        if isinstance(e, HTTPException):
-            return e            # 页面与老路径保持 Flask 默认 HTML（§0.1 例外）
-        raise e
-    return handler
+# /api/* 的错误体统一为 JSON；页面路由仍返回 Flask 默认 HTML 错误页。
+@app.errorhandler(HTTPException)
+def _api_http_error(err):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": err.name.lower().replace(" ", "_")}), err.code
+    return err.get_response()
 
 
-for _code in _HUB_ERROR_CODES:
-    app.register_error_handler(_code, _hub_error_handler(_code))
+# ── 登录门（INTERFACE §2.1）────────────────────────────────────────────────
+_NOT_READY_HTML = ("<html><body><p>面板未配置口令，请先运行 "
+                   "python3 -m moments.panel_auth --set-password</p></body></html>")
+
+
+def _safe_next(value) -> str:
+    """白名单式：只放行本站相对路径，其余一律回落 ``/``。
+
+    先看**原值**再看拆分结果：``urlsplit`` 会剥掉 tab/换行，也会把开头的 ``//``
+    当成主机段；只信拆分结果会漏掉 ``/\\t/evil.com``、``///evil.com`` 这类形状。
+    百分号编码的控制字符和斜杠也解一次再查 —— ``/%09/evil.com`` 解出来是
+    ``/\\t/evil.com``，浏览器/中间层可能把它还原成协议相对 URL。
+    """
+    if not isinstance(value, str) or not value:
+        return "/"
+    if any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in value):
+        return "/"
+    if "\\" in value:
+        return "/"
+    if not value.startswith("/") or value.startswith("//"):
+        return "/"
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return "/"
+    if parts.scheme or parts.netloc:
+        return "/"
+
+    try:
+        decoded = unquote(value, errors="strict")
+    except UnicodeDecodeError:
+        return "/"
+    if any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in decoded):
+        return "/"
+    if "\\" in decoded or decoded.startswith("//"):
+        return "/"
+    try:
+        dparts = urlsplit(decoded)
+    except ValueError:
+        return "/"
+    if dparts.scheme or dparts.netloc:
+        return "/"
+    if not dparts.path.startswith("/") or dparts.path.startswith("//"):
+        return "/"
+    return value
+
+
+def _authed() -> bool:
+    sid = panel_auth.parse_cookie(request.cookies.get(COOKIE_NAME))
+    return bool(sid and panel_auth.session_valid(sid))
 
 
 @app.before_request
-def _hub_body_limit():
-    """体积闸只管 /hub/api/*：老路径要收 base64 图（/api/moment），全局 MAX_CONTENT_LENGTH 会误伤。"""
-    if request.path.startswith(HUB_API_PREFIX) and (request.content_length or 0) > HUB_MAX_BODY:
-        return _hub_error(413)
+def _login_gate():
+    if not panel_auth.secret_ready():
+        return _NOT_READY_HTML, 503  # fail-closed：缺 secret 一律拒之门外
+    if request.path == "/login":
+        return None
+    if _authed():
+        return None
+    if request.path.startswith("/hub/api/"):
+        return jsonify({"error": "unauthorized"}), 401, {"Hub-Gate": "1"}
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "unauthorized"}), 401
+    target = request.path
+    if request.query_string:
+        target += "?" + request.query_string.decode("utf-8", "replace")
+    return redirect("/login?next=" + quote(target, safe="/"))
 
 
-@app.after_request
-def _hub_api_scrub(resp):
-    """§0.2 第二层：自由文本字段过一遍出站正则。只是兜底，正确性靠 cliproxy_client 的白名单投影。"""
-    if not request.path.startswith(HUB_API_PREFIX) or resp.direct_passthrough or not resp.is_json:
+def _source_host_matches(src: str) -> bool:
+    """Origin/Referer 的 host 是否与请求 Host 一致（跨站 → False）。"""
+    try:
+        src_host = urlsplit(src).hostname
+    except ValueError:
+        return False
+    if not src_host:
+        return False  # Origin: null（沙箱/站外）一律不认
+    try:
+        req_host = urlsplit("//" + (request.host or "")).hostname
+    except ValueError:
+        req_host = None
+    return bool(req_host) and src_host.lower() == req_host.lower()
+
+
+@app.before_request
+def _api_csrf_guard():
+    """``/api/*`` 的非 GET 请求先验来源、再验内容类型。
+
+    顺序固定为「来源 → 内容类型」：来源不合 403；来源合但 Content-Type 非 JSON 415。
+    浏览器跨站请求必带 Origin，故没有 Origin/Referer 时不再校验内容类型 —— 那样会
+    误伤同源脚本和历史无体动作端点。
+    """
+    if request.method in ("GET", "HEAD", "OPTIONS") or not request.path.startswith("/api/"):
+        return None
+    src = request.headers.get("Origin") or request.headers.get("Referer") or ""
+    if not src:
+        return None
+    if not _source_host_matches(src):
+        return jsonify({"error": "cross-site request rejected"}), 403
+    if request.mimetype != "application/json":
+        return jsonify({"error": "content-type must be application/json"}), 415
+    return None
+
+
+@app.route("/login", methods=["GET"])
+def login_page():
+    return render_template("login.html",
+                           next=_safe_next(request.args.get("next")), error=None)
+
+
+@app.route("/login", methods=["POST"])
+def login_submit():
+    nxt = _safe_next(request.form.get("next"))
+    ip = panel_auth.client_key(request)
+    remaining = panel_auth.is_blocked(ip)
+    if remaining:
+        resp = make_response(render_template(
+            "login.html", next=nxt, error="尝试过于频繁，请稍后再试"), 429)
+        resp.headers["Retry-After"] = str(remaining)
         return resp
-    body = resp.get_json(silent=True)
-    if body is None:
+    if not panel_auth._LOGIN_SEM.acquire(blocking=False):
+        resp = make_response(render_template(
+            "login.html", next=nxt, error="服务器繁忙，请稍后再试"), 429)
+        resp.headers["Retry-After"] = "1"
         return resp
-    scrubbed, changed = redact.scrub_fields(body)
-    if changed:
-        resp.set_data(json.dumps(scrubbed, ensure_ascii=False))
+    try:
+        if panel_auth.verify_password(request.form.get("password") or ""):
+            panel_auth.clear_failures(ip)
+            sid = panel_auth.new_session()
+            resp = redirect(nxt)
+            resp.set_cookie(
+                COOKIE_NAME, panel_auth.make_cookie(sid),
+                max_age=panel_auth.COOKIE_MAX_AGE, httponly=True, samesite="Lax",
+                path="/",
+                secure=(request.headers.get("X-Forwarded-Proto") == "https"
+                        or request.is_secure))
+            resp.headers["Cache-Control"] = "no-store"
+            sys.stderr.write("[login] ok ip=%s path=%s\n" % (ip, nxt))
+            return resp
+        panel_auth.register_failure(ip)
+        return render_template("login.html", next=nxt, error="口令错误"), 401
+    finally:
+        panel_auth._LOGIN_SEM.release()
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    sid = panel_auth.parse_cookie(request.cookies.get(COOKIE_NAME))
+    if sid:
+        panel_auth.revoke(sid)
+    resp = redirect("/login")
+    resp.set_cookie(COOKIE_NAME, "", max_age=0, path="/",
+                    httponly=True, samesite="Lax")
     return resp
 
-USER_ADDRESS_FALLBACK = "哥哥"
-USER_DISPLAY_FALLBACK = "我"
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MOMENT_REPLY_SCRIPT = os.path.join(_REPO_ROOT, "scripts", "moment_reply.py")
-PYTHON_BIN = os.environ.get("CLAUDEBOTLIFE_PYTHON", sys.executable)
+
+@app.route("/api/panel/logout_all", methods=["POST"])
+def logout_all():
+    return jsonify({"ok": True, "revoked": panel_auth.revoke_all()})
 
 
-def _user_display_name() -> str:
-    g = config_loader.load_global()
-    return g.get("user_display_name") or USER_DISPLAY_FALLBACK
+_SESSION_ENDPOINTS = frozenset(
+    f.__name__ for f in (login_page, login_submit, logout, logout_all))
 
 
-USER_PROFILE_KEY = "__user__"
+@app.route("/provider")
+def provider_page():
+    return render_template("provider.html")
 
 
-def _user_meta() -> dict:
-    """全部 tab 用 = 用户自己的朋友圈主页资料"""
-    g = config_loader.load_global()
-    profile = db.get_profile(USER_PROFILE_KEY)
-    return {
-        "id": USER_PROFILE_KEY,
-        "name": g.get("user_display_name") or USER_DISPLAY_FALLBACK,
-        "bio": g.get("user_bio", ""),
-        "user_address": "",     # 用户主页时不需要
-        "avatar_url": profile.get("avatar_url"),
-        "banner_url": profile.get("banner_url"),
-    }
+@app.before_request
+def _reachable_gate():
+    """登录后的可达面：T06 只有登录/登出与 /provider 占位页。
 
-
-def _format_moment(m: dict) -> dict:
-    metadata = {}
-    try:
-        metadata = json.loads(m.get("metadata_json", "{}") or "{}")
-    except Exception:
-        pass
-    ts = m["ts"]
-    dt = datetime.fromtimestamp(ts)
-    return {
-        "id": m["id"],
-        "bot_id": m["bot_id"],
-        "ts": ts,
-        "time_str": dt.strftime("%Y-%m-%d %H:%M"),
-        "time_short": dt.strftime("%H:%M"),
-        "ago": _ago(ts),
-        "text": m["text"],
-        "image_path": m.get("image_path"),
-        "image_paths": metadata.get("image_paths") or ([m["image_path"]] if m.get("image_path") else []),
-        "kind": m.get("moment_kind"),
-        "visibility": m.get("visibility") or "public",
-        "metadata": metadata,
-        **_chapter_for(dt),
-    }
-
-
-_WEEKDAY_ZH = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
-
-
-def _chapter_for(dt: datetime) -> dict:
-    """根据日期分组：今天 / 昨天 / 本周 / YYYY-MM"""
-    today = datetime.now().date()
-    delta = (today - dt.date()).days
-    sub = dt.strftime("%Y · %m · %d") + " · " + _WEEKDAY_ZH[dt.weekday()]
-    if delta == 0:
-        return {"chapter": "今天", "chapter_sub": sub}
-    if delta == 1:
-        return {"chapter": "昨天", "chapter_sub": sub}
-    if delta < 7:
-        return {"chapter": "本周", "chapter_sub": sub}
-    return {"chapter": dt.strftime("%Y · %m"), "chapter_sub": sub}
-
-
-def _ago(ts: int) -> str:
-    diff = int(time.time()) - ts
-    if diff < 60: return f"{diff}秒前"
-    if diff < 3600: return f"{diff // 60}分钟前"
-    if diff < 86400: return f"{diff // 3600}小时前"
-    return f"{diff // 86400}天前"
-
-
-def _bot_meta(b: dict) -> dict:
-    bot_id = b["_bot_id"]
-    profile = db.get_profile(bot_id)
-    signature = profile.get("signature") or b.get("bio", "")
-    # 名字优先 db.display_name（用户改的），fallback yml display_name
-    name = profile.get("display_name") or b.get("display_name", bot_id)
-    return {
-        "id": bot_id,
-        "name": name,
-        "bio": signature,
-        "user_address": b.get("user_address", USER_ADDRESS_FALLBACK),
-        "avatar_url": profile.get("avatar_url"),
-        "banner_url": profile.get("banner_url"),
-    }
-
-
-PAGE_SIZE = 30
-
-
-@app.route("/")
-def feed():
-    bot_filter = request.args.get("bot")
-    # 默认进"主页"（用户自己的朋友圈）；切到某 bot 才看 ta 的
-    if not bot_filter:
-        bot_filter = USER_PROFILE_KEY
-    try:
-        page = max(1, int(request.args.get("page", 1)))
-    except (TypeError, ValueError):
-        page = 1
-    moments_raw = db.list_moments(bot_id=bot_filter,
-                                   limit=PAGE_SIZE * page + 1)
-    has_more = len(moments_raw) > PAGE_SIZE * page
-    moments_raw = moments_raw[:PAGE_SIZE * page]
-    moments = [_format_moment(m) for m in moments_raw]
-
-    # 批量取点赞 + 评论
-    ids = [m["id"] for m in moments]
-    likes_map = db.likers_bulk(ids)
-    comments_map = db.comments_bulk(ids)
-    bots = config_loader.list_enabled_bots()
-    bot_meta_by_id = {b["_bot_id"]: _bot_meta(b) for b in bots}
-    # 用户自己作为"虚拟 bot"，其朋友圈卡片头像/名字也走这里
-    bot_meta_by_id[USER_PROFILE_KEY] = _user_meta()
-
-    def _name_for(uid: str) -> str:
-        """反查显示名：bot 用 db.display_name fallback yml display_name；用户用 user_display_name"""
-        if uid in bot_meta_by_id:
-            return bot_meta_by_id[uid].get("name") or uid
-        return uid
-
-    for m in moments:
-        # 点赞者也要过 _name_for：否则用户在网页上设的备注只在评论里生效、
-        # 点赞处仍显示原始 bot_id（评论走了转换、点赞漏了，两处不一致）。
-        m["likers"] = [_name_for(u) for u in likes_map.get(m["id"], [])]
-        bot_meta = bot_meta_by_id.get(m["bot_id"], {})
-        m["bot_meta"] = bot_meta
-        raw_comments = comments_map.get(m["id"], [])
-        by_id = {c["id"]: c for c in raw_comments}
-        formatted = []
-        for c in raw_comments:
-            formatted.append({
-                **c,
-                "from_user_label": _name_for(c["from_user"]),
-                "parent_label": _name_for(by_id[c["parent_id"]]["from_user"])
-                                 if c.get("parent_id") and c["parent_id"] in by_id else None,
-                "pending": bool(c.get("pending")),
-            })
-        m["comments"] = formatted
-
-    # 当前 bot meta（顶部 banner/avatar 用）
-    if bot_filter in bot_meta_by_id:
-        active_meta = bot_meta_by_id[bot_filter]
-    else:
-        active_meta = _user_meta()
-
-    g_cfg = config_loader.load_global()
-    img_provider = (g_cfg.get("moments", {}) or {}).get("image_generation", {}).get("provider", "novelai")
-
-    return render_template(
-        "feed.html",
-        moments=moments,
-        bots=[v for k, v in bot_meta_by_id.items() if k != USER_PROFILE_KEY],
-        active_bot=bot_filter,
-        active_meta=active_meta,
-        user_display=_user_display_name(),
-        page=page,
-        has_more=has_more,
-        image_provider=img_provider,
-    )
-
-
-@app.route("/api/moments")
-def api_moments():
-    bot_filter = request.args.get("bot")
-    since = int(request.args.get("since", 0))
-    limit = int(request.args.get("limit", 50))
-    moments = db.list_moments(bot_id=bot_filter, limit=limit, since_ts=since)
-    return jsonify([_format_moment(m) for m in moments])
-
-
-# ─── 互动 API ──────────────────────────────────────────────
-@app.route("/api/like", methods=["POST"])
-def api_like():
-    data = request.get_json(silent=True) or {}
-    try:
-        moment_id = int(data.get("moment_id"))
-    except (TypeError, ValueError):
-        return jsonify({"error": "moment_id required"}), 400
-    moment = db.get_moment(moment_id)
-    if not moment:
-        return jsonify({"error": "moment not found"}), 404
-    liker = _user_display_name()
-    liked = db.toggle_like(moment_id, liker)
-    likers = [r["liker"] for r in db.list_likers(moment_id)]
-    return jsonify({"liked": liked, "likers": likers})
-
-
-@app.route("/api/comment", methods=["POST"])
-def api_comment():
-    import base64
-    data = request.get_json(silent=True) or {}
-    try:
-        moment_id = int(data.get("moment_id"))
-    except (TypeError, ValueError):
-        return jsonify({"error": "moment_id required"}), 400
-    text = (data.get("text") or "").strip()
-    image_data = data.get("image")  # 可选 base64 dataURL
-    if not text and not image_data:
-        return jsonify({"error": "empty"}), 400
-    if len(text) > 500:
-        return jsonify({"error": "text too long (>500)"}), 400
-    parent_id = data.get("parent_id")
-    if parent_id is not None:
-        try: parent_id = int(parent_id)
-        except (TypeError, ValueError):
-            return jsonify({"error": "invalid parent_id"}), 400
-    moment = db.get_moment(moment_id)
-    if not moment:
-        return jsonify({"error": "moment not found"}), 404
-
-    # 处理用户上传的图片
-    image_path = None
-    if image_data and image_data.startswith("data:image/"):
-        try:
-            header, b64 = image_data.split(",", 1)
-            ext = "jpg" if "jpeg" in header or "jpg" in header else \
-                  ("png" if "png" in header else "webp")
-            raw = base64.b64decode(b64)
-            if len(raw) > 8 * 1024 * 1024:
-                return jsonify({"error": "image too large"}), 400
-            save_dir = os.path.expanduser("~/resource/media/__user__/comments")
-            os.makedirs(save_dir, exist_ok=True)
-            fname = f"cmt_{int(time.time())}_{secrets.token_hex(3)}.{ext}"
-            full = os.path.join(save_dir, fname)
-            with open(full, "wb") as f: f.write(raw)
-            image_path = full
-        except Exception as e:
-            return jsonify({"error": f"image decode failed: {e}"}), 400
-
-    bot_id = moment["bot_id"]
-    user_display = _user_display_name()
-
-    # 决定要不要触发某个 bot 回复，触发哪个：
-    # 1. 在 bot 朋友圈下评论 → 触发该 bot
-    # 2. 在用户主页朋友圈下回复某条 bot 评论 → 触发该 bot
-    # 3. 在用户主页朋友圈下普通评论（parent=None 或 parent 是用户自己）→ 不触发
-    target_bot = None
-    if bot_id != USER_PROFILE_KEY:
-        target_bot = bot_id
-    elif parent_id:
-        parent_row = db.list_comments(moment_id)
-        parent_row = next((c for c in parent_row if c["id"] == parent_id), None)
-        pu = parent_row and parent_row["from_user"]
-        if pu and pu != user_display and pu != USER_PROFILE_KEY:
-            target_bot = pu  # 回复某个 bot 的评论 → 触发该 bot
-
-    pending = bool(target_bot)
-    cid = db.add_comment(moment_id, user_display, text, parent_id=parent_id,
-                          pending=pending, image_path=image_path)
-
-    if target_bot:
-        try:
-            cfg = config_loader.load_bot(target_bot)
-            if _trigger_bot_moment_reply(cfg, moment, text, cid, user_display) is None:
-                db.mark_pending(cid, False)  # bot 已停用：没人会回，别让评论一直挂"待回复"
-        except Exception as e:
-            db.mark_pending(cid, False)
-            print(f"[api_comment] trigger {target_bot} failed: {e}", flush=True)
-
-    return jsonify({
-        "id": cid, "ts": int(time.time()),
-        "from": user_display, "text": text, "pending": pending,
-        "parent_id": parent_id, "image_path": image_path,
-    })
-
-
-def _trigger_bot_moment_reply(cfg: dict, moment: dict, user_text: str,
-                              comment_id: int, user_display: str):
-    """写 inbox JSON 让 dispatcher 唤起 worker；worker 通过 Bash 调脚本回写朋友圈。"""
-    bot_dir = cfg["bot_channel_path"]
-    chat_id = str(cfg["chat_id"])
-    target = cfg["_bot_id"] if "_bot_id" in cfg else cfg.get("id")
-    if target in disabled_ids_safe():  # 需求⑤：停用的 bot 不写 inbox、不拉起（停用期间的评论不在启用后补发）
-        sys.stderr.write(f"[moments.web] {target} stopped, skip\n")
+    未匹配到路由的请求交给 Flask 回 404/405。后续任务的蓝图注册后，把对应端点
+    加进这里或按蓝图名放行。
+    """
+    if request.path == "/":
+        return redirect("/provider")
+    endpoint = request.endpoint
+    if endpoint is None:
         return None
-    inbox = os.path.join(bot_dir, "chats", chat_id, "inbox")
-    os.makedirs(inbox, exist_ok=True)
-
-    user_address = cfg.get("user_address", USER_ADDRESS_FALLBACK)
-    visibility_label = "私密" if (moment.get("visibility") or "public") == "private" else "公开"
-    moment_text = (moment.get("text") or "")[:200]
-    bot_id = cfg.get("id") or cfg.get("_bot_id")
-
-    # 取该 moment 当前所有评论（含历史 + 你刚发的这条），让 bot 看到完整上下文
-    # 排除 comment_id 自己（因为下面要单独突出"最新这条"）
-    all_comments = db.list_comments(moment["id"])
-    history_lines = []
-    for c in all_comments:
-        if c["id"] == comment_id:
-            continue  # 最新这条单独写
-        speaker = "你" if c["from_user"] == bot_id else user_address
-        history_lines.append(f"  {speaker}: {c['text']}")
-    history_block = (
-        "\n【这条朋友圈下的历史评论（按时间从早到晚）】\n" + "\n".join(history_lines) + "\n"
-        if history_lines else ""
-    )
-
-    is_public = (moment.get("visibility") or "public") != "private"
-    _del_script = os.path.join(_REPO_ROOT, "scripts", "moment_delete_comment.py")
-    public_warn = (
-        "⚠️【公开朋友圈泄密风险】\n"
-        f"原朋友圈是公开的，所有朋友都能看到评论。绝对不要在回复正文里用「{user_address}」这种亲密称呼，\n"
-        f"也不要透露你和 {user_address} 的私密关系。装作和 ta 是普通朋友、像回复任何一个评论一样。\n"
-        "如果发现自己之前的回复（在【历史评论】里）已经泄密了亲密称呼，请用 Bash 工具删除：\n"
-        f"  {PYTHON_BIN} {_del_script} <comment_id>\n"
-    ) if is_public else (
-        "（这是私密朋友圈，仅 " + user_address + " 可见，可以放开亲密称呼。）\n"
-    )
-
-    text = (
-        f"[moment-interaction] {user_address}在你的朋友圈下评论了：\n"
-        f"\"{user_text}\"\n\n"
-        f"原朋友圈（id={moment['id']}, {visibility_label}）：\"{moment_text}\"\n"
-        f"{history_block}\n"
-        f"{public_warn}\n"
-        f"请用 Bash 工具回写朋友圈评论：\n"
-        f"{PYTHON_BIN} {MOMENT_REPLY_SCRIPT} {moment['id']} {comment_id} \"<你的回复内容>\" [--image <图绝对路径>]\n\n"
-        f"【可附图（推荐配合人设需要时）】\n"
-        f"- 如果评论场景适合配图（{user_address} 让你发图、自拍、晒东西、画面感强），\n"
-        f"  先用 novelai-skill 生图，再加 --image <路径> 参数\n"
-        f"\n"
-        f"【👀 如果 {user_address} 在评论里说了「私发/私聊/发我/单独发我」等】\n"
-        f"- 这种情况下你**同时**用 reply() 工具发到 telegram 私聊（含图）\n"
-        f"- 朋友圈评论里只回一句简短的「私发了/已发」等表态，但真正的内容/图走 telegram\n"
-        f"- 否则不要在 telegram 私聊里说话\n"
-        f"\n"
-        f"【其他要求】\n"
-        f"- 回复要符合人设和当下心情；公开圈不暴露亲密关系\n"
-        f"- 顺着历史评论来，不要重复\n"
-        f"- 不用「你」指代任何人，直接称呼或省略主语\n"
-        f"- 朋友圈评论一句话即可"
-    )
-    _ = user_display
-
-    ms = int(time.time() * 1000)
-    fname = os.path.join(inbox, f"moment-reply-{ms}.json")
-    iso_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    payload = {
-        "text": text,
-        "chat_id": chat_id,
-        "from_id": chat_id,
-        "from_username": "user",
-        "sender_username": "user",
-        "chat_type": "private",
-        "is_bot_sender": False,
-        "ts": iso_ts,
-        "message_id": str(ms),
-    }
-    with open(fname, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False)
-
-    # 关键：worker 没活就 spawn（dispatcher 监听的是 telegram 不是 inbox）
-    _ensure_worker_alive(target, chat_id, bot_dir)
-    return fname
+    if endpoint in _SESSION_ENDPOINTS or endpoint == "provider_page":
+        return None
+    abort(404)
 
 
-# bot 端口：唯一事实源 = bots_registry（扫 configs/*.yml），加 bot 零代码改动。
-# 直接用 bots_client.bot_port 而不再自建派生表：那张表是导入期快照，
-# 既看不见新加的 bot，也漏掉了 DISPATCHER_PORT_<BOT> 覆盖（探活认、这里不认，两处不一致）。
-from moments.bots_client import bot_port as _bot_port
-from bots_registry import disabled_ids_safe, read_dispatcher_token  # noqa: E402  需求⑤ 停用判定唯一入口
-import urllib.request  # noqa: E402
-
-_urlopen = urllib.request.urlopen  # HTTP 注入点（INTERFACE §10.4），测试换成记录器
+# ── 启动参数（INTERFACE §1.2）──────────────────────────────────────────────
+class _StartupError(Exception):
+    def __init__(self, code: int, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
+def _listen_config(environ=None):
+    """返回 (host, port)；非法配置抛 ``_StartupError``（不 bind 端口）。"""
+    env = os.environ if environ is None else environ
+    mode = env.get("MOMENTS_WEB_MODE") or ""
+    if mode not in ("", "provider"):
+        raise _StartupError(1, "[moments.web] MOMENTS_WEB_MODE 只接受 provider")
+    host = env.get("MOMENTS_WEB_HOST") or "127.0.0.1"
+    raw_port = env.get("MOMENTS_WEB_PORT") or "8767"
+    digits = (raw_port.lstrip("0")
+              if raw_port.isascii() and raw_port.isdigit() else "")
+    port = int(digits) if 0 < len(digits) <= 5 else 0
+    if host != "127.0.0.1" or not 1 <= port <= 65535:
+        raise _StartupError(
+            2, "[moments.web] provider 模式启动参数非法："
+               "只绑 127.0.0.1，端口须为 1-65535 的整数")
+    return host, port
+
+
+# ── 兼容：moments/post.py 惰性导入的 worker 拉起入口 ──────────────────────
+# T16 的朋友圈投递仍走这里；本函数不参与 T06 的壳路由，导入时也不加载网络/令牌。
 def _ensure_worker_alive(bot_id: str, chat_id: str, bot_dir: str):
-    """POST 该 bot dispatcher 的 /ensure_worker：查活+拉起原子完成（跨平台，替代 tmux）。
-    session uuid/slug 由 dispatcher 内部算，这里不再猜（旧版按 mtime 猜 uuid + 手拼
-    slug 是丢记忆隐患，且旧 per-chat 会话名根本匹配不上 unified worker）。
-    停用的 bot（需求⑤）→ 不拉起。"""
+    import urllib.request
+    from bots_registry import disabled_ids_safe, read_dispatcher_token
+    from moments.bots_client import bot_port
+
     if bot_id in disabled_ids_safe():
-        sys.stderr.write(f"[moments.web] {bot_id} stopped, skip\n")
+        sys.stderr.write("[moments.web] %s stopped, skip\n" % bot_id)
         return None
-    port = _bot_port(bot_id)
+    port = bot_port(bot_id)
     if not port:
-        sys.stderr.write(f"[ensure_worker] 未知 bot {bot_id}，跳过 spawn\n")
-        return
+        sys.stderr.write("[ensure_worker] 未知 bot %s，跳过 spawn\n" % bot_id)
+        return None
     try:
-        # H-15：dispatcher 本机接口需口令；读 <bot_dir>/.api-token 并带上。读不到 →
-        # 记一行日志并【拒绝该次调用】（fail-closed），绝不放行无口令请求。
         token = read_dispatcher_token(bot_id, bot_dir)
         if not token:
-            sys.stderr.write(f"[ensure_worker] api_token_missing bot={bot_id}：未读到 .api-token，"
-                             f"拒绝本次调用（fail-closed）\n")
+            sys.stderr.write(
+                "[ensure_worker] api_token_missing bot=%s：未读到 .api-token，"
+                "拒绝本次调用（fail-closed）\n" % bot_id)
             return None
         req = urllib.request.Request(
-            f"http://127.0.0.1:{port}/ensure_worker", method="POST",
+            "http://127.0.0.1:%d/ensure_worker" % port, method="POST",
             headers={"X-Api-Token": token})
-        _urlopen(req, timeout=5)
+        urllib.request.urlopen(req, timeout=5)
     except Exception as e:
-        sys.stderr.write(f"[ensure_worker] {bot_id} 失败(dispatcher 未起?): {e}\n")
-
-
-@app.route("/api/moment", methods=["POST"])
-def api_post_user_moment():
-    """用户在主页发朋友圈。三个 bot 各自异步触发评论决策。"""
-    import base64
-    data = request.get_json(silent=True) or {}
-    text = (data.get("text") or "").strip()
-    visibility = data.get("visibility") or "public"
-    if visibility not in ("public", "private"):
-        visibility = "public"
-    image_data = data.get("image")  # 可选 base64 dataURL
-    if not text and not image_data:
-        return jsonify({"error": "empty"}), 400
-    if len(text) > 2000:
-        return jsonify({"error": "text too long (>2000)"}), 400
-
-    image_path = None
-    if image_data:
-        # 写到 ~/resource/media/__user__/auto/
-        save_dir = os.path.expanduser("~/resource/media/__user__/auto")
-        os.makedirs(save_dir, exist_ok=True)
-        if image_data.startswith("data:image/"):
-            try:
-                header, b64 = image_data.split(",", 1)
-                ext = "jpg" if "jpeg" in header or "jpg" in header else \
-                      ("png" if "png" in header else "webp")
-                raw = base64.b64decode(b64)
-                if len(raw) > 8 * 1024 * 1024:
-                    return jsonify({"error": "image too large (>8MB raw)"}), 400
-                fname = f"user_{int(time.time())}.{ext}"
-                full = os.path.join(save_dir, fname)
-                with open(full, "wb") as f: f.write(raw)
-                image_path = full
-            except Exception as e:
-                return jsonify({"error": f"image decode failed: {e}"}), 400
-
-    user_display = _user_display_name()
-    moment_id = db.insert_moment(
-        bot_id=USER_PROFILE_KEY, ts=int(time.time()),
-        text=text, image_path=image_path,
-        metadata={"author_display": user_display},
-        kind="user_post", visibility=visibility,
-    )
-
-    # 触发每个 bot 异步读 + 决策评论
-    for b in config_loader.list_enabled_bots():
-        try:
-            _trigger_bot_see_user_moment(b, moment_id, text, image_path, visibility)
-        except Exception as e:
-            print(f"[user_moment] trigger {b.get('_bot_id')} failed: {e}", flush=True)
-
-    return jsonify({"id": moment_id, "image_path": image_path,
-                    "visibility": visibility, "text": text})
-
-
-def _trigger_bot_see_user_moment(bot_cfg: dict, moment_id: int, text: str,
-                                  image_path: str, visibility: str):
-    """通知一个 bot：用户发了一条朋友圈，要不要评论 ta 自己决定。
-
-    inbox 同时给该 bot 看「该 moment 现有的所有评论」，避免:
-    - 重复其他 bot 已经说过的话
-    - 不知道还有谁评了
-    """
-    import json as _json
-    bot_id = bot_cfg["_bot_id"]
-    bot_dir = bot_cfg["bot_channel_path"]
-    chat_id = str(bot_cfg.get("chat_id", ""))
-    if not chat_id:
-        return
-    inbox = os.path.join(bot_dir, "chats", chat_id, "inbox")
-    os.makedirs(inbox, exist_ok=True)
-
-    user_address = bot_cfg.get("user_address", USER_ADDRESS_FALLBACK)
-    user_display = _user_display_name()
-    label = "私密（仅你可见）" if visibility == "private" else "公开"
-    image_note = f"\n（{user_address} 还附了张图：{image_path}）" if image_path else ""
-
-    # 读其他 bot 已经评过的（按时间排）
-    others = []
-    for c in db.list_comments(moment_id):
-        if c["from_user"] == bot_id:
-            continue  # 自己之前评过的也算，但这种情况罕见
-        if c["from_user"] == USER_PROFILE_KEY or c["from_user"] == user_display:
-            speaker = user_address
-        else:
-            # 其他 bot 的 display_name
-            other_cfg = config_loader.load_bot(c["from_user"])
-            speaker = other_cfg.get("display_name", c["from_user"])
-        others.append(f"  {speaker}: {c['text']}")
-    history_block = (
-        "\n【这条朋友圈下其他人已经评过的】\n" + "\n".join(others) + "\n"
-        if others else ""
-    )
-
-    # user 最近 7 天的朋友圈（让 bot 知道 user 最近在想啥/做啥，建立连贯感）
-    seven_days_ago = int(time.time()) - 7 * 86400
-    user_recent = db.list_moments(bot_id=USER_PROFILE_KEY, limit=20, since_ts=seven_days_ago)
-    user_history_block = ""
-    if user_recent:
-        # 排除当前正在评论的这条
-        items = [m for m in user_recent if m["id"] != moment_id][:8]
-        if items:
-            lines = [f"  · [{datetime.fromtimestamp(m['ts']).strftime('%m-%d %H:%M')}] {m['text'][:60]}"
-                     for m in items]
-            user_history_block = (
-                f"\n【{user_address} 最近 7 天发过的其他朋友圈】（参考语境，不要直接复述）：\n"
-                + "\n".join(lines) + "\n"
-            )
-
-    moment_like_script = MOMENT_REPLY_SCRIPT.replace("moment_reply.py", "moment_like.py")
-    inbox_text = (
-        f"[user-moment] {user_address} 刚发了一条朋友圈（{label}）：\n"
-        f"\"{text}\"{image_note}\n"
-        f"{history_block}{user_history_block}\n"
-        f"你看到了。**自己决定**4 选 1（按真人朋友圈逻辑）：\n"
-        f"  A. **只点赞**（看到了但没话说，最常见的轻互动）：\n"
-        f"     {PYTHON_BIN} {moment_like_script} {moment_id}\n"
-        f"  B. **只评论**：\n"
-        f"     {PYTHON_BIN} {MOMENT_REPLY_SCRIPT} {moment_id} 0 \"<你的评论>\" [--image <图>]\n"
-        f"  C. **点赞+评论**（确实有话想说）：先调 A 再调 B\n"
-        f"  D. **什么都不做**（无感、跟自己没关系）：什么也不写\n"
-        f"\n"
-        f"判断准则（按你的人设）：\n"
-        f"- 内容真戳到你/想呼应 → C（赞+评）\n"
-        f"- 内容轻量好玩但没特别想说 → A（点赞）\n"
-        f"- 看不太懂 / 跟你无关 → D（无视）\n"
-        f"- 私密内容（仅你可见的）→ 倾向 C\n"
-        f"- 已有其他人评过 → **不要重复**同样意思；可以接话或换角度，或者改成 A 点赞\n"
-        f"- 不要在 telegram 私聊里说话\n"
-        f"- 评论里**不要**用「你」指代 {user_address}，直接称「{user_address}」或省略主语"
-    )
-
-    ms = int(time.time() * 1000)
-    fname = os.path.join(inbox, f"user-moment-{ms}-{moment_id}.json")
-    iso_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    payload = {
-        "text": inbox_text, "chat_id": chat_id, "from_id": chat_id,
-        "from_username": "user", "sender_username": "user",
-        "chat_type": "private", "is_bot_sender": False,
-        "ts": iso_ts, "message_id": str(ms),
-    }
-    with open(fname, "w", encoding="utf-8") as f:
-        _json.dump(payload, f, ensure_ascii=False)
-    _ensure_worker_alive(bot_id, chat_id, bot_dir)
-
-
-@app.route("/api/comment/<int:comment_id>", methods=["DELETE"])
-def api_delete_comment(comment_id):
-    """删除评论。只允许删除署名为 user_display_name 的评论（不能删 bot 的回复）。"""
-    user_display = _user_display_name()
-    ok = db.delete_comment(comment_id, only_from=user_display)
-    if not ok:
-        return jsonify({"error": "comment not found or not yours"}), 404
-    return jsonify({"ok": True, "id": comment_id})
-
-
-@app.route("/api/image_provider", methods=["GET", "POST"])
-def api_image_provider():
-    """切换/查询当前生图 provider（novelai|comfyui），按 scope 解耦。
-
-    GET  /api/image_provider                → 兼容旧版，返回 provider 字段
-    GET  /api/image_provider?scope=moment   → 朋友圈用什么
-    GET  /api/image_provider?scope=telegram → Telegram bot 用什么
-    POST {"scope":"telegram","provider":"comfyui"} → 切对应 scope；省略 scope 切兼容字段
-
-    持久化方式：直接改 _global.yml 的 image_generation 下三个字段之一。
-    """
-    # 读写都走 hub_config 认的路径（HUB_CONFIGS_DIR 接缝）：原来 GET 读
-    # config_loader.GLOBAL_CFG_PATH（钉死仓库 configs/）、POST 写 hub_config 路径，
-    # 设了该 env 就读写分离，页面显示与磁盘不一致。
-    import yaml
-    from moments import hub_config, provider_model
-    g = yaml.safe_load(hub_config.read_global() or "") or {}
-    img = g.setdefault("moments", {}).setdefault("image_generation", {})
-
-    if request.method == "GET":
-        scope = request.args.get("scope", "").strip()
-        if scope == "moment":
-            p = img.get("provider_moment") or img.get("provider", "novelai")
-        elif scope == "telegram":
-            p = img.get("provider_telegram") or img.get("provider", "novelai")
-        else:
-            p = img.get("provider", "novelai")
-        return jsonify({"provider": p, "scope": scope or "legacy"})
-
-    data = request.get_json(silent=True) or {}
-    new_provider = data.get("provider")
-    scope = (data.get("scope") or "").strip()
-    if new_provider not in ("novelai", "comfyui"):
-        return jsonify({"error": "provider must be novelai|comfyui"}), 400
-
-    # 兼容：不传 scope 同时切两个 + 兼容字段
-    fields = {"moment": ("provider_moment",), "telegram": ("provider_telegram",),
-              "": ("provider", "provider_moment", "provider_telegram")}.get(scope)
-    if fields is None:
-        return jsonify({"error": "scope must be moment|telegram or omitted"}), 400
-
-    # F2：原来这里是把整表 dump 回去 —— 切一次生图 provider 就把 _global.yml 的
-    # 注释、锚点、merge key、键序、数值格式全展平，用户手写的配置面目全非。
-    # 改走 hub_config 的行级编辑器：只替换那一个标量的那几个字节，其余逐字节不动。
-    # 顺带拿到备份 + 原子写 + 与参数页共用的写锁（两边写的是同一个文件）。
-    try:
-        with hub_config.hold_config_lock():
-            text = hub_config.read_global()
-            if text is None:
-                return jsonify({"error": "_global.yml 读不出来"}), 500
-            for name in fields:
-                root = hub_config.compose(text)      # 上一轮可能插了行，下标要重新算
-                text = hub_config.set_scalar(text, root,
-                                             "moments.image_generation." + name,
-                                             new_provider, "str")
-            # backup=False：单枚举翻转不留备份 —— 本端点在低权面（仅 access 门），
-            # 照常备份会让低权用户挤掉 admin 参数页的 5 份 save 配额
-            hub_config.commit(text, backup=False)
-    except provider_model.HubError as e:
-        return jsonify({"error": e.error, "detail": e.detail}), e.status
-    except yaml.YAMLError:
-        return jsonify({"error": "_global.yml 解析失败，先用管理台的高级模式修好"}), 500
-    return jsonify({"provider": new_provider, "scope": scope or "all", "ok": True})
-
-
-@app.route("/api/profile/<bot_id>", methods=["GET"])
-def api_get_profile(bot_id):
-    return jsonify(db.get_profile(bot_id))
-
-
-@app.route("/api/profile/<bot_id>", methods=["POST"])
-def api_set_profile(bot_id):
-    data = request.get_json(silent=True) or {}
-    avatar = data.get("avatar_url")
-    banner = data.get("banner_url")
-    # 后端兜底：拒绝单字段 > 300KB（base64），防止前端绕过
-    for k, v in [("avatar_url", avatar), ("banner_url", banner)]:
-        if v and len(v) > 300 * 1024:
-            return jsonify({"error": f"{k} too large ({len(v)} bytes), must <= 300KB"}), 400
-    if avatar is not None or banner is not None:
-        db.set_profile(bot_id, avatar_url=avatar, banner_url=banner)
-    if "display_name" in data:
-        new_name = (data.get("display_name") or "").strip()
-        if len(new_name) > 30:
-            return jsonify({"error": "display_name too long (>30)"}), 400
-        db.set_display_name(bot_id, new_name)
-    return jsonify({"ok": True, **db.get_profile(bot_id)})
-
-
-@app.route("/api/moment/<int:moment_id>")
-def api_moment_detail(moment_id):
-    m = db.get_moment(moment_id)
-    if not m:
-        return jsonify({"error": "not found"}), 404
-    out = _format_moment(m)
-    out["likers"] = [r["liker"] for r in db.list_likers(moment_id)]
-    out["comments"] = db.list_comments(moment_id)
-    return jsonify(out)
-
-
-# 安全修复(2026-09-03)：此路由曾把 URL 直接拼成绝对路径读文件 —— 一旦经隧道暴露
-# 即公网任意文件读（send_from_directory 的防逃逸只护 basename，目录部分完全失控）。
-# 现按 realpath 白名单收口到 media 根：库里/前端拼的 image_path 全落在其下
-# （评论图 __user__/comments、styles 示例 __styles__、各 bot 媒体目录），根外一律 404。
-_IMAGE_ROOT = os.path.realpath(os.path.expanduser("~/resource/media"))
-
-@app.route("/image/<path:filename>")
-def serve_image(filename):
-    """只服务 media 根下的图片；realpath 校验，符号链接逃逸同样拦截"""
-    full_path = "/" + filename if not filename.startswith("/") else filename
-    real = os.path.realpath(full_path)
-    if not (real == _IMAGE_ROOT or real.startswith(_IMAGE_ROOT + os.sep)):
-        return "Not found", 404
-    if not os.path.exists(real):
-        return "Not found", 404
-    full_path = real
-    directory = os.path.dirname(full_path)
-    name = os.path.basename(full_path)
-    resp = send_from_directory(directory, name)
-    # 图片内容不会变（含时间戳路径），让浏览器永久缓存
-    resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
-    return resp
+        sys.stderr.write("[ensure_worker] %s 失败(dispatcher 未起?): %s\n"
+                         % (bot_id, e))
+    return None
 
 
 if __name__ == "__main__":
-    # 默认监听改回环（原来是 0.0.0.0）：绑定地址和隧道 ingress 是两个独立开关，
-    # 只关一个等于没关。想让局域网访问就显式设 MOMENTS_WEB_HOST + HUB_ACCESS_PASSWORD。
-    host = os.environ.get("MOMENTS_WEB_HOST", "127.0.0.1")
-    # 闸本身已在 hub_auth.install() 里跑过（抽查 13：gunicorn/waitress 那类起法也得受保护），
-    # 这里只取它的判定结果 —— 不重跑，免得 REFUSE 行打两遍。
-    _exit_code = app.extensions.get("hub_startup_refused")
-    if _exit_code is not None:
-        sys.exit(_exit_code)          # 不 bind 端口，不初始化 db
-    db.init()
-    port = int(os.environ.get("MOMENTS_WEB_PORT", "8765"))
-    if _hub_routes is not None:
-        # BUG-24：管理台的启动自愈只在**真的要开门户**时跑一次。
-        # 原来挂在蓝图注册（= import 期）上，而 moments/post.py 也 import 本模块 ——
-        # 每个 bot 进程起来都会去改 cliproxy 的 prefix，还会被网络往返拖住 import。
-        # 它自己吞掉全部异常，起不来也不会拦住 app.run。
-        _hub_routes.reconcile()
+    try:
+        host, port = _listen_config()
+    except _StartupError as e:
+        sys.stderr.write(e.message + "\n")
+        sys.exit(e.code)
+    # 收敛器属于供应商栈（T09）；T06 壳如实报 off。
+    sys.stderr.write("[moments.web] startup mode=provider port=%d converger=off\n"
+                     % port)
+    sys.stderr.flush()
     app.run(host=host, port=port, debug=False)

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>管理台 · 8767</title>
+<style>
+:root { --bg:#ededed; --card:#fff; --ink:#181818; --ink-soft:#555; --ink-faint:#888;
+        --hairline:rgba(0,0,0,.08); --wxgreen:#07c160;
+        --font-body:'Noto Sans SC','PingFang SC','Microsoft YaHei',system-ui,sans-serif; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#000; --card:#1c1c1e; --ink:#f0f0f0; --ink-soft:#c0c0c0;
+          --ink-faint:#8a8a8a; --hairline:rgba(255,255,255,.1); }
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
+       min-height:100vh; }
+.wrap { max-width:760px; margin:0 auto; padding:24px 16px 48px; }
+.card { background:var(--card); border:1px solid var(--hairline); border-radius:12px;
+        padding:20px; margin-bottom:14px; }
+h1 { font-size:19px; font-weight:600; margin-bottom:6px; }
+.sub { color:var(--ink-faint); font-size:13px; margin-bottom:18px; }
+h2 { font-size:15px; font-weight:600; margin-bottom:8px; }
+p { color:var(--ink-soft); font-size:14px; line-height:1.7; }
+code { font-family:ui-monospace,monospace; font-size:13px; }
+.btn { border:none; border-radius:8px; padding:9px 14px; font-size:14px;
+       font-family:var(--font-body); cursor:pointer; background:var(--wxgreen);
+       color:#fff; }
+.btn.ghost { background:transparent; color:var(--ink-soft);
+             border:1px solid var(--hairline); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>管理台</h1>
+    <div class="sub">8767 · 公开版面板壳</div>
+    <p>登录门与面板进程已就绪。总览、生命周期、功能开关、供应商与画风页面会由后续版本注册。</p>
+  </div>
+  <div class="card">
+    <h2>会话</h2>
+    <form method="post" action="/logout">
+      <button class="btn ghost" type="submit">退出登录</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>
