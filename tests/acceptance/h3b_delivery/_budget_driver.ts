@@ -14,7 +14,7 @@ mkdirSync(HOME, { recursive: true }); mkdirSync(STUB, { recursive: true }); mkdi
 for (const n of ['claude', 'tmux', 'launchctl', 'pkill', 'schtasks', 'kill']) {
   const p = join(STUB, n); writeFileSync(p, `#!/bin/sh\nexit 97\n`); chmodSync(p, 0o755)
 }
-writeFileSync(join(CH, 'access.json'), JSON.stringify({ allowFrom: ['100001'], groups: {} }))
+writeFileSync(join(CH, 'access.json'), JSON.stringify({ allowFrom: ['123456789'], groups: {} }))
 Object.assign(process.env, {
   CHANNEL_DIR: CH, HOME, PATH: `${STUB}:${process.env.PATH ?? ''}`, CLAUDE_BIN: join(STUB, 'claude'),
   CLAUDEBOTLIFE_TEST: '1', CLAUDEBOTLIFE_TEST_ROOT: BASE, BOT_NAME: 'h3bbud',
@@ -57,7 +57,7 @@ let returned = false, status = 0, body: any = null
 try {
   const r = await fetch(`http://127.0.0.1:${port}/send`, {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-api-token': token },
-    body: JSON.stringify({ chat_id: '100001', text: '段A', files: [img] }),
+    body: JSON.stringify({ chat_id: '123456789', text: '段A', files: [img] }),
     signal: ctl.signal,
   })
   status = r.status

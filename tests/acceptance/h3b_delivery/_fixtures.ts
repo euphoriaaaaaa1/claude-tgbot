@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 
-export const OWNER = '100001'
+export const OWNER = '123456789'
 export const NONOWNER = '100002'
 export const GROUP = '-100999000111'
 export const BOT_NAME = 'h3bdeliv'

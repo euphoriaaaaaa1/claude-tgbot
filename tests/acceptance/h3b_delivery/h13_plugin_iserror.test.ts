@@ -36,11 +36,11 @@ afterAll(() => { try { dispatcher?.stop(true) } catch { /* ignore */ } try { rmS
 test('插件_reply收到sent小于planned_返回isError_且不含正文', async () => {
   const r = await callPluginTool({
     tool: 'reply',
-    args: { text: BODY, chat_id: '100001' },
+    args: { text: BODY, chat_id: '123456789' },
     env: {
       CHANNEL_DIR: CH,
       TELEGRAM_WORKER_BOT: 'h3bplug',
-      TELEGRAM_WORKER_CHAT_ID: '100001',
+      TELEGRAM_WORKER_CHAT_ID: '123456789',
       TELEGRAM_DISPATCHER_URL: base,
       DISPATCHER_URL: base,
       BOT_NAME: 'h3bplug',
@@ -57,9 +57,9 @@ test('插件_reply全部送达_不返回isError', async () => {
   try {
     const r = await callPluginTool({
       tool: 'reply',
-      args: { text: 'hi', chat_id: '100001' },
+      args: { text: 'hi', chat_id: '123456789' },
       env: {
-        CHANNEL_DIR: CH, TELEGRAM_WORKER_BOT: 'h3bplug', TELEGRAM_WORKER_CHAT_ID: '100001',
+        CHANNEL_DIR: CH, TELEGRAM_WORKER_BOT: 'h3bplug', TELEGRAM_WORKER_CHAT_ID: '123456789',
         TELEGRAM_DISPATCHER_URL: `http://127.0.0.1:${okSrv.port}`, DISPATCHER_URL: `http://127.0.0.1:${okSrv.port}`, BOT_NAME: 'h3bplug',
       },
     })

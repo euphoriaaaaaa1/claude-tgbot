@@ -34,7 +34,7 @@ if (spec.claudeStub === 'ignore-term') {
   const c = join(STUB, 'claude')
   writeFileSync(c, `#!/bin/sh\nsleep 30\n`); chmodSync(c, 0o755)
 }
-writeFileSync(join(CH, 'access.json'), JSON.stringify(spec.access ?? { allowFrom: ['100001'], groups: {} }))
+writeFileSync(join(CH, 'access.json'), JSON.stringify(spec.access ?? { allowFrom: ['123456789'], groups: {} }))
 process.env.CHANNEL_DIR = CH
 process.env.HOME = HOME
 process.env.PATH = `${STUB}:${process.env.PATH ?? ''}`
@@ -116,7 +116,7 @@ let sessionPath = ''
 if (spec.preSession) {
   const wm: any = await import('../../../dispatcher/worker-manager')
   const slug = wm.projectSlug(CH)
-  const uuid = wm.unifiedSessionUuid(String(spec.sessionChat ?? '100001'))
+  const uuid = wm.unifiedSessionUuid(String(spec.sessionChat ?? '123456789'))
   sessionDir = join(HOME, '.claude', 'projects', slug)
   mkdirSync(sessionDir, { recursive: true })
   sessionPath = join(sessionDir, uuid + '.jsonl')

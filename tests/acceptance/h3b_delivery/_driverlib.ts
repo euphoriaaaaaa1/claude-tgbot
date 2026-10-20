@@ -34,7 +34,7 @@ export async function runDriver(spec: Record<string, unknown>, timeoutMs = 30000
 }
 
 // ─── Telegram 更新构造 ───────────────────────────────────────────────────
-export const OWNER = '100001'
+export const OWNER = '123456789'
 export const NONOWNER = '100002'
 
 let seq = 1

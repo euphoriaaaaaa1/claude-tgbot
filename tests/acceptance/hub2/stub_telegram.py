@@ -14,7 +14,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # 桩里回显用的"看起来像真 token"的串，用于 §4.1 脱敏用例
-LEAK_TOKEN = "987654321:AAFleakLeakLeakLeakLeakLeakLeak0000"
+LEAK_TOKEN = "987654321:AA-your-telegram-bot-token-here"
 
 
 class _H(BaseHTTPRequestHandler):

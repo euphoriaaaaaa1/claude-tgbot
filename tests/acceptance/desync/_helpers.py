@@ -6,7 +6,7 @@
   PATH 前置拒绝桩（tmux/launchctl/pkill/claude/schtasks → stderr "test_mode: real <名> called"，exit 97）；
   假服务只用 port 0；临时注册表每个 bot 显式写一个非生产端口（绝不落到默认 17801-17804）；
   TELEGRAM_DISPATCHER_URL/DISPATCHER_URL 指向本机无人监听的随机端口。
-- 绝不使用 ~、$USER、/Users/wsxwj、~/.claude/dispatcher；绝不 launchctl；绝不连 17801-17804。
+- 绝不使用 ~、$USER、/Users/<owner>、~/.claude/dispatcher；绝不 launchctl；绝不连 17801-17804。
 """
 import datetime
 import importlib
@@ -48,7 +48,7 @@ def bot_msg(ts, who="bot1", text="哈哈"):
 
 @pytest.fixture
 def iso(tmp_path, monkeypatch):
-    """隔离环境；返回各目录路径的 dict（root/home/cfg/ch/st/md/gt/mk/stub/calls）。"""
+    """隔离环境；返回各目录路径的 dict（root、home、cfg/ch/st/md/gt/mk/stub/calls）。"""
     root = str(tmp_path)
     dirs = {"root": root}
     for k in ("home", "cfg", "ch", "st", "md", "gt", "mk", "stub"):

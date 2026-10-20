@@ -30,7 +30,7 @@ const errMsg = (code: number, desc: string) => new Response(
 
 // ─── 契约 11：/send 响应体恒含 planned / sent / dropped ────────────────────
 test('响应体恒含 planned_sent_dropped（全送达）', async () => {
-  const r = await post({ chat_id: '100001', text: '你好' })
+  const r = await post({ chat_id: '123456789', text: '你好' })
   expect(r.status).toBeGreaterThanOrEqual(200); expect(r.status).toBeLessThan(300)
   expect(typeof r.json?.planned).toBe('number')
   expect(typeof r.json?.sent).toBe('number')
@@ -41,7 +41,7 @@ test('响应体恒含 planned_sent_dropped（全送达）', async () => {
 
 // ─── 契约 11b：未带 batch_id → 不幂等，响应 idempotent:false ───────────────
 test('无 batch_id_响应 idempotent:false', async () => {
-  const r = await post({ chat_id: '100001', text: 'hi' })
+  const r = await post({ chat_id: '123456789', text: 'hi' })
   expect(r.json?.idempotent).toBe(false)
 })
 
@@ -58,7 +58,7 @@ test('引用失败去引用重发成功_计入sent且dropped为空', async () =>
     }
     return new Response(JSON.stringify(okMsg), { headers: { 'content-type': 'application/json' } })
   })
-  const r = await post({ chat_id: '100001', text: '带引用的回复', reply_to: 7 })
+  const r = await post({ chat_id: '123456789', text: '带引用的回复', reply_to: 7 })
   expect(r.status).toBeGreaterThanOrEqual(200); expect(r.status).toBeLessThan(300)
   expect(r.json?.dropped).toEqual([])
   expect(r.json?.sent).toBe(r.json?.planned)
@@ -77,7 +77,7 @@ test('部分丢段_2xx且dropped如实列出', async () => {
     }
     return new Response(JSON.stringify(okMsg), { headers: { 'content-type': 'application/json' } })
   })
-  const r = await post({ chat_id: '100001', text: '看图', files: [img] })
+  const r = await post({ chat_id: '123456789', text: '看图', files: [img] })
   expect(r.status).toBeGreaterThanOrEqual(200); expect(r.status).toBeLessThan(300) // sent(text)>0
   expect(Array.isArray(r.json?.dropped)).toBe(true)
   expect(r.json.dropped.length).toBe(1)
@@ -97,7 +97,7 @@ test('dropped的index从0起_与计划顺序一致_reason在固定集合内', as
     }
     return new Response(JSON.stringify(okMsg), { headers: { 'content-type': 'application/json' } })
   })
-  const r = await post({ chat_id: '100001', text: 't', files: [a, b] })
+  const r = await post({ chat_id: '123456789', text: 't', files: [a, b] })
   expect(r.json.planned).toBe(3) // text, a, b
   const dropped = r.json.dropped as any[]
   expect(Array.isArray(dropped)).toBe(true)
@@ -112,7 +112,7 @@ test('全丢_502且带planned_sent_dropped', async () => {
     if (method === 'sendMessage') return errMsg(400, 'Bad Request: chat not found')
     return new Response(JSON.stringify(okMsg), { headers: { 'content-type': 'application/json' } })
   })
-  const r = await post({ chat_id: '100001', text: '只有文本' })
+  const r = await post({ chat_id: '123456789', text: '只有文本' })
   expect(r.status).toBe(502)
   expect(r.json?.planned).toBe(1)
   expect(r.json?.sent).toBe(0)
@@ -130,7 +130,7 @@ test('文件段失败_按段跳过_不整条500_后续段照发', async () => {
     if (method === 'sendPhoto') { photo++; if (photo === 1) return errMsg(400, 'Bad Request: wrong file') }
     return new Response(JSON.stringify(okMsg), { headers: { 'content-type': 'application/json' } })
   })
-  const r = await post({ chat_id: '100001', text: 't', files: [a, b] })
+  const r = await post({ chat_id: '123456789', text: 't', files: [a, b] })
   expect(r.status).toBeGreaterThanOrEqual(200); expect(r.status).toBeLessThan(300)
   expect(r.status).not.toBe(500)
   expect(r.json.sent).toBe(2)             // text + 第二张图
@@ -145,7 +145,7 @@ test('引用一直失败_同段最多重试2次_不无限重试', async () => {
     if (method === 'sendMessage') return errMsg(400, 'Bad Request: message to be replied not found')
     return new Response(JSON.stringify(okMsg), { headers: { 'content-type': 'application/json' } })
   })
-  const r = await post({ chat_id: '100001', text: '永远失败', reply_to: 9 })
+  const r = await post({ chat_id: '123456789', text: '永远失败', reply_to: 9 })
   expect(tgCount('sendMessage')).toBeLessThanOrEqual(2) // 每段最多 2 次
   expect(tgCount('sendMessage')).toBeGreaterThanOrEqual(2) // 应有去引用重发
   expect(r.status).toBe(502)                              // 全丢
@@ -154,7 +154,7 @@ test('引用一直失败_同段最多重试2次_不无限重试', async () => {
 
 // ─── 契约 11b：同一 batch_id 重复请求 → 第二次零发送 + 响应逐字相同 ─────────
 test('同batch_id重复请求_第二次零发送_响应逐字相同', async () => {
-  const body = { chat_id: '100001', text: '幂等测试', batch_id: 'BATCH-B1' }
+  const body = { chat_id: '123456789', text: '幂等测试', batch_id: 'BATCH-B1' }
   const first = await post(body)
   const n1 = tgCount('sendMessage')
   expect(n1).toBeGreaterThan(0)
@@ -165,9 +165,9 @@ test('同batch_id重复请求_第二次零发送_响应逐字相同', async () =
 
 // ─── 反向：不同 batch_id 各自发送（证明幂等不是"一律回放"）─────────────────
 test('不同batch_id_各自照常发送', async () => {
-  await post({ chat_id: '100001', text: 'x1', batch_id: 'BATCH-C1' })
+  await post({ chat_id: '123456789', text: 'x1', batch_id: 'BATCH-C1' })
   const n1 = tgCount('sendMessage')
-  await post({ chat_id: '100001', text: 'x2', batch_id: 'BATCH-C2' })
+  await post({ chat_id: '123456789', text: 'x2', batch_id: 'BATCH-C2' })
   expect(tgCount('sendMessage')).toBeGreaterThan(n1)
 })
 
@@ -177,7 +177,7 @@ test('全丢502_通道目录零改动', async () => {
   tgSetHandler((method) => method === 'sendMessage'
     ? errMsg(500, 'boom')
     : new Response(JSON.stringify(okMsg), { headers: { 'content-type': 'application/json' } }))
-  await post({ chat_id: '100001', text: 'x' })
+  await post({ chat_id: '123456789', text: 'x' })
   expect(snapshotDir(CHANNEL_DIR)).toEqual(before)
 })
 
@@ -187,6 +187,6 @@ test('dropped原因不含用户正文', async () => {
   tgSetHandler((method) => method === 'sendMessage'
     ? errMsg(400, `Bad Request: ${secret}`)
     : new Response(JSON.stringify(okMsg), { headers: { 'content-type': 'application/json' } }))
-  const r = await post({ chat_id: '100001', text: secret })
+  const r = await post({ chat_id: '123456789', text: secret })
   expect(r.text.includes(secret)).toBe(false)       // 正文不得回显到响应
 })

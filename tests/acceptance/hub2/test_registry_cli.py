@@ -166,7 +166,7 @@ def test_CLI_stdout里不出现任何token形状的串(configs_dir, global_yml, 
               namespace_uuid="55555555-5555-5555-5555-555555555555")
     (channels_dir / "alpha").mkdir(parents=True, exist_ok=True)
     (channels_dir / "alpha" / ".env").write_text(
-        "TELEGRAM_BOT_TOKEN=123456789:test-AAaaBBbbCCccDDddEEeeFFggHHhh11\n",
+        "TELEGRAM_BOT_TOKEN=123456789:AA-your-telegram-bot-token-here\n",
         encoding="utf-8")
     p = run_cli(configs_dir, "--format=json")
     assert not re.search(r"\d{8,10}:[A-Za-z0-9_-]{30,}", p.stdout + p.stderr)
