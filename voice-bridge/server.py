@@ -19,8 +19,11 @@ LOG_DIR = ROOT / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
 HTTP_BASE = os.environ.get("VOICE_BRIDGE_URL", "http://127.0.0.1:7788")
-# HTTP 服务设了 VOICE_BRIDGE_TOKEN 才需要带；没设则原样请求（与以前行为一致）
-BRIDGE_TOKEN = os.environ.get("VOICE_BRIDGE_TOKEN", "").strip()
+# 令牌读取与 HTTP 服务端同一套优先级：VOICE_BRIDGE_TOKEN 环境变量优先，其次
+# VOICE_BRIDGE_TOKEN_FILE（install.sh 只导出文件路径）。只读环境变量会让 MCP 代理
+# 拿不到令牌，所有转写请求被服务端 401。
+from auth_gate import load_token  # noqa: E402
+BRIDGE_TOKEN = load_token()
 
 logging.basicConfig(
     level=logging.INFO,
