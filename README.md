@@ -41,11 +41,25 @@ bash install.sh
 
 1. 检查 Python / Bun / Claude CLI；
 2. `pip install -r requirements.txt`，并在 `dispatcher/` 里 `bun install`；
-3. 只在文件不存在时复制 `configs/_global.example.yml` → `configs/_global.yml`、`restart-bots.example.sh` → `restart-bots.sh`；
+3. 只在文件不存在时复制 `configs/_global.example.yml` → `configs/_global.yml`、`configs/providers.example.json` → `configs/providers.json`（0600）、`restart-bots.example.sh` → `restart-bots.sh`；
 4. 运行 `scripts/setup_keys.sh`，逐项告诉你去哪拿、填哪里；
-5. 注册登录自启（macOS launchd / Linux systemd --user）。
+5. 注册登录自启（macOS launchd / Linux systemd --user），并注册 `provider-web`（8767 管理台）。
 
 重复运行是安全的：已有的配置、`.env`、`channels/<bot>/` 不会被覆盖。只想预览：`DRY_RUN=1 bash install.sh`。
+
+装完先设置管理台口令（没有默认口令）：
+
+```bash
+python3 -m moments.panel_auth --set-password
+```
+
+然后打开 <http://127.0.0.1:8767/login>。管理台由 `provider-web` 服务提供；若脚本提示注册失败，手动重跑：
+
+```bash
+python3 platform_services.py register provider-web --repo "$PWD"
+```
+
+首次用 `claude` 新建 bot 前，按 §5 信任 `~/.claude/channels`。
 
 `install.sh` 不接受位置参数，只支持 macOS/Linux；Windows 用 §3 的原生步骤。
 
@@ -169,6 +183,8 @@ python3 platform_services.py start provider-web --repo "$PWD"
 6. 选功能开关，保存。
 
 编号 `jiwen`、`director`、`voicecall`、`media`、`group_transcripts`、`telegram` 等是保留字，不能用作 bot id。
+
+> 首次用 `claude` 启动 bot 时，Claude Code 会询问是否信任工作目录；选信任 `~/.claude/channels`（所有 bot 目录都在其下），否则 bot 的文件读写会被拦截。
 
 新建后：
 
