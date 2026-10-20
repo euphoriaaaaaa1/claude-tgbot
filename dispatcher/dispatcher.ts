@@ -1551,13 +1551,132 @@ function guardApi(req: Request, apiToken: string, boundPort: number): Response |
 }
 
 // ─── HTTP server for workers ─────────────────────────────────────────
+// 已知 POST 端点集合：非 POST 方法只在这些路径上判 405；未列出路径放行落入兜底 404。
+const KNOWN_POST_PATHS = new Set(['/promise', '/send', '/react', '/download', '/add_group_alias', '/peer_inbound', '/party', '/photo_round'])
+
+// ─── party-camera API（/party、/photo_round）──────────────────────────
+const PARTY_ERROR_MESSAGE: Record<string, string> = {
+  bad_request: '请求不合法',
+  owner_required: '只有主人能开关聚会模式',
+  not_member: '这个群不在你的群列表里',
+  feature_off: '群聊功能关着',
+  payload_too_large: '请求体过大',
+  state_write_failed: '聚会模式没写成（状态文件不变）',
+  method_not_allowed: '只接受 POST',
+}
+function partyError(status: number, error: keyof typeof PARTY_ERROR_MESSAGE, detail?: string): Response {
+  return Response.json({ ok: false, error, message: PARTY_ERROR_MESSAGE[error], ...(detail ? { detail } : {}) }, { status })
+}
+
+async function handlePartyRequest(req: Request): Promise<Response> {
+  let raw: string
+  try { raw = await req.text() } catch { return partyError(400, 'bad_request', 'body') }
+  if (Buffer.byteLength(raw, 'utf8') > 4096) return partyError(413, 'payload_too_large')
+  let body: any
+  try { body = JSON.parse(raw) } catch { return partyError(400, 'bad_request', 'body') }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return partyError(400, 'bad_request', 'body')
+  for (const k of Object.keys(body)) {
+    if (k !== 'chat_id' && k !== 'on' && k !== 'note' && k !== 'message_id') return partyError(400, 'bad_request', 'body')
+  }
+  const chatId = normalizePartyChatId(body.chat_id)
+  if (chatId === null) return partyError(400, 'bad_request', 'chat_id')
+  let on: boolean
+  if (body.on === true || body.on === 'true') on = true
+  else if (body.on === false || body.on === 'false') on = false
+  else return partyError(400, 'bad_request', 'on')
+  const noteGiven = body.note !== undefined
+  const noteCheck = normalizePartyNote(body.note)
+  if (!noteCheck.ok) return partyError(400, 'bad_request', 'note')
+
+  if (!featureOn(botFeatures(), 'groups')) return partyError(409, 'feature_off')
+  const access = loadAccess()
+  if (!Object.hasOwn(access.groups, chatId)) return partyError(403, 'not_member')
+  const owner = ownerOf(access)
+  const now = nowMsFromEnv()
+  const lastSender = lastHumanSenderId.get(chatId)
+  const ownerSpokeAt = lastOwnerGroupMsgAtMs.get(chatId)
+  const windowOk = owner !== '' && lastSender === owner && ownerWindowOpen(now, ownerSpokeAt, OWNER_GROUP_WINDOW_MS)
+  // 触发工具的那条投递件（合并件为全部入站）的真人发送者必须全是 owner；
+  // missing/unknown/含非 owner → 403 owner_required（不信任 worker 自报身份）。
+  const messageIdRaw = body.message_id == null ? '' : String(body.message_id)
+  const itemOk = windowOk && inboundItemSendersAllOwner(inboundHumanSenders, chatId, messageIdRaw, owner)
+  if (!windowOk || !itemOk) {
+    if (windowOk && !itemOk) process.stderr.write(`dispatcher[${BOT_NAME}]: party_owner_required chat=${chatId} reason=message_id\n`)
+    return partyError(403, 'owner_required')
+  }
+
+  const path = partyStatePath(PARTY_MODE_DIR, chatId)
+  if (on) {
+    const current = readPartyState(path, now)
+    let next
+    if (current.status === 'ok' && current.state) {
+      next = refreshPartyState(current.state, noteGiven ? { note: noteCheck.note } : {})
+    } else {
+      if (current.status !== 'missing') {
+        logPartyStateProblem(chatId, current.status)
+        deletePartyState(path)
+      }
+      next = newPartyState(chatId, 'bot', noteCheck.note, now)
+    }
+    if (!writePartyState(path, next)) return partyError(500, 'state_write_failed')
+    process.stderr.write(`dispatcher[${BOT_NAME}]: party_on chat=${chatId} source=${next.source}\n`)
+    return Response.json({ ok: true, chat_id: chatId, party: partyStateResponse(next) })
+  }
+  if (!deletePartyState(path)) return partyError(500, 'state_write_failed')
+  process.stderr.write(`dispatcher[${BOT_NAME}]: party_off chat=${chatId} reason=tool\n`)
+  return Response.json({ ok: true, chat_id: chatId, party: { on: false } })
+}
+
+async function handlePhotoRoundRequest(req: Request): Promise<Response> {
+  const bad = (detail: 'body' | 'chat_id' | 'delivery_key') =>
+    Response.json({ ok: false, error: 'bad_request', detail }, { status: 400 })
+  let raw: string
+  try { raw = await req.text() } catch { return bad('body') }
+  if (Buffer.byteLength(raw, 'utf8') > 4096) return bad('body')
+  let body: any
+  try { body = JSON.parse(raw) } catch { return bad('body') }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return bad('body')
+  const chatId = typeof body.chat_id === 'string' ? body.chat_id
+    : typeof body.chat_id === 'number' && Number.isFinite(body.chat_id) ? String(body.chat_id) : ''
+  if (!isValidPhotoChatId(chatId)) return bad('chat_id')
+  const deliveryKey = body.delivery_key
+  if (typeof deliveryKey !== 'string' || deliveryKey === '' || Array.from(deliveryKey).length > 512) return bad('delivery_key')
+
+  const now = nowMsFromEnv()
+  const path = photoStatePath(PHOTO_MODE_DIR, BOT_NAME, chatId)
+  const current = readPhotoState(path, now)
+  if (current.status !== 'ok' || !current.state) {
+    if (current.status !== 'missing') {
+      logPhotoStateProblem(chatId, current.status)
+      deletePhotoState(path)
+    }
+    return Response.json({ ok: true, active: false })
+  }
+  if (deliveryKey === current.state.last_delivery_key) {
+    return Response.json({ ok: true, active: true, round: current.state.rounds, expires_at_ms: photoExpiresAtMs(current.state) })
+  }
+  const next = nextPhotoRound(current.state, deliveryKey, now)
+  if (!writePhotoState(path, next)) return Response.json({ ok: false, error: 'state_write_failed' }, { status: 500 })
+  return Response.json({ ok: true, active: true, round: next.rounds, expires_at_ms: photoExpiresAtMs(next) })
+}
+
 async function handleApiRequest(req: Request, apiToken: string, boundPort: number, now: () => number, ledger: Ledger): Promise<Response> {
   const url = new URL(req.url)
   const denied = guardApi(req, apiToken, boundPort)
   if (denied) return denied
   try {
-    if (url.pathname === '/health') return Response.json({ ok: true })
-    if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
+    // 本机应用层健康信号：最近一次 getUpdates 成功时间的秒级时间戳，供看门狗判活。
+    // 免口令放行，但仅 GET：非 GET 判 405。
+    if (url.pathname === '/health') {
+      if (req.method !== 'GET') return new Response('method not allowed', { status: 405 })
+      return Response.json({ ok: true, last_poll_ok: Math.floor(lastPollOk / 1000) })
+    }
+    if (req.method !== 'POST') {
+      // /party 的错误体统一为 JSON；其余已知 POST 路径保持既有纯文本。
+      if (url.pathname === '/party') return partyError(405, 'method_not_allowed')
+      if (KNOWN_POST_PATHS.has(url.pathname)) return new Response('method not allowed', { status: 405 })
+      return new Response('not found', { status: 404 })
+    }
 
       // ─── worker 管理端点（免 body；跨进程查活/状态，替代 tmux has-session/ls）────
       if (url.pathname === '/ensure_worker') {
@@ -1569,6 +1688,10 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
       if (url.pathname === '/status') {
         return Response.json({ ok: true, ...getManager().status() })
       }
+
+      // party-camera：坏 JSON/超长的 400/413 契约要赶在通用 req.json() 之前接住。
+      if (url.pathname === '/party') return await handlePartyRequest(req)
+      if (url.pathname === '/photo_round') return await handlePhotoRoundRequest(req)
 
       const body = await req.json() as any
 
