@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>系统参数</title>
+<style>
+:root{--bg:#ededed;--card:#fff;--ink:#181818;--ink-soft:#555;--ink-faint:#888;
+  --hairline:rgba(0,0,0,.06);--hairline-strong:rgba(0,0,0,.12);--soft-bg:#f7f7f7;
+  --link:#576b95;--wxgreen:#07c160;--danger:#fa5151;
+  --font-body:'Noto Sans SC',-apple-system,system-ui,sans-serif;
+  --font-mono:ui-monospace,'JetBrains Mono',monospace;}
+@media (prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--ink:#f0f0f0;--ink-soft:#c0c0c0;
+  --ink-faint:#8a8a8a;--hairline:rgba(255,255,255,.08);--hairline-strong:rgba(255,255,255,.16);
+  --soft-bg:#2c2c2e;--link:#7d8db5;}}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+body{font-family:var(--font-body);background:var(--bg);color:var(--ink);line-height:1.6;
+  font-size:15px;min-height:100vh;}
+a{color:var(--link);text-decoration:none;}
+.wrap{max-width:760px;margin:0 auto;padding:16px 14px 48px;}
+h1{font-size:19px;font-weight:600;}
+.sub{color:var(--ink-faint);font-size:13px;margin-bottom:16px;}
+.card{background:var(--card);border:1px solid var(--hairline);border-radius:12px;
+  padding:16px;margin-bottom:14px;}
+.card h2{font-size:15px;font-weight:600;margin-bottom:8px;}
+.muted{color:var(--ink-faint);font-size:12.5px;}
+label{display:block;font-size:13px;color:var(--ink-soft);margin:12px 0 5px;}
+input,select{width:100%;padding:9px 11px;font-size:14px;font-family:var(--font-body);
+  color:var(--ink);background:transparent;border:1px solid var(--hairline-strong);border-radius:8px;}
+.btn{border:none;border-radius:8px;padding:9px 14px;font-size:14px;font-family:var(--font-body);
+  cursor:pointer;background:var(--wxgreen);color:#fff;}
+.btn.ghost{background:var(--soft-bg);color:var(--ink-soft);}
+.btn.danger{background:var(--danger);color:#fff;}
+.btn.mini{padding:4px 9px;font-size:12.5px;}
+.btn:hover{opacity:.85;}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+table{width:100%;border-collapse:collapse;font-size:13.5px;}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--hairline);vertical-align:middle;}
+th{color:var(--ink-faint);font-weight:500;font-size:12.5px;}
+.mono{font-family:var(--font-mono);font-size:12.5px;}
+  background:var(--soft-bg);color:var(--ink-soft);}
+.empty{color:var(--ink-faint);font-size:13px;padding:12px 0;}
+.note{margin-top:4px;}
+</style>
+</head>
+<body>
+{% include "_console_nav.html" %}
+<div class="wrap">
+  <h1>系统参数</h1>
+  <div class="sub">改的是 configs/_global.yml。每次保存自动留一份备份，最多 5 份，随时可回滚</div>
+
+  <div class="card" id="warn-card" style="display:none">
+    <h2>提示</h2>
+    <div class="muted" id="warn-text"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">参数表单</h2>
+      <div class="row">
+        <button class="btn ghost mini" type="button" id="reload">刷新</button>
+        <button class="btn" type="button" id="save">保存</button>
+      </div>
+    </div>
+    <div class="muted" id="save-msg" style="margin-top:6px"></div>
+    <div id="groups"><div class="empty">读取中…</div></div>
+  </div>
+
+  <div class="card" id="hint-card" style="display:none">
+    <h2>改动要生效，还差一步</h2>
+    <div class="muted" id="hint-text"></div>
+    <div class="muted" id="voice-skills-text"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">高级模式（直接改原文）</h2>
+      <button class="btn ghost mini" type="button" id="toggle-adv">展开</button>
+    </div>
+    <div id="adv" style="display:none">
+      <div class="muted" style="margin-top:8px">
+        密钥已遮蔽成 <span class="mono">{{ placeholder }}</span>，原样提交即保留原值；
+        想换就直接填真值。把敏感键改名/移走会导致占位符解不掉，保存会被拒绝。
+      </div>
+      <textarea id="raw" rows="22" spellcheck="false"
+        style="width:100%;margin-top:8px;padding:10px;border-radius:8px;background:var(--soft-bg);
+               color:var(--ink);border:1px solid var(--hairline-strong);
+               font-family:var(--font-mono);font-size:12.5px;line-height:1.5"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="btn" type="button" id="save-raw">保存原文</button>
+        <span class="muted" id="raw-msg"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">备份与回滚</h2>
+      <button class="btn ghost mini" type="button" id="reload-backups">刷新</button>
+    </div>
+    <table style="margin-top:8px">
+      <thead><tr><th>时间</th><th>来源</th><th>大小</th><th></th></tr></thead>
+      <tbody id="backup-rows"></tbody>
+    </table>
+    <div class="empty" id="backup-empty">读取中…</div>
+  </div>
+</div>
+<script>
+// 请求包装（壳版，替代 dsh 导航里的两个助手函数）：未登录（401）跳登录页，回来仍是本页。
+async function api(path, opts) {
+  const o = Object.assign({headers: {'Content-Type': 'application/json'}}, opts || {});
+  let r, body = null;
+  try { r = await fetch(path, o); } catch (e) { return {status: 0, body: {}}; }
+  try { body = await r.json(); } catch (e) {}
+  if (r.status === 401) { location.href = '/login?next=' + encodeURIComponent('/params'); }
+  return {status: r.status, body: body || {}};
+}
+function say(el, text) { if (el) el.textContent = text; }
+// 表单只渲染后端 schema 给的字段（B1：没有中文标签/范围的旋钮不许交给用户）。
+// 保存只提交**改过**的键（§2.3 部分更新），version 随每次成功保存就地更新，连续保存不必刷新。
+const $ = (id) => document.getElementById(id);
+const GROUPS = [
+  ['jiwen.rates.immersion_map.', '各类活动的初始沉浸度'],
+  ['jiwen.rates.', 'jiwen 情绪引擎 · 速率与阈值'],
+  ['jiwen.thresholds.', 'jiwen 开口三档'],
+  ['jiwen.', 'jiwen 其它'],
+  ['moments.', '朋友圈'],
+  ['voice.', '语音'],
+  ['', '全局'],
+];
+let VERSION = null, SCHEMA = [], LOADED = {};
+// 逐项说明（写在输入框下面）
+const NOTES = {'voice.tts_model': 'Drama 3 首发优惠到 2026-11-12，之后恢复原价。'};
+
+function groupOf(key) { for (const [p, t] of GROUPS) if (key.startsWith(p)) return t; }
+
+function inputFor(it, value) {
+  if (it.type === 'enum') {
+    const sel = document.createElement('select');
+    const opts = (it.choices || []).slice();
+    // 配置里现有的值不在可选项里：照样列出来让人看见；没改就不提交，不会动它
+    if (typeof value === 'string' && !opts.includes(value)) opts.unshift(value);
+    for (const c of opts) {
+      const o = document.createElement('option');
+      o.value = c; o.textContent = (it.choices || []).includes(c) ? c : c + '（不在可选范围）';
+      sel.appendChild(o);
+    }
+    sel.value = String(value);
+    sel.id = 'f:' + it.key;
+    return sel;
+  }
+  const el = document.createElement('input');
+  if (it.type === 'bool') { el.type = 'checkbox'; el.checked = !!value; el.style.width = 'auto'; }
+  else { el.type = 'number'; el.value = String(value);
+         el.step = it.type === 'int' ? '1' : 'any';
+         el.min = String(it.min); el.max = String(it.max); }
+  el.id = 'f:' + it.key;
+  return el;
+}
+
+function readField(it) {
+  const el = $('f:' + it.key);
+  if (it.type === 'bool') return el.checked;
+  if (it.type === 'enum') return el.value;
+  if (el.value.trim() === '') return null;
+  const n = Number(el.value);
+  if (!isFinite(n)) return null;
+  return it.type === 'int' ? Math.trunc(n) : n;
+}
+
+function renderForm(values) {
+  const box = $('groups'); box.innerHTML = '';
+  for (const [, title] of GROUPS) {
+    const items = SCHEMA.filter((it) => groupOf(it.key) === title);
+    if (!items.length) continue;
+    const h = document.createElement('h2');
+    h.textContent = title; h.style.margin = '16px 0 0'; box.appendChild(h);
+    for (const it of items) {
+      const lab = document.createElement('label');
+      lab.textContent = it.label + (it.unit ? '（' + it.unit + '）' : '') +
+        (it.type === 'bool' || it.type === 'enum' ? '' : '  ' + it.min + ' ~ ' + it.max);
+      lab.setAttribute('for', 'f:' + it.key);
+      box.appendChild(lab);
+      box.appendChild(inputFor(it, values[it.key]));
+      if (NOTES[it.key]) {
+        const n = document.createElement('div');
+        n.className = 'muted note'; n.textContent = NOTES[it.key]; box.appendChild(n);
+      }
+    }
+  }
+}
+
+async function loadParams() {
+  const r = await api('/api/params');
+  if (r.status !== 200) { say($('save-msg'), 'HTTP ' + r.status); return; }
+  SCHEMA = r.body.schema || []; VERSION = r.body.version; LOADED = r.body.values || {};
+  renderForm(LOADED);
+  const warns = r.body.warnings || [];
+  $('warn-card').style.display = warns.length ? '' : 'none';
+  say($('warn-text'), warns.includes('global_yml_unreadable')
+    ? '读不到 configs/_global.yml（不存在或格式坏了）。表单显示的是默认值，保存已禁用；请用备份回滚。'
+    : warns.map((w) => w.replace('missing_in_yml:', '配置里还没有：')).join('；'));
+  const ok = r.body.advanced_available;
+  $('save').disabled = !ok; $('save-raw').disabled = !ok;
+}
+
+function showHint(hint, voiceSkills) {
+  const bot = hint && hint.bot, web = hint && hint.moments_web;
+  // 跟随全局语音模型的 bot 是否重写了语音技能、谁正忙要再存一次（voice-writing 3.3）：有 message 才显示，在原有提示下面一行
+  const vs = (voiceSkills && voiceSkills.message) || '';
+  $('hint-card').style.display = (bot || web || vs) ? '' : 'none';
+  const lines = [];
+  // 壳里没有重启接口：只给文字提示，重启到总览页做
+  if (bot) lines.push('bot 进程需要重启才会读到新参数，可到总览页重启。');
+  if (web) lines.push('朋友圈进程需要重启才会读到新参数。');
+  say($('hint-text'), lines.join(' '));
+  say($('voice-skills-text'), vs);
+}
+
+$('save').addEventListener('click', async () => {
+  const values = {};
+  for (const it of SCHEMA) {
+    const v = readField(it);
+    if (v === null) { say($('save-msg'), it.label + ' 填的不是有效数值'); return; }
+    if (v !== LOADED[it.key]) values[it.key] = v;
+  }
+  $('save').disabled = true;
+  const r = await api('/api/params',
+    {method: 'POST', body: JSON.stringify({version: VERSION, values: values})});
+  $('save').disabled = false;
+  if (r.status !== 200) {
+    say($('save-msg'), (r.body.error || 'HTTP ' + r.status) + '：' + (r.body.detail || ''));
+    if (r.body.error === 'config_stale') loadParams();
+    return;
+  }
+  VERSION = r.body.version;
+  for (const k of r.body.changed || []) LOADED[k] = values[k];
+  say($('save-msg'), (r.body.changed || []).length
+    ? '已保存 ' + r.body.changed.length + ' 项，备份 ' + r.body.backup : '没有改动');
+  showHint(r.body.restart_hint, r.body.voice_skills);
+  loadBackups();
+});
+
+let RAW_VERSION = null;
+$('toggle-adv').addEventListener('click', async () => {
+  const box = $('adv'), open = box.style.display === 'none';
+  box.style.display = open ? '' : 'none';
+  $('toggle-adv').textContent = open ? '收起' : '展开';
+  if (!open) return;
+  const r = await api('/api/params/raw');
+  if (r.status !== 200) {
+    $('raw').value = '';
+    say($('raw-msg'), (r.body.error || 'HTTP ' + r.status) + '：' + (r.body.detail || ''));
+    return;
+  }
+  $('raw').value = r.body.text; RAW_VERSION = r.body.version;
+  say($('raw-msg'), (r.body.sensitive_paths || []).length
+    ? '已遮蔽：' + r.body.sensitive_paths.join('、') : '');
+});
+
+$('save-raw').addEventListener('click', async () => {
+  $('save-raw').disabled = true;
+  const r = await api('/api/params/raw',
+    {method: 'POST', body: JSON.stringify({version: RAW_VERSION, text: $('raw').value})});
+  $('save-raw').disabled = false;
+  if (r.status !== 200) {
+    say($('raw-msg'), (r.body.error || 'HTTP ' + r.status) + '：' + (r.body.detail || ''));
+    return;
+  }
+  RAW_VERSION = r.body.version;
+  say($('raw-msg'), '已保存，备份 ' + r.body.backup);
+  showHint(r.body.restart_hint, r.body.voice_skills);
+  loadParams(); loadBackups();
+});
+
+const KIND_TEXT = {save: '保存', restore: '回滚前'};
+async function loadBackups() {
+  const r = await api('/api/params/backups');
+  const rows = $('backup-rows'), empty = $('backup-empty');
+  rows.innerHTML = '';
+  if (r.status !== 200) { say(empty, 'HTTP ' + r.status); return; }
+  for (const b of (r.body.backups || [])) {
+    const tr = document.createElement('tr');
+    for (const v of [b.id, KIND_TEXT[b.kind] || b.kind, b.size + ' B']) {
+      const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+    }
+    const td = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className = 'btn ghost mini'; btn.type = 'button'; btn.textContent = '回滚到此';
+    btn.addEventListener('click', () => restore(b.id));
+    td.appendChild(btn); tr.appendChild(td);
+    rows.appendChild(tr);
+  }
+  say(empty, (r.body.backups || []).length ? '' : '还没有备份');
+}
+
+async function restore(id) {
+  if (!confirm('用 ' + id + ' 覆盖当前配置？当前内容会先另存一份。')) return;
+  const r = await api('/api/params/backups/' + encodeURIComponent(id) + '/restore',
+    {method: 'POST', body: JSON.stringify({version: VERSION})});
+  if (r.status !== 200) {
+    say($('backup-empty'), (r.body.error || 'HTTP ' + r.status) + '：' + (r.body.detail || ''));
+    return;
+  }
+  showHint(r.body.restart_hint, r.body.voice_skills);
+  loadParams(); loadBackups();
+}
+
+$('reload').addEventListener('click', loadParams);
+$('reload-backups').addEventListener('click', loadBackups);
+loadParams(); loadBackups();
+</script>
+</body>
+</html>

@@ -21,6 +21,7 @@ from moments import panel_auth
 from moments.console_routes import console_bp
 from moments.features_routes import features_bp
 from moments.lifecycle_routes import lifecycle_bp
+from moments.params_routes import params_bp
 from moments.provider_routes import provider_bp
 from moments.styles_routes import styles_bp
 
@@ -39,6 +40,8 @@ app.register_blueprint(provider_bp)
 # 画风页（INTERFACE §2.11）：只放行页面与样式管理端点；/api/novelai_key 不在
 # 白名单内（密钥走 scripts/set_novelai_key.py，provider 模式下该路径恒 404）。
 app.register_blueprint(styles_bp)
+# 系统参数页与接口（INTERFACE §2.8）：_global.yml 的行级读写与备份。
+app.register_blueprint(params_bp)
 from provider_config import SeamsNotConfigured as _SeamsNotConfigured  # noqa: E402
 from provider_config import SafetyGateTripped as _SafetyGateTripped  # noqa: E402
 
@@ -274,7 +277,8 @@ def _reachable_gate():
         return None
     if (endpoint in _SESSION_ENDPOINTS or endpoint in _STYLES_ENDPOINTS
             or endpoint.startswith("console.") or endpoint.startswith("lifecycle.")
-            or endpoint.startswith("features.") or endpoint.startswith("provider.")):
+            or endpoint.startswith("features.") or endpoint.startswith("provider.")
+            or endpoint.startswith("params.")):
         return None
     abort(404)
 

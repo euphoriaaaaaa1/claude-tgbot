@@ -1,0 +1,14 @@
+{# 管理台子页共用顶栏（T16）：入口与 console.html 顶栏同一组，不引用旧 Hub 的 /hub 链接。 #}
+<style>
+.topbar{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--hairline);
+  padding:9px 14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.topbar h1{font-size:17px;margin-right:6px;}
+.topbar .row{gap:6px;}
+</style>
+<div class="topbar">
+  <a class="btn btn-ghost" href="/console">管理台</a>
+  <a class="btn btn-ghost" href="/provider">供应商</a>
+  <a class="btn btn-ghost" href="/styles">画风</a>
+  <a class="btn btn-ghost" href="/params">系统参数</a>
+  <form method="post" action="/logout" style="display:inline"><button type="submit" class="btn btn-ghost">登出</button></form>
+</div>
