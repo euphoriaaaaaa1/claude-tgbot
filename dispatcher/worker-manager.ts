@@ -1,14 +1,14 @@
 /**
- * worker-manager.ts — 跨平台 worker 生命周期管理（替代 tmux + spawn-worker.sh）。
+ * worker-manager.ts — 跨平台 worker 生命周期管理。
  *
  * worker = 常驻 headless claude 子进程：
  *   claude -p --input-format stream-json --output-format stream-json
  * 入站：inbox 文件（dispatcher/director/moments/self-initiate 照旧写）→ 本模块
  * fs.watch → 组装（关系提示+场景标签+meta）→ 写 claude stdin。
  * 出站：worker 里的 MCP reply 工具 → dispatcher /send（不变）。
- * slash：/compact 等当 user 消息写 stdin（无需 tmux send-keys）。
+ * slash：/compact 等当 user 消息写 stdin（无需终端注入）。
  * 就绪：stdout 的 system/init 事件（无需 capture-pane 抓屏）。
- * 观测：logs/chat.log（人话对话流，tail -f 替代 tmux attach）+ logs/stream.jsonl（原始事件）。
+ * 观测：logs/chat.log（人话对话流，tail -f 观察）+ logs/stream.jsonl（原始事件）。
  *
  * 与 dispatcher.ts 同进程（1 dispatcher : 1 worker）。
  */
@@ -27,7 +27,9 @@ import { settingsPath } from './provider_watch'
 import { createBurstCollector, readBurstCfg } from './burst_inbox'
 import { takeHangArchive } from './hang_runtime'
 import { situAnchorLine } from './situation_bridge'
-import { applyInboundMarks, loadInboundState, testModeCheck } from './chat_guard'
+import { applyInboundMarks, loadInboundState, testModeCheck, escapeUserMarkers, isPromiseDueInbox } from './chat_guard'
+import { nextLastHuman, type LastHumanMessage } from './promise_plan'
+import { photoDeliveryKeyFromMeta } from './photo_mode'
 import { planInboxBatch, readInboxMeta } from './inbox_names'
 import { escapeChannelWrapper } from './channel_wrap'
 import { winCmdSpawnSpec, probeClaudeWin } from './win_cmd'
@@ -800,6 +802,8 @@ export class WorkerManager {
   private clearGate = false
   private clearExitPid: number | null = null
   private clearExitResolve: (() => void) | null = null
+  private pumping = false                 // 异步组装（/photo_round）期间挡住重入
+  private lastHuman: LastHumanMessage = null  // 最近一条投递的真人消息（承诺工具的作用聊天）
   private inFlight: QueueItem | null = null
   private inFlightSince = 0
   private inFlightContent = ''            // 在飞那条的组装结果：重启回插只能靠它（原件已落盘保留）
@@ -1444,7 +1448,7 @@ export class WorkerManager {
   }
 
   private pump(): void {
-    if (this.inFlight || this.phaseVal !== 'running' || this.queue.length === 0) return
+    if (this.pumping || this.inFlight || this.phaseVal !== 'running' || this.queue.length === 0) return
     const item = this.queue.shift()!
     if (item.kind === 'raw') {
       this.dispatchContent(item, item.content, null)
@@ -1469,12 +1473,131 @@ export class WorkerManager {
     const plan = planInboxBatch(heads)
     this.queue.splice(0, heads.length - plan.rest - 1)   // item 自己已 shift 出队
     for (const p of plan.drop) rmSync(p, { force: true })
-    if (plan.merge.length === 0) { this.pump(); return }
-    const content = plan.merge.map(p => this.buildContent(metas.get(p)!)).join('\n\n')
+    if (plan.merge.length === 0) return
+    const merged = plan.merge.map(p => metas.get(p)!).filter(Boolean)
+    const content = this.buildDeliveryContent(merged)
+    // 拍照轮次只在投递时经 /photo_round 增加；要等它的返回决定轮次，故单独走异步分支。
+    // 失败/关闭照常投递、不追加标记；等待期间 pumping 挡住下一次投递。
+    const photo = this.photoRequestFor(merged[0])
+    if (photo) {
+      this.pumping = true
+      void this.photoRound(photo.chatId, photo.deliveryKey)
+        .then(round => {
+          const mark = round != null
+            ? `[auto-photo] 第${round}轮：本轮回复按 image 技能的「旁观摄影机视角」规则生图并附上 2 张（同一场景不同机位）；正文不写镜头、拍照或动作描述。`
+            : ''
+          this.finishFileDelivery(plan, merged, mark ? this.injectDeliveryMarks(content, [mark]) : content)
+        })
+        .catch(() => this.finishFileDelivery(plan, merged, content))
+        .finally(() => { this.pumping = false; this.pump() })
+      return
+    }
+    this.finishFileDelivery(plan, merged, content)
+  }
+
+  /** 投递收尾（同步路径与异步拍照路径共用）：删合并原件、写 sidecar、交给 dispatchContent。 */
+  private finishFileDelivery(plan: { merge: string[]; chatId: string | null }, merged: any[], content: string): void {
     for (const p of plan.merge.slice(1)) rmSync(p, { force: true })
     // reply 默认路由：worker-plugin 的 lastChatId 改由该文件驱动
     this.writeLastChatId(plan.chatId ?? '')
+    // party-camera/承诺工具：投递件 sidecar（当前聊天、消息 id、聚会改投、最近真人）
+    this.writeDeliverySidecar(merged)
     this.dispatchContent({ kind: 'file', path: plan.merge[0] }, content, plan.chatId)
+  }
+
+  /** 投递件正文：buildContent + party 标记（固定文案；拍照标记由异步分支追加）。 */
+  private buildDeliveryContent(metas: any[]): string {
+    const base = metas.map(m => this.buildContent(m)).join('\n\n')
+    if (metas.length === 0) return base
+    const first = metas[0]
+    const partyChat = typeof first.party_chat_id === 'string' && first.party_chat_id !== '' ? first.party_chat_id : ''
+    let mark = ''
+    if (first.party_ambiguous === true) {
+      mark = '[party-ambiguous] 你有多个群在聚会，本轮按普通私聊回复。'
+    } else if (partyChat !== '') {
+      mark = `[party] 线下聚会进行中（群 ${partyChat}）：实质回复默认发到群聊；可先在私聊回一句简短引导（如“在群里说”），私聊最多一句；要私聊回应时，reply 显式带 chat_id=${String(first.chat_id ?? '')}。`
+    }
+    return mark ? this.injectDeliveryMarks(base, [mark]) : base
+  }
+
+  /** 系统标记插在场景标注之前（clear_summary 按场景标注切注入）；正文里用户写的同名方括号已转全角。 */
+  private injectDeliveryMarks(content: string, marks: string[]): string {
+    const block = `${marks.filter(Boolean).join('\n')}\n`
+    const at = content.search(/【(?:私聊|群聊)】<channel\b/)
+    if (at >= 0) return content.slice(0, at) + block + content.slice(at)
+    const open = content.indexOf('<channel')
+    if (open >= 0) return content.slice(0, open) + block + content.slice(open)
+    return block + content
+  }
+
+  /** 该投递件是否要增加拍照轮次；不满足则返回 null。 */
+  private photoRequestFor(meta: any): { chatId: string; deliveryKey: string } | null {
+    if (!meta || !meta.photo_mode || typeof meta.photo_mode !== 'object' || meta.photo_mode.active !== true || meta.photo_mode_off === true) return null
+    const deliveryKey = photoDeliveryKeyFromMeta(meta)
+    if (deliveryKey === '') return null
+    return { chatId: String(meta.chat_id ?? ''), deliveryKey }
+  }
+
+  /** POST /photo_round（本机 dispatcher）；非 2xx/网络失败返回 null，只记状态码。 */
+  private async photoRound(chatId: string, deliveryKey: string): Promise<number | null> {
+    try {
+      const token = readFileSync(join(this.channelDir, '.api-token'), 'utf8').trim()
+      if (!token) return null
+      const r = await fetch(`${DISPATCHER_URL}/photo_round`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Api-Token': token },
+        body: JSON.stringify({ chat_id: chatId, delivery_key: deliveryKey }),
+        signal: AbortSignal.timeout(3000),
+      })
+      if (!r.ok) { process.stderr.write(`worker-manager: photo_round_failed status=${r.status}\n`); return null }
+      const out = await r.json() as any
+      return out && out.ok === true && out.active === true && typeof out.round === 'number' && Number.isFinite(out.round) ? out.round : null
+    } catch (e) {
+      process.stderr.write(`worker-manager: photo_round_failed reason=${e instanceof Error ? e.name : 'unknown'}\n`)
+      return null
+    }
+  }
+
+  /** 写 <CHANNEL_DIR>/.last-delivery.json；worker-plugin 只读它做 reply 路由/party/承诺工具绑定。 */
+  private writeDeliverySidecar(metas: any[]): void {
+    if (metas.length === 0) return
+    const first = metas[0]
+    const chatId = String(first.chat_id ?? '')
+    if (!chatId) return
+    const tsMsOf = (m: any): number => {
+      const t = Date.parse(String(m?.ts ?? ''))
+      return Number.isFinite(t) && t > 0 ? t : (this.now ? this.now() : Date.now())
+    }
+    let allowFrom: unknown = []
+    try { allowFrom = (JSON.parse(readFileSync(join(this.channelDir, 'access.json'), 'utf8')) as any)?.allowFrom ?? [] } catch {}
+    for (const m of metas) this.lastHuman = nextLastHuman(this.lastHuman, m, tsMsOf(m), false, allowFrom)
+    const ids: string[] = []
+    const promiseIds: string[] = []
+    let promiseDue = false
+    for (const m of metas) {
+      if (Array.isArray(m.merged_message_ids)) for (const id of m.merged_message_ids) if (id != null) ids.push(String(id))
+      else if (m.message_id != null) ids.push(String(m.message_id))
+      if (Array.isArray(m.promise_ids)) for (const id of m.promise_ids) if (typeof id === 'string') promiseIds.push(id)
+      if (typeof m.promise_id === 'string') promiseIds.push(m.promise_id)
+      if (isPromiseDueInbox(m)) promiseDue = true
+    }
+    const doc = {
+      v: 1,
+      chat_id: chatId,
+      message_id: [...new Set(ids)].join(','),
+      party_chat_id: typeof first.party_chat_id === 'string' ? first.party_chat_id : '',
+      party_ambiguous: first.party_ambiguous === true,
+      promise_ids: [...new Set(promiseIds)],
+      promise_due: promiseDue,
+      human_chat_id: this.lastHuman?.chatId ?? '',
+      human_user_id: this.lastHuman?.userId ?? '',
+      at_ms: this.now ? this.now() : Date.now(),
+    }
+    try {
+      const p = join(this.channelDir, '.last-delivery.json')
+      writeFileSync(p + '.tmp', JSON.stringify(doc))
+      renameSync(p + '.tmp', p)
+    } catch {}
   }
 
   private dispatchContent(item: QueueItem, content: string, chatId: string | null): void {
@@ -1547,9 +1670,11 @@ export class WorkerManager {
     if (meta.reply_to != null) notifMeta.reply_to = String(meta.reply_to)
 
     const sceneTag = scene === 'group' ? '【群聊】' : '【私聊】'
+    // party-camera：用户正文里的系统标记转全角，模型只信系统追加的标记
+    const safeText = escapeUserMarkers(text)
     const body = isBotSender && meta.sender_username
-      ? `[from peer bot @${meta.sender_username}]\n${text}`
-      : text
+      ? `[from peer bot @${meta.sender_username}]\n${safeText}`
+      : safeText
     // 时间标注：消息只带 UTC 机器时间戳，模型会顺着上下文惯性以为还是早上聊天那会儿。
     // 时间取 meta.ts（消息自身时刻，不是投递时刻）；缺失/非法 → 用当前时刻。
     const parsedTs = Date.parse(String(meta.ts ?? ''))
