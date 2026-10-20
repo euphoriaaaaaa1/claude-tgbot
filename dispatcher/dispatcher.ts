@@ -467,22 +467,72 @@ function sessionUuid(): string {
   return unifiedSessionUuid(BOT_NAME)
 }
 
+// ─── provider 切换检测 ────────────────────────────────────────────────
+// worker 启动时固化当时的 provider env；用户切换 provider 后，正在跑的 worker 仍用旧 provider。
+// 这里在每条消息到达时比对【该 bot 实际生效的】指纹：变了才杀掉 worker 让它带新 provider 重生。
+// 指纹只算 BASE_URL+MODEL，token 轮换不计入；不可判定（读/解析失败）时返回 null，绝不误杀。
+const PROVFP_FILE = join(homedir(), '.claude', 'dispatcher', `.provfp-${BOT_NAME}`)
+const PROVFP_VERSION = 'v2'
+let __provFpNullStreak = 0
+function currentProviderFp(): string | null {
+  const { fp } = readProviderFpStatus({
+    globalSharedPath: join(homedir(), '.claude', 'settings.json'),
+    globalLocalPath: join(homedir(), '.claude', 'settings.local.json'),
+    projectSharedPath: join(CHANNEL_DIR, '.claude', 'settings.json'),
+    projectLocalPath: join(CHANNEL_DIR, '.claude', 'settings.local.json'),
+  })
+  if (fp) { __provFpNullStreak = 0; return fp }
+  __provFpNullStreak++
+  // 限频：首次 + 此后每 10 次各记一条，避免每条消息刷屏（日志不回显取值）
+  if (__provFpNullStreak === 1 || __provFpNullStreak % 10 === 0) {
+    process.stderr.write(`dispatcher[${BOT_NAME}]: provider 指纹不可判定已 ${__provFpNullStreak} 次（settings 读失败或解析失败）\n`)
+  }
+  return null
+}
+
+/** .provfp 内容带算法版本前缀：旧算法基线一律视作"无基线"，避免部署后首条消息误杀 worker。 */
+function readProvFp(): string {
+  try {
+    const raw = readFileSync(PROVFP_FILE, 'utf8').trim()
+    if (!raw.startsWith(PROVFP_VERSION + ':')) return ''
+    return raw.slice(PROVFP_VERSION.length + 1)
+  } catch { return '' }
+}
+function writeProvFp(fp: string): void {
+  try {
+    writeFileSync(PROVFP_FILE, `${PROVFP_VERSION}:${fp}`, { mode: 0o600 })
+    chmodSync(PROVFP_FILE, 0o600)   // mode 仅对新建生效；已存在文件需显式收紧
+  } catch {}
+}
+
 // ─── pause 检查 ───────────────────────────────────────────────────────
 // 与 claudebotlife/pause.py 同路径：全局 ~/.claudebotlife.pause / 单 bot
 // ~/.claudebotlife.pause-<bot>（跨平台：不再用 /tmp，py/ts 两侧一致）。
 // pause 时连 DM 也不回。
+const botPauseCheck = makePauseCheck(BOT_NAME)
 function isPaused(): string | null {
-  if (existsSync(join(homedir(), '.claudebotlife.pause'))) return 'global'
-  if (existsSync(join(homedir(), `.claudebotlife.pause-${BOT_NAME}`))) return `bot:${BOT_NAME}`
-  return null
+  // 全局与单 bot 标记的读取规则统一在 pause_gate.ts（与 Python 侧同一组文件）
+  return botPauseCheck()
 }
 
 // ─── worker spawn（经 worker-manager，headless 子进程，无 tmux）────────
 function ensureWorkerRunning(_chatId: string): { uuid: string; spawned: boolean } {
   const mgr = getManager()
-  const spawned = !mgr.isAlive()
+  const cur = currentProviderFp()
+  if (mgr.isAlive()) {
+    const prev = readProvFp()
+    if (cur && prev && prev !== cur) {
+      process.stderr.write(`dispatcher[${BOT_NAME}]: provider 变了(${prev}→${cur}) → 重启 worker\n`)
+      mgr.kill()                 // 非 intentional → worker-manager 自动 --resume 重启
+      writeProvFp(cur)
+      return { uuid: mgr.sessionUuid, spawned: true }
+    }
+    if (cur && !prev) writeProvFp(cur)   // 已在跑的 worker 补记基线
+    return { uuid: mgr.sessionUuid, spawned: false }
+  }
+  if (cur) writeProvFp(cur)              // 记录本次 spawn 用的 provider 指纹
   void mgr.ensure()
-  return { uuid: mgr.sessionUuid, spawned }
+  return { uuid: mgr.sessionUuid, spawned: true }
 }
 
 // ─── provider 自动跟随（cc-switch / 手改 settings.json 后免手动重启）──────
