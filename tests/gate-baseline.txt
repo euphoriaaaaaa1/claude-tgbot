@@ -1,0 +1,4 @@
+# T22 gate baseline: one known failure per line.
+# pytest:<nodeid>  or  bun:<relative test file>::<test name>
+# Empty means every gate is expected green. h17_budget is run serially by
+# scripts/test-gate.sh because it deliberately spends ~60s on its budget loop.
