@@ -5,10 +5,11 @@
 """
 import os
 import sqlite3
+import tempfile
 import time
 import json
 import contextlib
-from datetime import datetime
+from datetime import datetime, timezone
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.db")
 
@@ -89,6 +90,11 @@ CREATE TABLE IF NOT EXISTS moment_comments (
 );
 CREATE INDEX IF NOT EXISTS idx_moment_comments_mid ON moment_comments(moment_id, ts);
 
+CREATE TABLE IF NOT EXISTS moment_post_dedup (
+    msg_key TEXT PRIMARY KEY,          -- 幂等键：bot_id:调用方消息 id
+    ts INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS bot_profiles (
     bot_id TEXT PRIMARY KEY,
     avatar_url TEXT,                   -- data:... 或 https://...
@@ -109,25 +115,139 @@ CREATE INDEX IF NOT EXISTS idx_obsessions_bot_exp ON current_obsessions(bot_id, 
 """
 
 
+# 当前 schema 版本。每次新增表/列都 +1，并在 _migrate() 里补一段幂等迁移。
+# 1 = 旧公开版（无版本表）；2 = 本次合并 CBL 后的完整 schema。
+SCHEMA_VERSION = 2
+_SCHEMA_VERSION_TABLE = "schema_version"
+
+
+def _split_sql(sql: str) -> list[str]:
+    """把 DDL 脚本按分号拆成单条语句（本文件的 schema 不含带分号的字符串/注释）。"""
+    return [s.strip() for s in sql.split(";") if s.strip()]
+
+
+def _table_names(conn) -> set:
+    return {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+
+
+def _columns(conn, table: str) -> set:
+    return {r[1] for r in conn.execute("PRAGMA table_info(%s)" % table).fetchall()}
+
+
+def _read_schema_version(conn) -> int:
+    """读 schema 版本；没有版本表/没有行 → 0（旧库）。"""
+    if _SCHEMA_VERSION_TABLE not in _table_names(conn):
+        return 0
+    row = conn.execute(
+        "SELECT version FROM %s ORDER BY version DESC LIMIT 1" % _SCHEMA_VERSION_TABLE
+    ).fetchone()
+    try:
+        return int(row[0]) if row and row[0] is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _set_schema_version(conn, version: int) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS %s (version INTEGER NOT NULL)" % _SCHEMA_VERSION_TABLE)
+    n = conn.execute("SELECT COUNT(*) FROM %s" % _SCHEMA_VERSION_TABLE).fetchone()[0]
+    if n:
+        conn.execute("UPDATE %s SET version=?" % _SCHEMA_VERSION_TABLE, (int(version),))
+        conn.execute("DELETE FROM %s WHERE rowid NOT IN "
+                     "(SELECT MIN(rowid) FROM %s)" % (_SCHEMA_VERSION_TABLE, _SCHEMA_VERSION_TABLE))
+    else:
+        conn.execute("INSERT INTO %s(version) VALUES(?)" % _SCHEMA_VERSION_TABLE,
+                     (int(version),))
+    conn.execute("PRAGMA user_version=%d" % int(version))
+
+
+def _migration_needed(conn) -> bool:
+    """旧库（有用户表但无版本表/版本落后/缺列）才需要备份 + 迁移。"""
+    tables = _table_names(conn)
+    user_tables = tables - {_SCHEMA_VERSION_TABLE, "sqlite_sequence"}
+    if not user_tables:
+        return False                      # 全新空库：没有旧数据要备份
+    if _read_schema_version(conn) < SCHEMA_VERSION:
+        return True
+    # 版本号对但列被手工删掉的极端情况也补一次
+    return not ({"visibility"} <= _columns(conn, "moments")
+                and {"signature", "sig_updated_at", "display_name", "sig_asked_at"}
+                <= _columns(conn, "bot_profiles")
+                and {"image_path"} <= _columns(conn, "moment_comments")
+                and "moment_post_dedup" in tables
+                and "current_obsessions" in tables)
+
+
+def _backup_db(conn) -> str:
+    """用 SQLite 在线备份 API 把旧库完整复制到同目录 ``state.db.bak-<时间>``。
+
+    先写唯一临时文件再 os.replace，避免留下半截备份；失败原样抛（不迁移无备份的库）。
+    """
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dest_path = "%s.bak-%s" % (DB_PATH, stamp)
+    if os.path.exists(dest_path):
+        dest_path = "%s-%d" % (dest_path, os.getpid())
+    tmp = "%s.tmp-%d" % (dest_path, os.getpid())
+    try:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        dest = sqlite3.connect(tmp)
+        try:
+            conn.backup(dest)
+            dest.commit()
+        finally:
+            dest.close()
+        if os.name == "posix":
+            with contextlib.suppress(OSError):
+                os.chmod(tmp, 0o600)
+        os.replace(tmp, dest_path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    return dest_path
+
+
+def _migrate(conn) -> None:
+    """在调用方已开启的事务里建表、补列；全部幂等。"""
+    for stmt in _split_sql(SCHEMA):
+        if stmt.upper().startswith("PRAGMA"):
+            continue                      # PRAGMA 在事务外单独执行
+        conn.execute(stmt)
+    if "visibility" not in _columns(conn, "moments"):
+        conn.execute("ALTER TABLE moments ADD COLUMN visibility TEXT DEFAULT 'public'")
+    cols = _columns(conn, "bot_profiles")
+    if "signature" not in cols:
+        conn.execute("ALTER TABLE bot_profiles ADD COLUMN signature TEXT")
+        conn.execute("ALTER TABLE bot_profiles ADD COLUMN sig_updated_at INTEGER")
+    if "display_name" not in cols:
+        conn.execute("ALTER TABLE bot_profiles ADD COLUMN display_name TEXT")
+    # F-31：签名"上次询问时刻"，冷却按它算（模型答"不换"也计时）
+    if "sig_asked_at" not in cols:
+        conn.execute("ALTER TABLE bot_profiles ADD COLUMN sig_asked_at INTEGER")
+    if "image_path" not in _columns(conn, "moment_comments"):
+        conn.execute("ALTER TABLE moment_comments ADD COLUMN image_path TEXT")
+    _set_schema_version(conn, SCHEMA_VERSION)
+
+
 def init():
-    """初始化 schema，幂等。包含已存在表的列迁移。"""
+    """初始化 schema，幂等。
+
+    旧库先备份（SQLite 在线备份），再在**单个事务**里建表/补列/写 schema 版本；
+    任一步失败整体回滚，库保持迁移前状态。全新空库不产生备份。
+    """
     with _connect() as conn:
-        conn.executescript(SCHEMA)
-        # 旧库 moments 表可能没 visibility 列，补一下
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(moments)").fetchall()}
-        if "visibility" not in cols:
-            conn.execute("ALTER TABLE moments ADD COLUMN visibility TEXT DEFAULT 'public'")
-        # bot_profiles 加 signature / display_name 字段
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(bot_profiles)").fetchall()}
-        if "signature" not in cols:
-            conn.execute("ALTER TABLE bot_profiles ADD COLUMN signature TEXT")
-            conn.execute("ALTER TABLE bot_profiles ADD COLUMN sig_updated_at INTEGER")
-        if "display_name" not in cols:
-            conn.execute("ALTER TABLE bot_profiles ADD COLUMN display_name TEXT")
-        # moment_comments 加 image_path（bot 评论可附图）
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(moment_comments)").fetchall()}
-        if "image_path" not in cols:
-            conn.execute("ALTER TABLE moment_comments ADD COLUMN image_path TEXT")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        if _migration_needed(conn):
+            _backup_db(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _migrate(conn)
+        except BaseException:
+            conn.rollback()
+            raise
 
 
 @contextlib.contextmanager
@@ -154,16 +274,32 @@ def sum_call_weight_since(ts_start: int) -> int:
 
 
 # ─── ongoing_events ────────────────────────────────────────────
-def get_ongoing_event(bot_id: str, now: datetime):
-    now_ts = int(now.timestamp())
+def get_ongoing_event(bot_id: str, now: datetime = None, since_ts: int = None):
+    """取该 bot 的事件（供情绪相关功能用）。
+
+    - 默认（不传 since_ts）：当前**未过期**的最近一条事件，需传 now。
+    - 传 since_ts：返回 started_at 晚于 since_ts 的最近一条事件，**不看是否过期**。
+      F-21 情绪桥用它：60 秒存续的 instant 事件在 5 分钟一次的 tick 里用"当前未过期"
+      筛会永远抓不到，改用开始时刻窗口判定。
+    """
     with _connect() as c:
-        row = c.execute(
-            """SELECT event_name, effect, mood_delta, started_at, expires_at, last_mentioned_at
-               FROM ongoing_events
-               WHERE bot_id=? AND expires_at > ?
-               ORDER BY started_at DESC LIMIT 1""",
-            (bot_id, now_ts),
-        ).fetchone()
+        if since_ts is not None:
+            row = c.execute(
+                """SELECT event_name, effect, mood_delta, started_at, expires_at, last_mentioned_at
+                   FROM ongoing_events
+                   WHERE bot_id=? AND started_at > ?
+                   ORDER BY started_at DESC LIMIT 1""",
+                (bot_id, int(since_ts)),
+            ).fetchone()
+        else:
+            now_ts = int(now.timestamp())
+            row = c.execute(
+                """SELECT event_name, effect, mood_delta, started_at, expires_at, last_mentioned_at
+                   FROM ongoing_events
+                   WHERE bot_id=? AND expires_at > ?
+                   ORDER BY started_at DESC LIMIT 1""",
+                (bot_id, now_ts),
+            ).fetchone()
         if not row:
             return None
         d = dict(row)
@@ -378,19 +514,81 @@ def count_moments_today(bot_id: str, date_str: str) -> int:
         return int(rows["n"])
 
 
-def list_moments(bot_id: str = None, limit: int = 50, since_ts: int = 0):
+def list_moments(bot_id: str = None, limit: int = 50, since_ts: int = 0,
+                 since_id=None, visibility: str = None):
+    """列朋友圈。F-15：visibility 与 (ts,id) 严格游标都在 SQL 里下推。
+    - visibility 给定 → 只回该可见度；
+    - since_id 给定 → 只要 (ts,id) 严格大于 (since_ts,since_id)；否则 ts >= since_ts；
+    - limit=None → 不截断。"""
+    where, args = [], []
+    if bot_id:
+        where.append("bot_id=?")
+        args.append(bot_id)
+    if visibility is not None:
+        where.append("visibility=?")
+        args.append(visibility)
+    if since_id is not None:
+        where.append("(ts > ? OR (ts = ? AND id > ?))")
+        args += [since_ts, since_ts, since_id]
+    else:
+        where.append("ts >= ?")
+        args.append(since_ts)
+    sql = "SELECT * FROM moments WHERE " + " AND ".join(where) + " ORDER BY ts DESC, id DESC"
+    if isinstance(limit, int) and not isinstance(limit, bool):
+        sql += " LIMIT ?"
+        args.append(limit)
     with _connect() as c:
-        if bot_id:
-            rows = c.execute(
-                """SELECT * FROM moments WHERE bot_id=? AND ts >= ? ORDER BY ts DESC LIMIT ?""",
-                (bot_id, since_ts, limit),
-            ).fetchall()
-        else:
-            rows = c.execute(
-                """SELECT * FROM moments WHERE ts >= ? ORDER BY ts DESC LIMIT ?""",
-                (since_ts, limit),
-            ).fetchall()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in c.execute(sql, args).fetchall()]
+
+
+_SQLITE_INT_MAX = 2 ** 63 - 1
+
+
+def delete_moment_cascade(moment_id: int, owner: str) -> dict:
+    """删一条 bot_id == owner 的动态，连同它的全部评论（含回复的回复）与全部点赞，同一个事务里做完。
+
+    返回 {"status": "deleted", "comments": 删掉的评论数, "likes": 删掉的点赞数,
+          "image_paths": 这条动态与其评论引用过的图片路径（库里原样，去重，不含空值）}；
+    没有这条 → {"status": "missing"}；不是 owner 发的 → {"status": "forbidden"}，后两种库不变。
+    只删库里的行，图片文件删不删由调用方判断。
+    先 BEGIN IMMEDIATE 拿写锁再查：两个请求同时删同一条时，后拿到锁的那个查到的已是删完的库，只会得到 missing。
+    """
+    if moment_id > _SQLITE_INT_MAX:      # 超出 SQLite 整数范围的编号不可能存在，免得绑定参数时溢出
+        return {"status": "missing"}
+    with _connect() as c:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("SELECT bot_id, image_path FROM moments WHERE id=?", (moment_id,)).fetchone()
+        if row is None:
+            return {"status": "missing"}
+        if row["bot_id"] != owner:
+            return {"status": "forbidden"}
+        paths = [row["image_path"]] + [r["image_path"] for r in c.execute(
+            "SELECT image_path FROM moment_comments WHERE moment_id=? ORDER BY id", (moment_id,))]
+        comments = c.execute("DELETE FROM moment_comments WHERE moment_id=?", (moment_id,)).rowcount
+        likes = c.execute("DELETE FROM moment_likes WHERE moment_id=?", (moment_id,)).rowcount
+        c.execute("DELETE FROM moments WHERE id=?", (moment_id,))
+    return {"status": "deleted", "comments": comments, "likes": likes,
+            "image_paths": list(dict.fromkeys(p for p in paths if p))}
+
+
+def moment_image_refs() -> list:
+    """库里动态与评论引用的全部图片路径（原样，可能重复）：动态的 image_path、动态 metadata 里的
+    image_paths（bot 多图）、评论的 image_path。删动态后判断一张图是否还被别处引用时用。"""
+    with _connect() as c:
+        refs = [r[0] for r in c.execute(
+            "SELECT image_path FROM moments WHERE image_path IS NOT NULL AND image_path != ''")]
+        refs += [r[0] for r in c.execute(
+            "SELECT image_path FROM moment_comments WHERE image_path IS NOT NULL AND image_path != ''")]
+        metas = [r[0] for r in c.execute(
+            "SELECT metadata_json FROM moments WHERE metadata_json LIKE '%image_paths%'")]
+    for meta in metas:
+        try:
+            paths = json.loads(meta).get("image_paths")
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if isinstance(paths, list):
+            refs += [p for p in paths if isinstance(p, str) and p]
+    return refs
 
 
 # ─── moment_likes ──────────────────────────────────────────────
@@ -409,6 +607,19 @@ def toggle_like(moment_id: int, liker: str) -> bool:
             (moment_id, liker, int(time.time())),
         )
         return True
+
+
+def like_moment(moment_id: int, liker: str) -> bool:
+    """显式点赞（幂等）：已赞返回 False（未改动），本次新赞返回 True。
+
+    与 toggle_like 的区别：重复投递同一点赞指令不会取消赞。
+    """
+    with _connect() as c:
+        cur = c.execute(
+            "INSERT OR IGNORE INTO moment_likes(moment_id, liker, ts) VALUES(?,?,?)",
+            (moment_id, liker, int(time.time())),
+        )
+        return cur.rowcount > 0
 
 
 def list_likers(moment_id: int) -> list:
@@ -479,6 +690,34 @@ def delete_comment(comment_id: int, only_from: str = None) -> bool:
         return n > 0
 
 
+def get_comment(comment_id: int):
+    with _connect() as c:
+        row = c.execute("SELECT * FROM moment_comments WHERE id=?", (comment_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def has_bot_reply(moment_id: int, parent_id, from_user: str) -> bool:
+    """该 (moment, parent, bot) 是否已存在一条回复；用于回复幂等去重。"""
+    with _connect() as c:
+        if parent_id is None:
+            row = c.execute(
+                "SELECT 1 FROM moment_comments WHERE moment_id=? AND parent_id IS NULL "
+                "AND from_user=? LIMIT 1", (moment_id, from_user)).fetchone()
+        else:
+            row = c.execute(
+                "SELECT 1 FROM moment_comments WHERE moment_id=? AND parent_id=? "
+                "AND from_user=? LIMIT 1", (moment_id, parent_id, from_user)).fetchone()
+        return row is not None
+
+
+def claim_moment_post(msg_key: str) -> bool:
+    """发圈幂等键声明：首次返回 True，重复投递返回 False。"""
+    with _connect() as c:
+        cur = c.execute("INSERT OR IGNORE INTO moment_post_dedup(msg_key, ts) VALUES(?,?)",
+                        (msg_key, int(time.time())))
+        return cur.rowcount > 0
+
+
 def list_comments(moment_id: int) -> list:
     with _connect() as c:
         rows = c.execute(
@@ -507,11 +746,12 @@ def comments_bulk(moment_ids: list) -> dict:
 def get_profile(bot_id: str) -> dict:
     with _connect() as c:
         row = c.execute(
-            "SELECT avatar_url, banner_url, signature, sig_updated_at, display_name, updated_at FROM bot_profiles WHERE bot_id=?",
+            "SELECT avatar_url, banner_url, signature, sig_updated_at, sig_asked_at, display_name, updated_at FROM bot_profiles WHERE bot_id=?",
             (bot_id,),
         ).fetchone()
         return dict(row) if row else {"avatar_url": None, "banner_url": None,
                                        "signature": None, "sig_updated_at": 0,
+                                       "sig_asked_at": 0,
                                        "display_name": None, "updated_at": 0}
 
 
@@ -547,6 +787,13 @@ def set_signature(bot_id: str, signature: str):
         )
 
 
+def touch_sig_asked(bot_id: str, ts: int):
+    """记录"上次询问签名时刻"（F-31 冷却按它算，模型答"不换"也更新它）。"""
+    with _connect() as c:
+        c.execute("INSERT OR IGNORE INTO bot_profiles(bot_id) VALUES(?)", (bot_id,))
+        c.execute("UPDATE bot_profiles SET sig_asked_at=? WHERE bot_id=?", (int(ts), bot_id))
+
+
 def set_profile(bot_id: str, avatar_url: str = None, banner_url: str = None):
     """避免覆盖：若某字段为 None 则保留原值。要清空请显式传 ''。"""
     cur = get_profile(bot_id)
@@ -577,8 +824,109 @@ def cleanup_older_than(days: int):
         c.execute("DELETE FROM call_log WHERE ts < ?", (cutoff,))
         c.execute("DELETE FROM seen_news WHERE seen_at < ?", (cutoff,))
         c.execute("DELETE FROM hobby_log WHERE ts < ?", (cutoff,))
-        # ongoing_events 也清掉过期的
-        c.execute("DELETE FROM ongoing_events WHERE expires_at < ?", (int(time.time()) - 86400,))
+        # ongoing_events 清掉过期的，但每个 (bot_id, event_name) **保留最近一行**：
+        # 周期事件（如 28 天的"例假来了"）靠 get_last_event_started 判定"上次什么时候来过"，
+        # 把过期行全删会让周期判定退化成"首次出现"而立刻重新触发。
+        c.execute(
+            """DELETE FROM ongoing_events
+               WHERE expires_at < ?
+                 AND rowid NOT IN (
+                     SELECT rowid FROM (
+                         SELECT rowid,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY bot_id, event_name
+                                    ORDER BY started_at DESC, rowid DESC) AS rn
+                         FROM ongoing_events
+                     ) WHERE rn = 1
+                 )""",
+            (int(time.time()) - 86400,),
+        )
+
+
+# ─── 删除 bot 时清朋友圈（INTERFACE-bot-lifecycle 3.3.4 第 4 步、3.7 第 12 条）─────────────────────
+# 清除范围：11 张表各一个条件，只按 person，同一行满足几条也只算一次。导出与删除用同一份条件、在同一个写事务里做，
+# 所以导出的行数必然等于删掉的行数。点赞、评论的条件要读 moments，必须排在 moments 之前删。
+_OF_PERSON_MOMENTS = "moment_id IN (SELECT id FROM moments WHERE bot_id = :p)"
+_PURGE_SCOPE = (
+    ("moment_likes", "liker = :p OR " + _OF_PERSON_MOMENTS),
+    ("moment_comments", "from_user = :p OR " + _OF_PERSON_MOMENTS),
+    ("moments", "bot_id = :p"),
+    ("bot_profiles", "bot_id = :p"),
+    ("heartbeat_log", "bot_id = :p"),
+    ("ongoing_events", "bot_id = :p"),
+    ("daily_wildcards", "bot_id = :p"),
+    ("event_dice_log", "bot_id = :p"),
+    ("hobby_log", "bot_id = :p"),
+    ("current_obsessions", "bot_id = :p"),
+    # 键是 "<bot>:<消息 id>"。按字面前缀比，不用 LIKE：编号里的 "_" 在 LIKE 里是通配符（mio_b 会带上 mioxb 的键），
+    # LIKE 对英文字母又不分大小写
+    ("moment_post_dedup", "substr(msg_key, 1, length(:k)) = :k"),
+)
+
+
+def purge_person(person: str, export_path) -> dict:
+    """删除 bot 时清掉这个 person 在朋友圈库里的数据，返回 ``{"exported": 行数, "deleted": 行数}``，两数相等。
+
+    范围见 ``_PURGE_SCOPE``：它发的动态连同其下全部点赞与评论，它在别人动态下的点赞与评论，``bot_profiles`` 那一行，
+    生活引擎按 bot 存的六张表，``moment_post_dedup`` 里以 ``<person>:`` 开头的键。不改表结构，不靠级联。
+    做法：``BEGIN IMMEDIATE`` 拿写锁 → 读出范围内的整行 → 写导出件 ``export_path``（``{"person", "exported_at",
+    "tables": {表名: [整行…]}}``，11 张表都有键，0600，同目录临时文件 + fsync + 改名）→ 每张表一条 DELETE → 提交。
+    - 任何一步失败整体回滚、什么都不删，异常原样抛出。已写好的导出件留着：它只是库里现有数据的副本，重做时覆盖。
+    - 重做（重新收拾、重启后续做）时这个 person 已经没有行、导出件又已在：不覆盖，上次导出的数据不能被空表冲掉。
+    - 库文件不存在 → 没有任何人的数据，也不替它建库；库里缺的表按没有行算。
+    """
+    if not isinstance(person, str) or not person:
+        raise ValueError("person 必须是非空字符串")
+    export_path = os.fspath(export_path)
+    params = {"p": person, "k": person + ":"}
+    tables = {name: [] for name, _where in _PURGE_SCOPE}
+    if not os.path.exists(DB_PATH):
+        _export_unless_redo(export_path, person, tables, 0)
+        return {"exported": 0, "deleted": 0}
+    with _connect() as c:
+        c.execute("BEGIN IMMEDIATE")
+        present = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        scope = [(name, where) for name, where in _PURGE_SCOPE if name in present]
+        for name, where in scope:
+            tables[name] = [dict(r) for r in c.execute("SELECT * FROM %s WHERE %s" % (name, where), params)]
+        exported = sum(len(rows) for rows in tables.values())
+        _export_unless_redo(export_path, person, tables, exported)
+        deleted = sum(c.execute("DELETE FROM %s WHERE %s" % (name, where), params).rowcount for name, where in scope)
+        if deleted != exported:   # 同一事务、同一份条件不该对不上；对不上就整体回滚，不留半截
+            raise RuntimeError("朋友圈清除的删除行数与导出行数对不上，已回滚")
+    return {"exported": exported, "deleted": deleted}
+
+
+def _export_unless_redo(path: str, person: str, tables: dict, exported: int) -> None:
+    if exported == 0 and os.path.lexists(path):
+        return
+    doc = {"person": person, "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+           "tables": tables}
+    data = json.dumps(doc, ensure_ascii=False, indent=1).encode("utf-8")   # 先编码：编不出来就什么文件都不建
+    folder = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".moments-export-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            if hasattr(os, "fchmod"):
+                with contextlib.suppress(OSError):
+                    os.fchmod(f.fileno(), 0o600)   # Windows 没有/不适用
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
+    try:
+        dir_fd = os.open(folder, os.O_RDONLY)   # Windows 不能 open 目录 → 跳过
+    except OSError:
+        dir_fd = None
+    if dir_fd is not None:
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
 
 
 if __name__ == "__main__":
