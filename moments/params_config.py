@@ -125,6 +125,12 @@ _RATE_META = {
     "pride_defend_threshold": (-1.0, 1.0, "pride 自我防卫触发阈值", ""),
     "pride_defend_target": (-1.0, 1.0, "pride 自我防卫目标值", ""),
     "accel_threshold_min": (0.0, 1440.0, "距上次消息多久才启动加速", "分钟"),
+    "connection_relief_window_min": (0.0, 1440.0, "刚聊过退潮窗口", "分钟"),
+    "connection_relief_per_min": (0.0, 1.0, "开心时 connection 退潮速率", "每分钟"),
+    "connection_relief_floor": (0.0, 1.0, "connection 退潮底线", ""),
+    "connection_decay_after_min": (0.0, 10080.0, "沉默多久后开始回落", "分钟"),
+    "connection_silence_decay_per_min": (0.0, 1.0, "久未开口回落速率", "每分钟"),
+    "connection_reply_decay": (0.0, 1.0, "主动消息送达后的回落量", ""),
 }
 
 _IMMERSION_LABELS = {"reading": "看书", "cooking": "做饭", "search": "查资料",

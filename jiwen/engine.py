@@ -19,6 +19,7 @@ State 4 维：
 """
 from __future__ import annotations
 import math
+import sys
 import time
 from dataclasses import dataclass, field, asdict
 from typing import Optional
@@ -67,6 +68,17 @@ class Rates:
     # 活动缓解：bot 自己做事可以缓解 connection
     activity_connection_relief: float = 0.0005    # connection -= 此值 × mins
 
+    # 刚聊过就退潮：窗口内 connection 按心情回落到静息底线（connection 唯一的下行通道，见 drift 机制 8）
+    connection_relief_window_min: float = 240.0   # 距上次用户消息 < 此值算"刚聊过"
+    connection_relief_per_min: float = 0.007      # valence=+1 时的退潮速度上限；设 0 = 关掉本机制
+    connection_relief_floor: float = 0.15         # 退到此值为止；它决定"多久不理她才会主动开口"，须 < Thresholds.notice
+
+    # F-02 connection 的另两条下行通道（在 tick 里施加，不进 drift：drift 是纯函数，
+    # 拿不到"窗口内是否有 bot 回复"这种来自会话扫描的信号）
+    connection_decay_after_min: float = 240.0        # 用户沉默超过此值 → 按小步回落
+    connection_silence_decay_per_min: float = 0.002  # 久未开口时的每分钟回落量
+    connection_reply_decay: float = 0.05             # bot 主动消息真正送达后的固定回落量
+
     # immersion 初始映射（不同活动初始沉浸度不同）
     immersion_map: dict = field(default_factory=lambda: {
         "reading": 0.6,
@@ -100,7 +112,10 @@ class State:
     arousal: float = 0.0
     immersion: float = 0.0          # 沉浸度 0..1：在做事时高（独立于 arousal）
     last_tick_ts: int = 0           # 上次 drift 的 unix 时间戳
-    last_user_msg_ts: int = 0       # 上次用户消息的 unix 时间戳
+    # 下面两个时间戳语义**不同**，曾经合并成一个字段用，导致 delta 调用失败时
+    # "用户说过话"这个客观事实一并被冻结、since_last_msg 无限增长、connection 涨到封顶：
+    last_user_msg_ts: int = 0       # 客观事实：真人最后一次私聊的【发送】时刻（来源 = dispatcher marker）
+    last_delta_ts: int = 0          # 已成功评过分的位置：只有 delta 调用成功并应用后才推进
     last_user_msg_meta: dict = field(default_factory=dict)
     last_activity: dict = field(default_factory=dict)  # {type, label, started_ts, initial_immersion}
     # meta 字段建议放：
@@ -209,6 +224,28 @@ def drift(state: State,
     # ─── 新增机制 5：immersion decay ─────────────────────────
     new_immersion = max(0.0, state.immersion - rates.immersion_decay_per_min * mins)
 
+    # ─── 新增机制 8：刚聊过就退潮（connection relief by valence）──
+    # connection 原本只有加项、没有任何减项，一天必然封顶卡死在 forced；这是它唯一的下行通道。
+    # 退潮速度由心情决定而不是随机数：聊得开心退得快，聊崩/被冷落退得慢（valence=-1 时完全
+    # 不退，还惦记着）——"每次不一样"由 valence 每次不同自然产生，同时保住因果、可诊断、可测试。
+    # 读旧值 state.valence（不是衰减后的 new_valence），与本函数其余机制的口径一致。
+    # 编号 8 但**必须排在机制 6 之前**：口径是先退潮、再扣活动缓解（贴着底线时两种顺序差
+    # 至多一个 activity_connection_relief×mins，口径要唯一）。
+    # 退到 floor 就停、不退到 0：退到 0 会让"每天聊几次"的用户彻底收不到主动消息；
+    # 又必须 < Thresholds.notice(0.20)，否则静息态恒被判成"开始注意到沉默"，正是本次要修的观感。
+    # 两道守卫都不是防御性冗余：
+    #   ① relief_per_min == 0（速率设 0 / 窗口关掉 / valence=-1）→ 整段跳过，输出逐位等于
+    #      改动前。不靠"减掉底线再加回来"的浮点等价——那样会差 1 个 ULP，kill switch 就不成立。
+    #   ② new_connection > floor → 低于底线的值不能进来：_decay_to_zero 的负值分支会把它
+    #      反向抬高（刚聊完反而更想念），方向完全错。
+    # _clamp 兜脏 valence：NaN 回中点（半速退潮）而不是把速率算成 NaN；越界值截到两端不放大速率。
+    if since_last_msg_min < rates.connection_relief_window_min:
+        relief_per_min = rates.connection_relief_per_min * _clamp(
+            (state.valence + 1.0) / 2.0, 0.0, 1.0)
+        if relief_per_min != 0.0 and new_connection > rates.connection_relief_floor:
+            new_connection = rates.connection_relief_floor + _decay_to_zero(
+                new_connection - rates.connection_relief_floor, relief_per_min, mins)
+
     # ─── 新增机制 6：activity connection relief（做事缓解黏）──
     new_last_activity = dict(state.last_activity) if state.last_activity else {}
     if new_last_activity and new_immersion > 0.1:
@@ -227,6 +264,7 @@ def drift(state: State,
         immersion=_clamp(new_immersion, 0.0, 1.0),
         last_tick_ts=int(time.time()),
         last_user_msg_ts=state.last_user_msg_ts,
+        last_delta_ts=state.last_delta_ts,
         last_user_msg_meta=dict(state.last_user_msg_meta),
         last_activity=new_last_activity,
     )
@@ -247,6 +285,7 @@ def apply_delta(state: State, delta: dict) -> State:
         immersion=_clamp(state.immersion + float(delta.get("immersion", 0)), 0.0, 1.0),
         last_tick_ts=state.last_tick_ts,
         last_user_msg_ts=state.last_user_msg_ts,
+        last_delta_ts=state.last_delta_ts,
         last_user_msg_meta=dict(state.last_user_msg_meta),
         last_activity=dict(state.last_activity),
     )
@@ -340,6 +379,7 @@ def set_activity(state: State, activity_type: str, label: str, rates: Rates) -> 
         immersion=_clamp(initial_immersion, 0.0, 1.0),
         last_tick_ts=state.last_tick_ts,
         last_user_msg_ts=state.last_user_msg_ts,
+        last_delta_ts=state.last_delta_ts,
         last_user_msg_meta=dict(state.last_user_msg_meta),
         last_activity={
             "type": activity_type,
@@ -362,29 +402,29 @@ def get_style_guidance(state: State) -> str:
     parts = []
     c, p, v, a, i = state.connection, state.pride, state.valence, state.arousal, state.immersion
 
-    # 嘴硬 + 黏：开口先抱怨再软
+    # 嘴硬 + 黏
     if c >= 0.6 and p >= 0.5:
-        parts.append("嘴硬但黏，开口先抱怨'怎么半天不回'，但句尾会软")
+        parts.append("嘴硬、傲娇但黏人")
     elif c >= 0.5 and p < 0:
-        parts.append("依恋强烈+卑微，撒娇为主，'人家好想你'之类")
+        parts.append("依恋、卑微、爱撒娇")
 
     # 心情维度
     if v >= 0.4 and p >= 0:
-        parts.append("心情好，句子轻快，可加感叹号或～")
+        parts.append("轻快，多用感叹号和波浪号")
     elif v <= -0.4 and a >= 0.5:
-        parts.append("烦躁，短句反问，'就这样啊''行''随便'之类")
+        parts.append("烦躁，多用反问")
     elif v <= -0.4 and a < 0.3:
-        parts.append("话少且平，省略号多，避免感叹号，少用语气词")
+        parts.append("话少而平淡，省略号偏多，不用感叹号")
     elif v <= -0.2:
-        parts.append("情绪有点低，文字偏冷，慢半拍")
+        parts.append("情绪偏低，语气偏冷，反应略慢")
 
     # 沉浸度
     if i >= 0.5:
-        parts.append("正在做事，回应有滞后感，可以提到具体在做什么")
+        parts.append("在忙，回复偏慢，会提到手头的事")
 
     # arousal 高（非负面）
     if a >= 0.6 and v >= 0:
-        parts.append("兴奋，句子节奏快，标点密")
+        parts.append("兴奋，语速快，标点密集")
 
     if not parts:
         return ""  # 平稳态返空串省 token
@@ -401,35 +441,36 @@ def get_state_description(state: State) -> str:
     p = state.pride
     v = state.valence
     a = state.arousal
+    i = state.immersion
 
     # 主导情绪：connection
     if c >= 0.50:
-        rules.append("已经撑不住了——很久没动静，坐不住，可能直接说'人呢'")
+        rules.append("快忍不住了，想主动说话")
     elif c >= 0.35 and p >= 0.5:
-        rules.append("很别扭——想找 user 又拉不下脸，开口会带一点赌气")
+        rules.append("别扭，想找又傲娇，说话时语气会有埋怨")
     elif c >= 0.35:
-        rules.append("想找 user 说话，正在找借口开口（翻新闻/旧账都行，反正不是非得找 ta）")
+        rules.append("想找 user 说话，正找理由")
     elif c >= 0.20:
-        rules.append("开始注意到沉默——内心念头在涨，但还能忍")
+        rules.append("开始注意到沉默，但还忍得住")
 
     # 骄傲单独触发
     if p >= 0.7 and c < 0.50:
-        rules.append("嘴硬得很，就算想 user 也绝不主动承认")
+        rules.append("嘴硬，想了也不承认")
 
     # valence/arousal 修饰
     if v < -0.3 and a > 0.3:
-        rules.append("烦躁，坐不住，句子短反问多")
+        rules.append("烦躁，坐不住")
     elif v < -0.3:
         rules.append("情绪低落，话少且平")
     elif v > 0.3:
         rules.append("心情还不错")
 
-    # 沉浸度
-    if a >= 0.5:
-        rules.append("正在专注做某事，没那么急着找 user")
+    # 沉浸度（第 5 维 immersion；以前误用 arousal —— 越激动越被描述成"在忙着别的事"）
+    if i >= 0.5:
+        rules.append("专注在手头的事上，不急着找 user")
 
     if not rules:
-        return "状态平稳——刚聊完不久，没什么挂念的，没在做什么特别的事"
+        return "平稳，没什么挂念"
     return "；".join(rules) + "。"
 
 
@@ -439,15 +480,60 @@ def state_to_dict(state: State) -> dict:
     return asdict(state)
 
 
+def _num(d: dict, k: str, default, cast=float, _bad: list | None = None):
+    """逐字段容错取数：单个值损坏只回落该字段，不牵连其余状态。
+
+    以前是裸 float(d.get(...))，一个 null 或手抖打的引号就会抛异常，
+    被调用方的 try/except 吞成"整份状态回默认"——bot 的情绪被静默清零且无人知晓。
+    缩到单字段之后**静默那一半还在**，所以坏值（不是缺键）要把键名记进 _bad 让上层喊一声：
+    缺键是正常的向后兼容（老 state 文件本来就没有新字段），坏值才是异常。
+    """
+    try:
+        return cast(d[k])
+    except KeyError:
+        return default
+    except (TypeError, ValueError):
+        if _bad is not None:
+            _bad.append(k)
+        return default
+
+
+def _dict_field(d: dict, k: str, _bad: list | None = None) -> dict:
+    v = d.get(k)
+    if isinstance(v, dict):
+        return dict(v)
+    if v is not None and _bad is not None:
+        _bad.append(k)
+    return {}
+
+
 def state_from_dict(d: dict) -> State:
-    return State(
-        connection=float(d.get("connection", 0)),
-        pride=float(d.get("pride", 0)),
-        valence=float(d.get("valence", 0)),
-        arousal=float(d.get("arousal", 0)),
-        immersion=float(d.get("immersion", 0)),  # 老 state 文件兼容默认 0
-        last_tick_ts=int(d.get("last_tick_ts", 0)),
-        last_user_msg_ts=int(d.get("last_user_msg_ts", 0)),
-        last_user_msg_meta=dict(d.get("last_user_msg_meta", {})),
-        last_activity=dict(d.get("last_activity", {})),  # 老 state 兼容默认 {}
+    """任何输入都不抛：坏字段逐个回落默认值，好字段照常读出。
+
+    回落是**可见**的：坏字段的键名会打一行 stderr。只打键名不打值——
+    last_user_msg_meta 之类可能带对话内容，不进日志。
+    """
+    if not isinstance(d, dict):
+        d = {}
+    bad: list[str] = []
+    last_user_msg_ts = _num(d, "last_user_msg_ts", 0, int, bad)
+    state = State(
+        connection=_num(d, "connection", 0.0, float, bad),
+        pride=_num(d, "pride", 0.0, float, bad),
+        valence=_num(d, "valence", 0.0, float, bad),
+        arousal=_num(d, "arousal", 0.0, float, bad),
+        immersion=_num(d, "immersion", 0.0, float, bad),   # 老 state 文件兼容默认 0
+        last_tick_ts=_num(d, "last_tick_ts", 0, int, bad),
+        last_user_msg_ts=last_user_msg_ts,
+        # 缺 last_delta_ts（现存生产 state 文件就是这样）时回落到 last_user_msg_ts：
+        # 旧字段的旧语义就是"只有 delta 成功才推进"，与新字段同构，直接继承即可。
+        # 回落成 0 会让升级后第一个 tick 把整个窗口当新对话重算一遍（重复计分）。
+        last_delta_ts=_num(d, "last_delta_ts", last_user_msg_ts, int, bad),
+        last_user_msg_meta=_dict_field(d, "last_user_msg_meta", bad),
+        last_activity=_dict_field(d, "last_activity", bad),   # 老 state 兼容默认 {}
     )
+    if bad:
+        # 字段级损坏正好绕过 load_state 的"加载状态失败"（那条只在 JSON 语法错时响），
+        # 不喊一声就等于把一类可观测故障变成不可观测故障。
+        print("[jiwen.engine] state 字段损坏已回落默认: " + ",".join(bad), file=sys.stderr)
+    return state
