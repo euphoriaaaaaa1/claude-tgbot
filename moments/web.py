@@ -18,12 +18,17 @@ from flask import (Flask, abort, jsonify, make_response, redirect,
 from werkzeug.exceptions import HTTPException
 
 from moments import panel_auth
+from moments.console_routes import console_bp
+from moments.lifecycle_routes import lifecycle_bp
 
 # 公众版只有供应商模式；cookie 名按 INTERFACE §2.1 固定为 cb_provider。
 COOKIE_NAME = panel_auth.COOKIE_NAME
 
 app = Flask(__name__,
             template_folder=os.path.join(os.path.dirname(__file__), "templates"))
+# 总览与生命周期（INTERFACE §2.2、§2.3、§2.4）：登录门、跨站校验与可达面闸门对本蓝图生效。
+app.register_blueprint(console_bp)
+app.register_blueprint(lifecycle_bp)
 
 
 # ── 安全响应头 ─────────────────────────────────────────────────────────────
@@ -219,7 +224,7 @@ def provider_page():
 
 @app.before_request
 def _reachable_gate():
-    """登录后的可达面：T06 只有登录/登出与 /provider 占位页。
+    """登录后的可达面：登录/登出、/provider 占位页，以及 console/lifecycle 两个蓝图。
 
     未匹配到路由的请求交给 Flask 回 404/405。后续任务的蓝图注册后，把对应端点
     加进这里或按蓝图名放行。
@@ -229,7 +234,8 @@ def _reachable_gate():
     endpoint = request.endpoint
     if endpoint is None:
         return None
-    if endpoint in _SESSION_ENDPOINTS or endpoint == "provider_page":
+    if (endpoint in _SESSION_ENDPOINTS or endpoint == "provider_page"
+            or endpoint.startswith("console.") or endpoint.startswith("lifecycle.")):
         return None
     abort(404)
 
@@ -301,4 +307,10 @@ if __name__ == "__main__":
     sys.stderr.write("[moments.web] startup mode=provider port=%d converger=off\n"
                      % port)
     sys.stderr.flush()
+    # 重启后收拾上次没做完的生命周期操作（T15）；失败不挡 8767 启动。
+    try:
+        from adapters import ops
+        ops.start_recovery()
+    except Exception as e:
+        sys.stderr.write("[moments.web] 生命周期收拾未能启动：%s\n" % type(e).__name__)
     app.run(host=host, port=port, debug=False)
