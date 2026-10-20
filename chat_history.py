@@ -9,6 +9,7 @@ slug 算法（与 Claude Code 一致，已实测）：
 import os
 import glob
 import json
+import re
 import time
 import uuid
 from datetime import datetime
@@ -71,6 +72,11 @@ def _parse_iso_safe(ts_str: str) -> float:
 _INTERNAL_MARKERS = (
     # 框架自身注入的合成消息
     "[self-initiate]",
+    "[group-dm-nudge]",       # 导演：群里信号触发的"去私聊他"提示，非用户真发言
+    "[director]",             # 导演写的群聊剧本，是 bot 的台词不是真人在说话
+    # 产出方在仓库外的 TypeScript 侧：hang_plan.ts / promise_plan.ts
+    "[hang-check]",           # "被晾档案"检查；与真人私聊同形，只有正文能认出来
+    "[promise-due]",          # 承诺到点注入；同样与真人私聊同形
     "[moment-image-gen]",
     "[voice-image]",
     "[voice-recap]",
@@ -161,12 +167,10 @@ _REAL_REPLY_TOOL_NAMES = ("mcp__telegram-worker__reply",
                           "mcp__telegram-worker__send")
 
 
-def _extract_real_reply_text(content) -> str:
-    """如果 assistant 调用了 telegram-worker reply 类工具，返回其 input.text。
-    没真发就返回空（即 bot 只思考，不应进入接续对话尾巴）。
-    """
+def _reply_text_and_chat(content) -> tuple:
+    """assistant 调用了 telegram-worker reply 类工具 → (input.text, input.chat_id 或 None)；没真发 → ("", None)。"""
     if not isinstance(content, list):
-        return ""
+        return "", None
     for c in content:
         if not isinstance(c, dict) or c.get("type") != "tool_use":
             continue
@@ -174,8 +178,28 @@ def _extract_real_reply_text(content) -> str:
             inp = c.get("input") or {}
             text = inp.get("text") or inp.get("message") or ""
             if text:
-                return text
-    return ""
+                cid = inp.get("chat_id")
+                return text, (str(cid).strip() or None) if cid is not None else None
+    return "", None
+
+
+def _extract_real_reply_text(content) -> str:
+    """如果 assistant 调用了 telegram-worker reply 类工具，返回其 input.text。
+    没真发就返回空（即 bot 只思考，不应进入接续对话尾巴）。
+    """
+    return _reply_text_and_chat(content)[0]
+
+
+# 入站外壳 <channel … chat_id="…" …> 里的聊天号；场景标注之前是关系块、时刻行、情境锚点，不是用户原话
+_CHAT_ID_ATTR_RE = re.compile(r'<channel\b[^>]*?\bchat_id="([^"]*)"')
+_SCENE_TAGS = ("【私聊】", "【群聊】")
+
+
+def _after_scene_tag(text: str) -> str:
+    """有场景标注就只取它之后的部分（同 scripts/compact_private_context._user_text 的切法）；没有原样返回。"""
+    head = text[:2000]
+    found = [p for p in (head.find(t) for t in _SCENE_TAGS) if p >= 0]
+    return text[min(found) + len(_SCENE_TAGS[0]):].strip() if found else text
 
 
 def get_recent_assistant_messages(bot_dir: str, days: int = 3, limit: int = 10) -> list[str]:
@@ -216,9 +240,6 @@ def get_recent_dialog(bot_dir: str, days: int = 7, max_chars: int = 12000) -> st
     files = sorted(glob.glob(os.path.join(proj_dir, "*.jsonl")),
                    key=os.path.getmtime, reverse=True)[:10]
     cutoff = time.time() - days * 86400
-    lines_out = []
-    total_chars = 0
-    # 按时间倒序读，再正序输出
     collected = []
     for f in files:
         try:
@@ -238,25 +259,36 @@ def get_recent_dialog(bot_dir: str, days: int = 7, max_chars: int = 12000) -> st
                     ts = _parse_iso_safe(o.get("timestamp", ""))
                     if not ts or ts < cutoff:
                         continue
-                    text = _extract_text(o.get("message", {}).get("content", ""))
+                    content = o.get("message", {}).get("content", "")
+                    if typ == "user":
+                        text = _extract_text(content)
+                        # 跳过框架注入 / CLI 控制消息（不是真实对话）
+                        if not text or _is_internal_injection(text):
+                            continue
+                        text = _after_scene_tag(_strip_channel_wrapper(text))   # 外壳与关系块/时刻行占掉前 200 字，切掉才看得到原话
+                    else:
+                        text = _extract_real_reply_text(content)   # 真正发出去的话在 reply 工具里，text 块只是旁白
                     if not text:
-                        continue
-                    # 跳过框架注入 / CLI 控制消息（不是真实对话）
-                    if typ == "user" and _is_internal_injection(text):
                         continue
                     role = "用户" if typ == "user" else "我"
                     snippet = f"[{role}] {text[:200]}"
                     collected.append((ts, snippet))
         except (FileNotFoundError, PermissionError):
             continue
-    # 按时间正序
+    return _keep_newest(collected, max_chars)
+
+
+def _keep_newest(collected: list, max_chars: int) -> str:
+    """[(ts, 片段)] 按时间正序拼接；超过 max_chars 时丢最旧的、保留最新的。"""
     collected.sort(key=lambda x: x[0])
-    for ts, snippet in collected:
-        if total_chars + len(snippet) > max_chars:
+    out, total = [], 0
+    for _, snippet in reversed(collected):
+        if total + len(snippet) > max_chars:
             break
-        lines_out.append(snippet)
-        total_chars += len(snippet) + 1
-    return "\n".join(lines_out)
+        out.append(snippet)
+        total += len(snippet) + 1
+    out.reverse()
+    return "\n".join(out)
 
 
 def get_recent_voice_log(bot_dir: str, days: int = 7, max_chars: int = 4000) -> str:
@@ -293,14 +325,7 @@ def get_recent_voice_log(bot_dir: str, days: int = 7, max_chars: int = 4000) -> 
                     collected.append((ts, f"[{role}] {text[:200]}"))
         except (FileNotFoundError, PermissionError):
             continue
-    collected.sort(key=lambda x: x[0])
-    out, total = [], 0
-    for ts, snippet in collected:
-        if total + len(snippet) > max_chars:
-            break
-        out.append(snippet)
-        total += len(snippet) + 1
-    return "\n".join(out)
+    return _keep_newest(collected, max_chars)
 
 
 def last_user_msg_ts(bot_dir: str, chat_id: str = None,
@@ -382,8 +407,12 @@ def get_thread_tail(bot_dir: str, chat_id: str = None,
         files = sorted(glob.glob(os.path.join(proj_dir, "*.jsonl")),
                        key=os.path.getmtime, reverse=True)[:5]
     cutoff = time.time() - max_hours * 3600
+    # 只要目标聊天的：unified 会话里群聊、私聊交错。入站按外壳 chat_id 归属；回复带 chat_id 按它，
+    # 不带的按最近一条入站的聊天（与 worker-plugin 投递规则一致）。不传 chat_id 不过滤（兼容旧调用）
+    want = str(chat_id).strip() if chat_id not in (None, "") else None
     collected: list[tuple[str, str, int]] = []
     for f in files:
+        cur_chat = None
         try:
             with open(f, encoding="utf-8", errors="replace") as fh:
                 for line in fh:
@@ -398,24 +427,29 @@ def get_thread_tail(bot_dir: str, chat_id: str = None,
                     # "This session is being continued…" 会被当成用户说的话）
                     if o.get("isCompactSummary"):
                         continue
+                    content = o.get("message", {}).get("content", "")
+                    raw = _extract_text(content) if typ == "user" else ""
+                    m = _CHAT_ID_ATTR_RE.search(raw) if raw else None
+                    if m:
+                        cur_chat = m.group(1).strip()   # 归属在时间窗之外也要跟上，内部注入同样算入站
                     ts = _parse_iso_safe(o.get("timestamp", ""))
                     if not ts or ts < cutoff:
                         continue
-                    content = o.get("message", {}).get("content", "")
                     if typ == "assistant":
                         # 只收真发给用户的（tool_use reply 的 input.text），跳过纯思考
-                        text = _extract_real_reply_text(content)
-                        if not text:
+                        text, to_chat = _reply_text_and_chat(content)
+                        if not text or (want and (to_chat or cur_chat) != want):
                             continue
                         role = "assistant"
                     else:
-                        text = _extract_text(content)
+                        text = raw
                         if not text or len(text.strip()) < 2:
                             continue
-                        if _is_internal_injection(text):
+                        if _is_internal_injection(text) or (want and cur_chat != want):
                             continue
                         text = _strip_channel_wrapper(text)
                         text = _strip_crossmem(text)
+                        text = _after_scene_tag(text)   # 先切掉关系块/时刻行再截 200 字，否则外壳长的 bot 一句原话都剩不下
                         if not text or len(text.strip()) < 2:
                             continue
                         role = "user"

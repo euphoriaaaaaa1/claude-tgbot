@@ -2,7 +2,10 @@
 """主入口，被 self-initiate.sh 调用。
 
 用法: python3 life-context.py <bot_id> <chat_id> [--dry-run]
-输出（stdout）: JSON {"action": "TEXT|SKIP|FALLBACK", "text": "...", "metadata": {...}}
+输出（stdout）恰好一行 JSON（接口见 .devflow/INTERFACE-initiate-companion.md A 节）:
+  TEXT     {"action":"TEXT","text":...,"metadata":{..., "moment_id": int|null}}
+  SKIP     {"action":"SKIP","reason":<枚举码>,"detail":<规则名与数字>,"retry_after_s":int|null}
+  FALLBACK {"action":"FALLBACK","reason":"error","detail":<异常类型名>}
 
 退出码：
   0  正常（输出有效 JSON）
@@ -11,6 +14,7 @@
 import sys
 import os
 import json
+import math
 import time
 import traceback
 from datetime import datetime
@@ -18,8 +22,10 @@ from datetime import datetime
 # 让本地模块可 import
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import bot_features
 import config_loader
 import db
+import holiday
 import quota
 import pause
 import prefilter
@@ -37,11 +43,45 @@ from memory.memory_inject import read_memory_brief, pick_memory_hook
 from moments.post import maybe_post_moment
 
 
+MOMENT_JUST_POSTED_HINT = "（你几分钟前刚发了一条朋友圈，私聊别复述同一内容）"
+
+
+def _asleep_reason(bot_cfg: dict, now) -> str:
+    """判睡口径：优先 situation.asleep_reason（含赖床段）；旧版没有它时退回 sleep_hours。"""
+    fn = getattr(situation_mod, "asleep_reason", None)
+    if callable(fn):
+        return fn(bot_cfg, now) or ""
+    if config_loader.in_sleep_hours(bot_cfg, now):
+        return "sleep_hours"
+    return ""
+
+
+def _asleep_until(bot_cfg: dict, now):
+    fn = getattr(situation_mod, "asleep_until", None)
+    return fn(bot_cfg, now) if callable(fn) else None
+
+
 def emit(action: str, **kw):
     """输出 JSON 到 stdout"""
     out = {"action": action}
     out.update(kw)
     print(json.dumps(out, ensure_ascii=False))
+
+
+def emit_skip(reason: str, detail: str = "", retry_after_s=None):
+    """SKIP 固定四键：reason 是接口 A 的枚举码（dispatcher 重试表的键），detail 只放
+    规则名与数字，retry_after_s 为正整数秒（上限 86400），算不出一律 null。"""
+    if isinstance(retry_after_s, bool) or not isinstance(retry_after_s, int) or retry_after_s < 1:
+        retry_after_s = None
+    else:
+        retry_after_s = min(retry_after_s, 86400)
+    emit("SKIP", reason=reason, detail=detail, retry_after_s=retry_after_s)
+
+
+def _features(bot_id: str, bot_cfg: dict) -> dict:
+    """这只 bot 的八项开关，整次只读一次（文件不在全开，读不出全关）。频道目录经 bot_features.channel_dir，与壳写开关的
+    是同一个目录（全仓唯一的取法）；规则用已读出的 bot_cfg 算，不再读一遍全部 yml。"""
+    return bot_features.features_of(bot_id, bot_cfg)
 
 
 def main():
@@ -65,11 +105,23 @@ def main():
         sys.exit(1)
 
     now = datetime.now()
+    # 功能开关（PLAN-bot-features D2；INTERFACE 3.4.8）：生活作息关 → 不判睡、情境/新闻/每日卡片置空；
+    # 关系进展关 → 不读积温；朋友圈关 → 第 5 步不发帖；主动找你聊关 → 朋友圈步骤照常，私聊这一路回 SKIP feature_off
+    feats = _features(bot_id, bot_cfg)
+
+    # 节假日缓存刷新（唯一联网入口）：放在 pause/quota 之前，免得长期 pause 时
+    # 明年数据一直拉不到；每进程只调一次，拿不到锁/负缓存期内都不联网。dry-run 不联网不写缓存。
+    if not dry_run:
+        try:
+            targets = [now.year] + ([now.year + 1] if now.month >= 11 else [])
+            sys.stderr.write(f"[holiday] refresh {holiday.refresh_years(targets)}\n")
+        except Exception as e:
+            sys.stderr.write(f"[holiday] refresh skipped: {type(e).__name__}\n")
 
     # ─── 0. 全局/bot pause 检查 ─────────────────────────
     paused = pause.is_paused(bot_id)
     if paused:
-        emit("SKIP", reason=paused)
+        emit_skip("paused", str(paused))
         return
 
     # ─── 1. 配额 ───────────────────────────────────────
@@ -78,28 +130,41 @@ def main():
     q = quota.check_quota(global_cfg) if not dry_run else "ok"
     bypass_quota = os.environ.get("CLAUDEBOTLIFE_BYPASS_SILENCE") == "1"
     if q == "over" and not bypass_quota:
-        emit("SKIP", reason="5h 配额耗尽")
+        emit_skip("quota", "5h 配额耗尽")
         return
     if bypass_quota and q == "over":
         # 检查硬顶
         cap = (global_cfg or {}).get("max_calls_per_5h", quota.DEFAULT_MAX_CALLS_PER_5H)
         used = quota.current_usage(global_cfg)["used_weighted"]
         if used >= cap * 1.5:
-            emit("SKIP", reason=f"配额硬顶({used}/{cap*1.5:.0f})，bypass 失效")
+            emit_skip("quota", f"配额硬顶({used}/{cap*1.5:.0f})，bypass 失效")
             return
         sys.stderr.write(f"[{bot_id}] /clear bypass quota: {used}/{cap}（硬顶 {cap*1.5:.0f}）\n")
     threshold_boost = (q == "warn") and not bypass_quota
 
     # ─── 2. 睡眠时段 ───────────────────────────────────
-    if config_loader.in_sleep_hours(bot_cfg, now):
-        emit("SKIP", reason=f"sleep_hours({now.strftime('%H:%M')})")
+    # 判睡只有 asleep_reason 一个口径（探测/发圈/积温同源）；赖床段也算睡
+    asleep = _asleep_reason(bot_cfg, now) if feats["life"] else ""
+    if asleep:
+        until = _asleep_until(bot_cfg, now)
+        # 醒来端点本身仍判睡：取整后再多 1 秒，免得回来时还在睡
+        retry = math.ceil((until - now).total_seconds()) + 1 if until else None
+        emit_skip("asleep", f"{asleep}({now.strftime('%H:%M')})", retry)
         return
 
     # ─── 3. 收集情境 ───────────────────────────────────
     try:
-        situation = situation_mod.collect(bot_id, now, bot_cfg)
-        world_snap = world_mod.collect_world(bot_cfg, now)
-        wildcard_pick = wildcard_mod.pick_today_wildcard(bot_id, now)
+        if feats["life"]:
+            situation = situation_mod.collect(bot_id, now, bot_cfg)
+            world_snap = world_mod.collect_world(bot_cfg, now)
+            wildcard_pick = wildcard_mod.pick_today_wildcard(bot_id, now)
+        else:
+            # 生活作息关着：没有作息、突发与爱好（不抽突发，免得写进库），当作一直是自由时间；
+            # 新闻归生活作息（不拉订阅源），每日卡片不取；日期、节日、天气照旧
+            situation = situation_mod.SituationContext(recurring=situation_mod.Activity(
+                name="自由时间", description="没什么特别的事", state="free"))
+            world_snap = world_mod.collect_world(dict(bot_cfg, rss_feeds=[]), now)
+            wildcard_pick = None
         mood_val, mood_factors = mood_mod.mood_at(now, bot_id, situation, world_snap, bot_cfg)
         recent_msgs = recent_mod.recent_assistant_messages(
             bot_cfg["bot_channel_path"], days=3, limit=10
@@ -109,7 +174,7 @@ def main():
         )
     except Exception as e:
         sys.stderr.write(f"情境收集失败：{e}\n{traceback.format_exc()}\n")
-        emit("FALLBACK", reason=f"context error: {type(e).__name__}")
+        emit("FALLBACK", reason="error", detail=type(e).__name__)
         return
 
     # ─── 3.6 对话接续模式判定（独立 try，失败降级为 fresh，不影响主流程）────
@@ -153,11 +218,13 @@ def main():
 
     # ─── 3.7 jiwen 4D 状态读取（Phase 4）─────────────────
     # 失败/未启用 → jiwen_info=None，全流程走老逻辑
+    # 关系进展关着：不读积温，强制开口与关系语气都不带
     jiwen_info = None
-    try:
-        jiwen_info = jiwen_reader.read(bot_id, chat_id, global_cfg)
-    except Exception as e:
-        sys.stderr.write(f"[{bot_id}] jiwen 读取失败（不影响主流程）：{e}\n")
+    if feats["relationship"]:
+        try:
+            jiwen_info = jiwen_reader.read(bot_id, chat_id, global_cfg)
+        except Exception as e:
+            sys.stderr.write(f"[{bot_id}] jiwen 读取失败（不影响主流程）：{e}\n")
 
     # forced：connection 撑满，跳过 prefilter+judge 直接说话
     jiwen_forced = bool(jiwen_info and jiwen_info.get("forced"))
@@ -173,7 +240,7 @@ def main():
 
     # ─── 4. 硬规则预筛（省 LLM 配额）────────────────────
     if jiwen_forced:
-        skip_reason = ""  # 强制开口，跳过 prefilter
+        skip_reason = None  # 强制开口，跳过 prefilter
         sys.stderr.write(f"[{bot_id}] jiwen forced：bypass prefilter\n")
     else:
         skip_reason = prefilter.hard_prefilter(
@@ -181,22 +248,32 @@ def main():
             since_user_min, recent_msgs, global_cfg,
         )
     if skip_reason:
+        # 公开版旧 prefilter 返回 str；CBL 新口径返回 (code, detail, retry_after_s)。
+        if isinstance(skip_reason, tuple):
+            skip_code, skip_detail, skip_retry = skip_reason
+        else:
+            skip_code, skip_detail, skip_retry = str(skip_reason), "", None
         db.log_heartbeat(
             bot_id, int(now.timestamp()), mood_val, mood_factors,
             situation.recurring.name,
             (situation.sporadic or {}).get("name", ""),
             (situation.hobby or {}).get("name", ""),
             (wildcard_pick.card if wildcard_pick else ""),
-            False, "", True, skip_reason, "",
+            False, "", True, f"{skip_code}:{skip_detail}", "",
         )
-        # prefilter SKIP：朋友圈也跟着安静（prefilter 是"是否值得评估"硬闸）
-        emit("SKIP", reason=skip_reason)
+        # prefilter SKIP：朋友圈也跟着安静（prefilter 是"是否值得评估"硬闸）。
+        # 主动找你聊关着时这一轮私聊本来就不发：回 feature_off，退避按它（INTERFACE 3.4.8、3.8.4 第 1 条）
+        if not feats["proactive"]:
+            emit_skip("feature_off", "proactive")
+            return
+        emit_skip(skip_code, skip_detail, skip_retry)
         return
 
     # ─── 4b. find_activity 集成：jiwen 触发时让 bot 自己做事 ───
     # 心情差/嘴硬/焦躁时，挑一个 SFW hobby 注入 situation.hobby
     # 同时调 set_activity 写回 jiwen state（让 immersion 起来缓解 connection）
-    if jiwen_info and jiwen_info.get("find_activity"):
+    # 生活作息关着时情境保持为空，不往里塞爱好
+    if feats["life"] and jiwen_info and jiwen_info.get("find_activity"):
         try:
             fa = jiwen_info["find_activity"]
             activity_type = fa.get("suggested_activity_type", "browse")
@@ -230,7 +307,7 @@ def main():
     # dm = jiwen 驱动 + judge 决定
     # 两条路并行，互不干涉
     moment_id = None
-    if not dry_run:
+    if feats["moments"] and not dry_run:
         try:
             moment_id = _try_post_moment(
                 bot_id, bot_cfg, now, situation, world_snap, wildcard_pick,
@@ -239,6 +316,11 @@ def main():
             )
         except Exception as e:
             sys.stderr.write(f"[{bot_id}] 朋友圈独立路径失败（不影响 dm）：{e}\n")
+
+    # ─── 5b. 主动找你聊关着：朋友圈已照常走过，私聊这一路到此为止（积温强制开口也在这之后，一并不发）───
+    if not feats["proactive"]:
+        emit_skip("feature_off", "proactive")
+        return
 
     # ─── 6. LLM judge：决定 dm vs skip（不再决定朋友圈）─────
     if dry_run:
@@ -257,11 +339,6 @@ def main():
             speaking_threshold=bot_cfg.get("speaking_threshold", ""),
         )
 
-    # 6b. 朋友圈撞 dm 抑制：刚发了圈就别同时 dm 刷屏
-    if moment_id and action == "dm" and not jiwen_forced:
-        sys.stderr.write(f"[{bot_id}] 刚发圈，抑制本次 dm 避免撞车\n")
-        action, reason = "skip", f"moment_just_posted({moment_id})"
-
     # 6c. action=skip → 不发 self-initiate text（朋友圈已独立处理过）
     if action == "skip":
         db.log_heartbeat(
@@ -272,7 +349,8 @@ def main():
             (wildcard_pick.card if wildcard_pick else ""),
             False, reason, True, f"action=skip:{reason}", "",
         )
-        emit("SKIP", reason=f"action=skip:{reason}")
+        # judge 的原文可能带话题正文，只进 heartbeat/日志，不进 detail
+        emit_skip("judge_no", "judge")
         return
 
     # action ∈ {"dm", "both"}：继续走 self-initiate 私聊路径
@@ -325,7 +403,12 @@ def main():
             True, reason, False, "", text,
         )
 
+    # 发圈与私聊各走各的周期、互不取消（S-02 修复）；同 tick 刚发过圈时提醒模型别复述
+    if moment_id:
+        text = text.rstrip("\n") + "\n" + MOMENT_JUST_POSTED_HINT
+
     emit("TEXT", text=text, metadata={
+        "moment_id": moment_id if moment_id else None,
         "mood": mood_val,
         "mood_factors": mood_factors,
         "current_activity": situation.recurring.name,
@@ -431,29 +514,26 @@ def _write_back_activity(bot_id: str, chat_id: str, state, activity_type: str,
                           label: str, global_cfg: dict) -> None:
     """调 engine.set_activity 后原子写回 jiwen state 文件。
 
-    并发保护：写入前 reread 最新 state，对比 last_tick_ts；冲突时放弃写入并 warn。
+    与 tick 的"读-评-写"共用 <state>.lock（跨进程 flock）：锁内重读磁盘最新 state、
+    以它为基底 set_activity（合并），不拿调用方手上可能已陈旧的 state 整份覆盖，
+    免得把 tick 并发写下的 connection 等一起抹掉。
     """
     try:
         from jiwen import engine as _eng
         from jiwen import tick as _tick
         rates = _tick.merge_rates(global_cfg.get("jiwen", {}), {})
-        # 设置活动
-        new_state = _eng.set_activity(state, activity_type, label, rates)
-        if new_state is state:
-            return  # 冷却拒绝
-        # 写回
         state_dir = global_cfg.get("jiwen", {}).get("state_dir") or \
             os.path.expanduser("~/.claude/dispatcher/.jiwen-state")
         path = _tick.state_path(state_dir, bot_id, chat_id)
-        # 读最新看是否被 tick 覆盖过
-        try:
+        with _tick.state_lock(path):
             latest = _tick.load_state(path)
-            if latest.last_tick_ts > state.last_tick_ts:
-                sys.stderr.write(f"[{bot_id}] _write_back_activity 跳过（state 已被 tick 更新过）\n")
-                return
-        except Exception:
-            pass
-        _tick.save_state(path, new_state)
+            # 磁盘比手上新 → 以磁盘为基底；否则退回入参（磁盘不存在时默认 State 的
+            # last_tick_ts≈now，会让 latest 恒新，但那种情况下也没有别的更新要保）
+            base = latest if latest.last_tick_ts >= getattr(state, "last_tick_ts", 0) else state
+            new_state = _eng.set_activity(base, activity_type, label, rates)
+            if new_state is base:
+                return  # 冷却拒绝
+            _tick.save_state(path, new_state)
     except Exception as e:
         sys.stderr.write(f"[{bot_id}] _write_back_activity 失败：{e}\n")
 
