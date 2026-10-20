@@ -469,9 +469,38 @@ def test_switch_target_existing_uses_no_token(reg):
 def test_switch_moved_source_is_rejected(reg):
     reg["claude"] = FakeAdapter("claude", bots=[bot(polling=False, moved_to="dsh")])
     reg["dsh"] = FakeAdapter("dsh")
+    with pytest.raises(lifecycle_flow.Reject) as exc:
+        lifecycle_flow.start_switch("claude", "mybot", {"to": "dsh"}, "rk")
+    assert exc.value.code == "moved"
+    assert exc.value.http_status == 409
+    assert ops.list_ops(limit=1000) == []
+
+
+def test_switch_second_call_is_rejected_sync(reg):
+    """第一次切换成功后，第二次同步入口就返回 409 moved，不再建注定失败的后台任务。"""
+    src = FakeAdapter("claude", bots=[bot(polling=True)])
+    dst = FakeAdapter("dsh")
+    reg["claude"], reg["dsh"] = src, dst
     op = wait_op(lifecycle_flow.start_switch("claude", "mybot", {"to": "dsh"}, "rk"))
-    assert op["state"] == "failed"
-    assert op["code"] == "moved"
+    assert op["state"] == "done", op
+    before = len(ops.list_ops(limit=1000))
+    with pytest.raises(lifecycle_flow.Reject) as exc:
+        lifecycle_flow.start_switch("claude", "mybot", {"to": "dsh"}, "rk")
+    assert exc.value.code == "moved"
+    assert exc.value.http_status == 409
+    assert exc.value.message == lifecycle_flow.SWITCH_MOVED % "dsh"
+    assert len(ops.list_ops(limit=1000)) == before
+
+
+def test_switch_pending_is_rejected_sync(reg):
+    reg["claude"] = FakeAdapter("claude", bots=[bot(polling=False, moved_to="pending")])
+    reg["dsh"] = FakeAdapter("dsh")
+    with pytest.raises(lifecycle_flow.Reject) as exc:
+        lifecycle_flow.start_switch("claude", "mybot", {"to": "dsh"}, "rk")
+    assert exc.value.code == "moved"
+    assert exc.value.http_status == 409
+    assert exc.value.message == lifecycle_flow.SWITCH_MOVED_PENDING
+    assert ops.list_ops(limit=1000) == []
 
 
 def test_switch_other_side_running_is_rejected(reg):

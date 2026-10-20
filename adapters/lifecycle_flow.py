@@ -1185,8 +1185,14 @@ def start_switch(backend: str, bot_id: str, body: dict, rate_key: str) -> str:
         raise Reject("unsupported", 501, "目标底层不提供群设置，没法把群带过去")
     # 受理前先确认源侧真有这只 bot：未知 bot 是 404，不是一条注定失败的后台任务。
     src_ad = call(lambda: registry.adapter(backend))
-    if _find_bot(src_ad, bot_id) is None:
+    src = _find_bot(src_ad, bot_id)
+    if src is None:
         raise Reject("unknown_bot", 404, UNKNOWN_BOT_MESSAGE)
+    # 已经迁出（或正在迁出）的 bot 再切一次，同步就返回 409；否则会建一条注定失败的后台任务。
+    moved = src.get("moved_to")
+    if isinstance(moved, str) and moved:
+        raise Reject("moved", 409,
+                     SWITCH_MOVED_PENDING if moved == "pending" else SWITCH_MOVED % moved)
     return _submit("switch", backend, bot_id=bot_id, target={"backend": to, "bot_id": bot_id},
                    token=token, rate_key=rate_key,
                    data={"token_source": "form" if token is not None else "handoff"})
