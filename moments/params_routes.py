@@ -30,7 +30,9 @@ def _api(fn):
         try:
             return fn(*a, **kw)
         except pc.ParamsError as e:
-            return jsonify({"error": e.error, "detail": e.detail}), e.status
+            # 公开版 INTERFACE §2.8 的表单校验错误码统一为 bad_body；具体原因留在 detail。
+            code = "bad_body" if e.error == "bad_field" else e.error
+            return jsonify({"error": code, "detail": e.detail}), e.status
     return wrapper
 
 

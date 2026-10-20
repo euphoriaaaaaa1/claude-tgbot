@@ -365,7 +365,7 @@ def test_系统参数非法值400(client, tmp_path):
     version = client.get("/api/params").get_json()["version"]
     r = client.post("/api/params", json={"values": {"max_calls_per_5h": 0}, "version": version})
     assert r.status_code == 400
-    assert r.get_json()["error"] == "bad_field"
+    assert r.get_json()["error"] == "bad_body"
 
 
 def test_系统参数原文遮蔽敏感值(client, tmp_path):
