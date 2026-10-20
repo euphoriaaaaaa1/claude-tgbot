@@ -14,7 +14,7 @@ moments:
   enabled: true
   daily_post_limit_per_bot: 5
   silence_threshold_minutes: 30
-  web_port: 8765               # 朋友圈网页端口（局域网手机也能开）
+  web_port: 8767               # 管理台端口（实际由 MOMENTS_WEB_PORT 控制；旧 8765 已停用）
   image_generation:
     enabled: true
     provider: novelai          # novelai | comfyui
@@ -43,7 +43,7 @@ jiwen:                         # 情绪/关系数值引擎（第二层 DeepSeek 
   tick_interval_min: 5
   state_dir: ~/.claude/dispatcher/.jiwen-state
   # 可选：显式列出要 tick 的 bot；留空则自动扫 ~/.claude/channels 下所有带 access.json 的目录
-  # bots: [chenlulu]
+  # bots: [mybot]
   delta_llm:                   # 🔴 独立于主模型：直接调 DeepSeek，不读 settings.json
     base_url: https://api.deepseek.com/anthropic
     api_key: "YOUR_DEEPSEEK_API_KEY"   # ← 填你自己的 DeepSeek key

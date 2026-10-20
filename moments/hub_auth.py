@@ -169,7 +169,7 @@ def check_startup(host: str, out=None, err=None):
         return None
     if is_loopback(host):
         # 绑回环仍然放行：本机自用不该被逼着设口令。但 BRIEF 的暴露方式是 cloudflare
-        # tunnel（守护进程从本机连 127.0.0.1:8765），这道闸永远不触发 —— 所以这里必须
+        # tunnel（守护进程从本机连 127.0.0.1:8767），这道闸永远不触发 —— 所以这里必须
         # 出声，否则"隧道一挂就全网可写 key / 改 settings / 重启 bot"没有任何可发现路径。
         print("WARN: 未设 HUB_ACCESS_PASSWORD —— 管理台当前无鉴权。仅本机访问没问题；"
               "**挂 cloudflare tunnel 之类的公网隧道前必须先设口令**"
