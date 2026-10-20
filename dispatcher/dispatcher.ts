@@ -1039,6 +1039,7 @@ async function slashBridgeIfApplicable(ctx: Context, text: string): Promise<bool
     await bot.api.sendMessage(chatId, note, replyOpt).catch(() => {})
     process.stderr.write(`dispatcher[${BOT_NAME}]: botctl ${ctl.cmd} ${ctl.target} by ${sender}\n`)
     const child = spawn('bash', [script, ctl.target], { detached: true, stdio: 'ignore' })
+    child.on('error', e => process.stderr.write(`dispatcher[${BOT_NAME}]: botctl spawn failed: ${e instanceof Error ? e.message : String(e)}\n`))
     child.unref()
     return true
   }
