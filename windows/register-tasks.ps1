@@ -5,14 +5,15 @@
 $ErrorActionPreference = "Stop"
 $RepoDir = Split-Path -Parent $PSScriptRoot
 $Py = (Get-Command python -ErrorAction SilentlyContinue).Source
-if (-not $Py) { $Py = (Get-Command python3).Source }
+if (-not $Py) { $Py = (Get-Command python3 -ErrorAction SilentlyContinue).Source }
 if (-not $Py) { Write-Error "找不到 python/python3，无法注册计划任务"; exit 1 }
 $ServiceScript = Join-Path $RepoDir "platform_services.py"
-# 频道目录口径与 start-bots.ps1 / restart-bots.example.sh 一致：HUB_CHANNELS_DIR 优先。
-$Channels = if ($env:HUB_CHANNELS_DIR) { $env:HUB_CHANNELS_DIR } else { Join-Path $env:USERPROFILE ".claude\channels" }
+# 频道目录口径与 start-bots.ps1 / restart-bots.example.sh 一致。
+$Channels = if ($env:CLAUDEBOT_CHANNELS_ROOT) { $env:CLAUDEBOT_CHANNELS_ROOT } elseif ($env:HUB_CHANNELS_DIR) { $env:HUB_CHANNELS_DIR } else { Join-Path $env:USERPROFILE ".claude\channels" }
 # PowerShell 按 [Console]::OutputEncoding 解码子进程 stdout；中文 Windows 上默认 cp936，
 # 注册表里的 emoji display_name 会被解成乱码 → ConvertFrom-Json 直接失败。
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$env:PYTHONUTF8 = '1'
 
 $script:RegisterFailed = $false
 
@@ -30,7 +31,13 @@ function Register-Service([string]$Name, [string[]]$Extra = @()) {
 # 1) dispatcher：登录时自启（等价 macOS 的 autostart）
 Register-Service "dispatchers"
 
-# 2) self-initiate：每 10 分钟 tick（脚本内部随机 30min-24h 自节流），**每个 bot 一个任务**。
+# 2) 8767 管理台与 8770 供应商代理：任务名/命令都在 platform_services.py。
+#    8767 在公开版里的服务名是 provider-web（MOMENTS_WEB_MODE=provider）；
+#    不再注册旧 moments-web / cliproxy / Hub 任务，避免同一端口起两份。
+Register-Service "provider-web"
+Register-Service "provider-proxy"
+
+# 3) self-initiate：每 10 分钟 tick（脚本内部随机 30min-24h 自节流），**每个 bot 一个任务**。
 #    bot 名单来自注册表（configs\*.yml），加 bot 后重跑本脚本即可带上，不用手改本文件。
 #    chat_id 自动从该 bot 的 access.json → allowFrom 取第一个纯数字项。
 #    先判 $LASTEXITCODE 再 ConvertFrom-Json：读不出名单就整段跳过并 warn，其余任务照常注册。
@@ -39,7 +46,8 @@ $RegistryJson = & $Py -m bots_registry --format=json
 $RegistryCode = $LASTEXITCODE
 Pop-Location
 if ($RegistryCode -ne 0 -or -not $RegistryJson) {
-    Write-Warning "跳过全部 self-initiate：bots_registry 读不出 bot 名单（退出码 $RegistryCode）。其余任务已正常注册。"
+    [Console]::Error.WriteLine("bots_registry 读不出 bot 名单（退出码 $RegistryCode）；未注册任何 self-initiate 任务。")
+    $script:RegisterFailed = $true
     $Registry = @()
 } else {
     # @() 包一层：只有一个 bot 时 ConvertFrom-Json 回的是单个对象而不是数组
@@ -60,25 +68,21 @@ foreach ($b in $Registry) {
     if ($SelfInitChat) {
         Register-Service "self-initiate-$($b.id)" @("--bot", "$($b.id)", "--chat-id", "$SelfInitChat")
     } else {
-        Write-Warning "跳过 claude-tgbot-self-initiate-$($b.id)：没能从 $AccessJson 的 allowFrom 读到数字 user_id。填好白名单后重跑本脚本即可补上（其余任务已正常注册）。"
+        [Console]::Error.WriteLine("跳过 claude-tgbot-self-initiate-$($b.id)：没能从 $AccessJson 的 allowFrom 读到数字 user_id。填好白名单后重跑本脚本即可补上。")
+        $script:RegisterFailed = $true
     }
 }
 
-# 3) jiwen tick：每 5 分钟（情绪+关系数值）
+# 4) jiwen tick：每 5 分钟（情绪+关系数值）
 Register-Service "jiwen-tick"
 
-# 4) memory compactor：每天 04:00（长期记忆压缩）
+# 5) memory compactor：每天 04:00（长期记忆压缩）
 Register-Service "memory-compactor"
-
-# 8767 管理台与 8770 供应商代理的服务名已在 platform_services.py 里定义
-# （provider-web / provider-proxy）。T06/T09 的进程入口就位后再启用下面两行，
-# 现在不默认注册，免得创建指向尚不存在入口的任务：
-#   Register-Service "provider-web"
-#   Register-Service "provider-proxy"
 
 Write-Host ""
 if ($script:RegisterFailed) {
-    Write-Host "有任务注册失败，见上面的错误与手动命令。" -ForegroundColor Red
+    [Console]::Error.WriteLine("有任务注册失败或名单不完整，见上面的错误与手动命令。")
     exit 1
 }
 Write-Host "全部注册完成。查看：taskschd.msc 或 Get-ScheduledTask -TaskName 'claude-tgbot-*'"
+exit 0
