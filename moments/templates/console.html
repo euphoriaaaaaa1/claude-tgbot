@@ -162,6 +162,7 @@ dialog::backdrop { background:rgba(0,0,0,.45); }
     <a class="btn btn-ghost" href="/console/stickers">表情包</a>
     <a class="btn btn-ghost" href="/moments">朋友圈</a>
     <a class="btn btn-ghost" href="/params">系统参数</a>
+    <a class="btn btn-ghost" href="#blkProfile" id="profileLink">人设与生活</a>
     <a class="btn btn-ghost" href="/styles">画风</a>
     <button type="button" class="btn btn-primary" id="newBotBtn" data-role="new-bot" hidden>新建 bot</button>
     <button type="button" class="btn btn-ghost" id="reloadBtn">刷新</button>
@@ -200,6 +201,30 @@ dialog::backdrop { background:rgba(0,0,0,.45); }
       <h2>功能</h2>
       <div class="hint blk-msg" id="featuresMsg" role="status" hidden></div>
       <div id="featureRows"></div>
+    </section>
+
+    <section class="panel blk" id="blkProfile" data-block="profile" hidden>
+      <h2>生活设定</h2>
+      <div class="hint blk-msg" id="lifeMsg" role="status" hidden></div>
+      <div id="lifeRows"></div>
+      <div class="blk-foot" id="lifeFoot" hidden><button type="button" class="btn btn-primary" id="lifeSave" disabled>保存生活设定</button></div>
+
+      <h2 style="margin-top:18px">人设</h2>
+      <div class="hint blk-msg" id="personaMsg" role="status" hidden></div>
+      <textarea id="personaText" rows="8" spellcheck="false" disabled style="width:100%;padding:9px 11px;font-size:14px;font-family:var(--font-body);color:var(--ink);background:transparent;border:1px solid var(--hairline-strong);border-radius:8px"></textarea>
+      <div class="blk-foot" id="personaFoot" hidden><button type="button" class="btn btn-primary" id="personaSave" disabled>保存人设</button></div>
+
+      <h2 style="margin-top:18px">语音</h2>
+      <div class="hint blk-msg" id="voiceMsg" role="status" hidden></div>
+      <div class="voice-row" id="voiceRow" hidden>
+        <div class="field"><label for="voiceId">语音编号</label><input id="voiceId" type="text" maxlength="64" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="voiceModel">语音模型</label><select id="voiceModel"><option value="">跟随全局</option>{% for m in tts_models %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></div>
+      </div>
+      <div class="voice-row" id="voiceLangRow" hidden>
+        <div class="field"><label for="voiceTextLang">文字语言</label><input id="voiceTextLang" type="text" maxlength="20" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="voiceLang">语音语言</label><input id="voiceLang" type="text" maxlength="20" autocomplete="off" spellcheck="false"></div>
+      </div>
+      <div class="blk-foot" id="voiceFoot" hidden><button type="button" class="btn btn-primary" id="voiceSave" disabled>保存语音</button></div>
     </section>
   </main>
 
@@ -694,6 +719,8 @@ const BSW = {last: null};
 const CF = {form: null, pending: null};
 const N = {on: false, loaded: '', saving: false};
 const FEAT = {on: false, loaded: '', saving: false, resp: null, notice: null, error: ''};
+const PROF = {on: false, loaded: '', saving: false, life: null, persona: null, voice: null,
+  lifeErr: '', personaErr: '', voiceErr: '', notices: {life: null, persona: null, voice: null}};
 
 const archiveDialog = document.getElementById('archiveDialog');
 const deleteDialog = document.getElementById('deleteDialog');
@@ -893,10 +920,11 @@ function renderDetail() {
   document.getElementById('blkHead').hidden = !has;
   document.getElementById('blkOverview').hidden = !has;
   document.title = has ? '管理台 · ' + ConsoleUX.displayName(bot) : '管理台';
-  if (!has) { GEN += 1; document.getElementById('blkFeatures').hidden = true; return; }
+  if (!has) { GEN += 1; document.getElementById('blkFeatures').hidden = true; document.getElementById('blkProfile').hidden = true; return; }
   renderHead(backend, bot);
   renderOverview(backend, bot);
   renderFeaturesArea();
+  renderProfileArea();
   const key = SEL.backend + '/' + SEL.botId;
   if (key !== renderDetail._key) {
     renderDetail._key = key;
@@ -1058,6 +1086,219 @@ async function toggleFeature(key) {
     FEAT.notice = {text: ConsoleUX.failureText(r) + (extra ? '（' + extra + '）' : ''), kind: 'err'};
   }
   renderFeatures();
+}
+
+
+// ── 人设与生活（T16；INTERFACE §2.5）：生活设定、人设全文、语音四项 ─────────────
+function profileCaps(backend) {
+  const ok = ConsoleUX.backendOk(backend);
+  return {life: ok && ConsoleUX.hasCap(backend, 'bot.life_settings'),
+    persona: ok && ConsoleUX.hasCap(backend, 'bot.persona'),
+    voice: ok && ConsoleUX.hasCap(backend, 'bot.voice')};
+}
+function renderProfileArea() {
+  const backend = selBackend(), bot = selBot();
+  const caps = backend && bot ? profileCaps(backend) : {life: false, persona: false, voice: false};
+  const on = !!(backend && bot && (caps.life || caps.persona || caps.voice));
+  document.getElementById('blkProfile').hidden = !on;
+  if (!on) { PROF.on = false; PROF.loaded = ''; PROF.life = PROF.persona = PROF.voice = null; return; }
+  document.getElementById('lifeRows').closest('section').querySelector('h2').hidden = !caps.life;
+  document.getElementById('personaText').hidden = !caps.persona;
+  document.getElementById('voiceRow').hidden = !caps.voice;
+  document.getElementById('voiceLangRow').hidden = !caps.voice;
+  const key = SEL.backend + '/' + SEL.botId;
+  if (!PROF.on || PROF.loaded !== key) {
+    PROF.on = true; PROF.loaded = key; PROF.life = PROF.persona = PROF.voice = null;
+    PROF.lifeErr = PROF.personaErr = PROF.voiceErr = '';
+    PROF.notices = {life: null, persona: null, voice: null};
+    loadProfile(GEN);
+  }
+  renderProfile();
+}
+async function loadProfile(gen) {
+  const bot = selBot();
+  if (!bot) return;
+  const caps = profileCaps(selBackend());
+  const [l, p, v] = await Promise.all([
+    caps.life ? getJson(botUrl(bot.backend, bot.bot_id, 'life')) : Promise.resolve(null),
+    caps.persona ? getJson(botUrl(bot.backend, bot.bot_id, 'persona')) : Promise.resolve(null),
+    caps.voice ? getJson(botUrl(bot.backend, bot.bot_id, 'voice')) : Promise.resolve(null)]);
+  if (gen !== GEN) return;
+  const take = (r, what) => {
+    if (!r) return {value: null, err: ''};
+    const b = obj(r.body);
+    return (r.ok && b.ok === true) ? {value: b, err: ''} : {value: null, err: ConsoleUX.failureText(r) || ('读不出' + what)};
+  };
+  const L = take(l, '生活设定'), P = take(p, '人设'), V = take(v, '语音');
+  PROF.life = L.value; PROF.lifeErr = L.err;
+  PROF.persona = P.value; PROF.personaErr = P.err;
+  PROF.voice = V.value; PROF.voiceErr = V.err;
+  renderProfile();
+}
+function renderProfile() {
+  if (!PROF.on) return;
+  const caps = profileCaps(selBackend());
+  const setMsg = (id, text, kind) => {
+    const m = document.getElementById(id);
+    m.textContent = text || '';
+    m.hidden = !text;
+    m.setAttribute('data-kind', kind || '');
+  };
+  const notice = (part) => {
+    const n = PROF.notices[part];
+    return n ? {text: n.text, kind: n.kind} : null;
+  };
+  const lmsg = notice('life');
+  setMsg('lifeMsg', lmsg ? lmsg.text : PROF.lifeErr, lmsg ? lmsg.kind : (PROF.lifeErr ? 'err' : ''));
+  document.getElementById('lifeFoot').hidden = !caps.life;
+  document.getElementById('lifeSave').disabled = PROF.saving || BUSY;
+  if (caps.life) {
+    const box = document.getElementById('lifeRows');
+    const body = PROF.life;
+    if (!body) {
+      if (!box.children.length) box.innerHTML = '<div class="hint">' + (PROF.lifeErr || '正在读取生活设定…') + '</div>';
+    } else {
+      box.replaceChildren();
+      for (const raw of list(body.fields)) {
+        const f = obj(raw), key = txt(f.key);
+        if (!key) continue;
+        const wrap = document.createElement('div');
+        wrap.className = 'field';
+        const label = document.createElement('label');
+        label.textContent = txt(f.label) || key;
+        label.setAttribute('for', 'life-' + key);
+        let input;
+        const val = obj(body.values)[key];
+        if (txt(f.type) === 'text' || txt(f.type) === 'number') {
+          input = document.createElement('input');
+          input.type = txt(f.type) === 'number' ? 'number' : 'text';
+          if (txt(f.type) === 'number') input.step = 'any';
+          input.value = val === null || val === undefined ? '' : String(val);
+        } else {
+          input = document.createElement('textarea');
+          input.rows = txt(f.type) === 'textarea' ? 4 : 5;
+          if (txt(f.type) === 'textarea' || txt(f.type) === 'text') {
+            input.value = val === null || val === undefined ? '' : String(val);
+          } else {
+            input.value = JSON.stringify(val === undefined ? null : val, null, 2);
+          }
+        }
+        input.id = 'life-' + key;
+        input.setAttribute('data-life-key', key);
+        input.setAttribute('data-life-type', txt(f.type));
+        input.disabled = PROF.saving || BUSY;
+        wrap.append(label, input);
+        if (txt(f.help)) {
+          const help = document.createElement('div');
+          help.className = 'hint';
+          help.textContent = txt(f.help);
+          wrap.appendChild(help);
+        }
+        box.appendChild(wrap);
+      }
+    }
+  }
+
+  const pmsg = notice('persona');
+  setMsg('personaMsg', pmsg ? pmsg.text : PROF.personaErr, pmsg ? pmsg.kind : (PROF.personaErr ? 'err' : ''));
+  document.getElementById('personaText').hidden = !caps.persona;
+  document.getElementById('personaFoot').hidden = !caps.persona;
+  const pta = document.getElementById('personaText');
+  pta.disabled = PROF.saving || BUSY || !caps.persona;
+  if (caps.persona && PROF.persona && pta.getAttribute('data-loaded') !== PROF.loaded) {
+    pta.value = txt(PROF.persona.text);
+    pta.setAttribute('data-loaded', PROF.loaded);
+  }
+  document.getElementById('personaSave').disabled = PROF.saving || BUSY;
+
+  const vmsg = notice('voice');
+  setMsg('voiceMsg', vmsg ? vmsg.text : PROF.voiceErr, vmsg ? vmsg.kind : (PROF.voiceErr ? 'err' : ''));
+  document.getElementById('voiceFoot').hidden = !caps.voice;
+  const v = obj(PROF.voice);
+  if (caps.voice && PROF.voice) {
+    document.getElementById('voiceId').value = txt(v.voice_id);
+    document.getElementById('voiceModel').value = txt(v.tts_model);
+    document.getElementById('voiceTextLang').value = txt(v.text_language);
+    document.getElementById('voiceLang').value = txt(v.voice_language);
+  }
+  for (const id of ['voiceId', 'voiceModel', 'voiceTextLang', 'voiceLang']) {
+    document.getElementById(id).disabled = PROF.saving || BUSY || !caps.voice;
+  }
+  document.getElementById('voiceSave').disabled = PROF.saving || BUSY;
+}
+function lifeValues() {
+  const out = {};
+  for (const el of document.querySelectorAll('[data-life-key]')) {
+    const key = el.getAttribute('data-life-key'), type = el.getAttribute('data-life-type');
+    if (type === 'text' || type === 'textarea') { out[key] = el.value; continue; }
+    if (type === 'number') { out[key] = el.value === '' ? null : Number(el.value); continue; }
+    try { out[key] = JSON.parse(el.value || 'null'); }
+    catch (e) { throw new Error('“' + key + '”不是合法 JSON'); }
+  }
+  return out;
+}
+async function saveLife() {
+  const bot = selBot();
+  if (!bot || PROF.saving) return;
+  let values;
+  try { values = lifeValues(); } catch (e) {
+    PROF.notices.life = {text: e.message, kind: 'err'}; renderProfile(); return;
+  }
+  PROF.saving = true; PROF.notices.life = null; renderProfile();
+  const r = await putJson(botUrl(bot.backend, bot.bot_id, 'life'), {values: values});
+  PROF.saving = false;
+  const b = obj(r.body);
+  if (r.ok && b.ok === true) {
+    PROF.notices.life = {text: txt(b.message) || '已保存', kind: 'ok'};
+    const again = await getJson(botUrl(bot.backend, bot.bot_id, 'life'));
+    if (again.ok && obj(again.body).ok === true) PROF.life = again.body;
+  } else {
+    const fields = obj(b.fields);
+    const extra = Object.keys(fields).map((k) => txt(fields[k])).filter(Boolean).join('；');
+    PROF.notices.life = {text: (ConsoleUX.failureText(r) || '没保存') + (extra ? '（' + extra + '）' : ''), kind: 'err'};
+  }
+  renderProfile();
+}
+async function savePersona() {
+  const bot = selBot(), body = PROF.persona;
+  if (!bot || !body || PROF.saving) return;
+  PROF.saving = true; PROF.notices.persona = null; renderProfile();
+  const r = await putJson(botUrl(bot.backend, bot.bot_id, 'persona'),
+    {text: document.getElementById('personaText').value, version: txt(body.version)});
+  PROF.saving = false;
+  const b = obj(r.body);
+  if (r.ok && b.ok === true) {
+    PROF.persona = Object.assign({}, body, {version: txt(b.version)});
+    document.getElementById('personaText').setAttribute('data-loaded', PROF.loaded);
+    PROF.notices.persona = {text: txt(b.message) || '已保存', kind: 'ok'};
+  } else if (r.status === 409) {
+    PROF.notices.persona = {text: '人设刚被别处改过，请刷新后再改', kind: 'err'};
+    PROF.persona = null;
+    document.getElementById('personaText').removeAttribute('data-loaded');
+    const again = await getJson(botUrl(bot.backend, bot.bot_id, 'persona'));
+    if (again.ok && obj(again.body).ok === true) PROF.persona = again.body;
+  } else {
+    PROF.notices.persona = {text: ConsoleUX.failureText(r) || '没保存', kind: 'err'};
+  }
+  renderProfile();
+}
+async function saveVoice() {
+  const bot = selBot();
+  if (!bot || PROF.saving) return;
+  const pick = (id) => { const v = document.getElementById(id).value.trim(); return v === '' ? null : v; };
+  const payload = {voice_id: pick('voiceId'), tts_model: pick('voiceModel'),
+    text_language: pick('voiceTextLang'), voice_language: pick('voiceLang')};
+  PROF.saving = true; PROF.notices.voice = null; renderProfile();
+  const r = await putJson(botUrl(bot.backend, bot.bot_id, 'voice'), payload);
+  PROF.saving = false;
+  const b = obj(r.body);
+  if (r.ok && b.ok === true) {
+    PROF.voice = b;
+    PROF.notices.voice = {text: txt(b.message) || '已保存', kind: 'ok'};
+  } else {
+    PROF.notices.voice = {text: ConsoleUX.failureText(r) || '没保存', kind: 'err'};
+  }
+  renderProfile();
 }
 
 async function loadName(gen) {
@@ -1586,6 +1827,9 @@ document.getElementById('featureRows').addEventListener('click', (e) => {
   const row = btn && btn.closest('[data-feature]');
   if (row && !btn.disabled) toggleFeature(row.getAttribute('data-feature'));
 });
+document.getElementById('lifeSave').addEventListener('click', saveLife);
+document.getElementById('personaSave').addEventListener('click', savePersona);
+document.getElementById('voiceSave').addEventListener('click', saveVoice);
 document.getElementById('archiveBot').addEventListener('click', openArchiveDialog);
 document.getElementById('deleteBot').addEventListener('click', openDeleteDialog);
 document.getElementById('archiveDialogOk').addEventListener('click', confirmArchive);
