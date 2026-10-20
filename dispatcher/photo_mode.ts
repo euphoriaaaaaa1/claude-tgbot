@@ -60,7 +60,13 @@ export function isValidPhotoChatId(chatId: unknown): chatId is string {
   return typeof chatId === 'string' && CHAT_ID_RE.test(chatId)
 }
 
+/**
+ * 状态文件路径。botName 与 chatId 都来自外部输入，拼路径前必须校验，
+ * 否则 `../` 之类可以逃出状态根（路径穿越）。
+ */
 export function photoStatePath(root: string, botName: string, chatId: string): string {
+  photoBotDir(root, botName)
+  if (!isValidPhotoChatId(chatId)) throw new TypeError('photoStatePath: invalid chat id')
   return join(root, botName, `${chatId}.json`)
 }
 
@@ -253,7 +259,13 @@ export function deletePhotoState(path: string): boolean {
   return !existsSync(path)
 }
 
+/** bot 目录名只允许字母、数字、下划线与短横，1 到 64 个字符；其余一律拒绝，防路径穿越。 */
+const BOT_DIR_RE = /^[A-Za-z0-9_-]{1,64}$/
+
 /** 文件名里的 bot 目录（BOT_NAME 只取 dispatcher 启动 env，与频道目录身份同源）。 */
 export function photoBotDir(root: string, botName: string): string {
+  if (typeof botName !== 'string' || !BOT_DIR_RE.test(botName)) {
+    throw new TypeError('photoBotDir: invalid bot name')
+  }
   return join(root, botName)
 }
