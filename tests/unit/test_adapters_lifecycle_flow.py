@@ -274,6 +274,22 @@ def test_create_check_token_rejects_username_in_use(reg):
     assert op["code"] == "token_in_use"
 
 
+def test_create_needs_attention_then_resolve(reg):
+    fake = FakeAdapter("claude")
+    fake.behaviors["create"] = lambda self, spec, token: (_ for _ in ()).throw(
+        LifecycleError("step_failed", 500, "新建停在中间", state="needs_attention"))
+    fake.behaviors["resolve"] = lambda self, rec: {
+        "state": "committed", "bot_id": "mybot", "person": "mybot",
+        "username": "mybot_bot", "enabled": True, "running": True}
+    reg["claude"] = fake
+    op = wait_op(lifecycle_flow.start_create(body(), "rk"))
+    assert op["state"] == "needs_attention"
+    ops.resolve(op["op_id"])
+    op = wait_op(op["op_id"])
+    assert op["state"] == "done"
+    assert op["result"]["bot_id"] == "mybot"
+
+
 # ── 归档 ────────────────────────────────────────────────────────────────────
 
 def test_archive_success(reg):
@@ -343,6 +359,20 @@ def test_restore_unknown_archive_fails(reg):
     assert op["code"] == "unknown_archive"
 
 
+def test_restore_needs_attention_then_resolve(reg):
+    fake = FakeAdapter("claude", archives=[_archive_item()])
+    fake.behaviors["restore"] = lambda self, archive_id, op_id: (_ for _ in ()).throw(
+        LifecycleError("step_failed", 500, "恢复停在中间", state="needs_attention"))
+    fake.behaviors["resolve"] = lambda self, rec: {"state": "committed", "bot_id": "mybot"}
+    reg["claude"] = fake
+    op = wait_op(lifecycle_flow.start_restore("claude", "mybot-20260101-000000"))
+    assert op["state"] == "needs_attention"
+    ops.resolve(op["op_id"])
+    op = wait_op(op["op_id"])
+    assert op["state"] == "done"
+    assert op["result"]["enabled"] is False
+
+
 # ── 删除 ────────────────────────────────────────────────────────────────────
 
 def test_delete_requires_exact_confirm(reg):
@@ -375,6 +405,21 @@ def test_delete_failure_restarts_source(reg):
     op = wait_op(lifecycle_flow.start_delete("claude", "mybot", "mybot"))
     assert op["state"] == "failed"
     assert fake._find("mybot")["polling"] is True
+
+
+def test_delete_needs_attention_then_resolve(reg):
+    fake = FakeAdapter("claude", bots=[bot(polling=True)])
+    fake.behaviors["delete"] = lambda self, bot_id, confirm, op_id: (_ for _ in ()).throw(
+        LifecycleError("step_failed", 500, "删除停在中间", state="needs_attention"))
+    fake.behaviors["resolve"] = lambda self, rec: {
+        "state": "committed", "wiped": True, "trash": "trash", "trash_path": "~/.claude/bot-trash/x"}
+    reg["claude"] = fake
+    op = wait_op(lifecycle_flow.start_delete("claude", "mybot", "mybot"))
+    assert op["state"] == "needs_attention"
+    ops.resolve(op["op_id"])
+    op = wait_op(op["op_id"])
+    assert op["state"] == "done"
+    assert op["result"]["trash"] == "trash"
 
 
 # ── 切换 ────────────────────────────────────────────────────────────────────
@@ -481,6 +526,28 @@ def test_switch_verify_failure_rolls_back(reg):
     assert op["state"] == "failed"
     assert src._find("mybot")["polling"] is True
     assert dst._find("mybot")["polling"] is False
+
+
+def test_switch_needs_attention_then_resolve(reg):
+    src = FakeAdapter("claude", bots=[bot(polling=True)])
+    dst = FakeAdapter("dsh")
+    attempts = {"mark": 0}
+
+    def mark(self, bot_id, enabled, *, moved_to=..., import_from=None):
+        if enabled is False and moved_to == "dsh" and attempts["mark"] == 0:
+            attempts["mark"] += 1
+            raise AdapterError("internal", 500, "已迁出标记没写成")
+        return self._set_enabled_default(bot_id, enabled, moved_to=moved_to)
+
+    src.behaviors["set_enabled"] = mark
+    reg["claude"], reg["dsh"] = src, dst
+    op = wait_op(lifecycle_flow.start_switch("claude", "mybot", {"to": "dsh"}, "rk"))
+    assert op["state"] == "needs_attention"
+    assert op["result"]["to"] == {"backend": "dsh", "bot_id": "mybot"}
+    ops.resolve(op["op_id"])
+    op = wait_op(op["op_id"])
+    assert op["state"] == "done"
+    assert src._find("mybot")["moved_to"] == "dsh"
 
 
 def test_switch_crash_recovery_rolls_back(reg):
