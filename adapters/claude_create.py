@@ -36,7 +36,7 @@ TRASH_SUFFIX = "新建撤回"
 TEMPLATE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 SPEC_KEYS = frozenset(("bot_id", "person", "display_name", "telegram_username", "telegram_user_id",
                        "chat_id", "enabled", "persona_template", "persona_text", "voice", "purpose", "op_id",
-                       "features"))
+                       "features", "telegram_token", "confirm_other_side_unknown"))
 # claude 侧不收这两个键（3.4.2 A）；出现就整单拒绝
 REJECTED_SPEC_KEYS = ("fish_api_key", "port")
 

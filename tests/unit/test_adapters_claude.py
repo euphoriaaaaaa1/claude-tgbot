@@ -224,7 +224,8 @@ def _spec(bot_id="newbot"):
     return {"bot_id": bot_id, "display_name": "新 Bot", "telegram_username": "new_bot",
             "telegram_user_id": 12345, "chat_id": "987654321", "persona_template": "blank",
             "voice": {"voice_id": "v1", "tts_model": "s2-pro"},
-            "features": ["voice", "groups"], "enabled": True, "op_id": "create-test-1"}
+            "features": ["voice", "groups"], "enabled": True, "op_id": "create-test-1",
+            "confirm_other_side_unknown": False, "telegram_token": TELEGRAM_TOKEN}
 
 
 def test_create提交产物且令牌只在env(home, monkeypatch, caplog, capsys):
@@ -293,7 +294,10 @@ def test_persona版本冲突与写入(home):
 def test_features默认全开与写入(home):
     channel = write_bot(home)
     a = ClaudeLocalAdapter()
+    got = a.get_features(BOT)
     assert all(a.get_features(BOT)["features"].values())
+    assert got["keys"][0]["key"] == "voice" and got["keys"][0]["label"]
+    assert got["requirements"]["voice"]["ready"] is True
     out = a.set_features(BOT, {"voice": False})
     assert out["changed"] == ["voice"] and out["features"]["voice"] is False
     doc = json.loads((channel / "features.json").read_text(encoding="utf-8"))

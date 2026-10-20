@@ -52,6 +52,8 @@ PERSONA_BACKUP_DIR = ".persona-bak"
 BACKUP_KEEP = 2
 LOCK_WAIT = 3.0
 FEATURE_KEYS = ("voice", "image", "stickers", "moments", "proactive", "life", "relationship", "groups")
+FEATURE_LABELS = {"voice": "发语音", "image": "生图", "stickers": "表情包", "moments": "朋友圈",
+                  "proactive": "主动找你聊", "life": "生活作息", "relationship": "关系进展", "groups": "群聊"}
 GROUP_SEEN_MAX = 50
 GROUP_SEEN_WARNING = "刚发现的群的记录读不出，已当成空的"
 MOMENTS_OFF_MESSAGE = "这只 bot 的朋友圈功能关着"
@@ -276,8 +278,9 @@ class ClaudeLocalAdapter(BackendAdapter):
         return {"providers": out, "default": {"label": "全局设置（可以是官方订阅）"}}
 
     def set_provider(self, bot_id: str, body: dict) -> dict:
-        """只转调 provider_config：本适配器不直接写 settings.json / .env / providers.json。"""
-        self._require_enabled(bot_id)
+        """只转调 provider_config：本适配器不直接写 settings.json / .env / providers.json。
+        停用的 bot 也照写，由壳决定何时重启（与 CBL 的 allow_stopped 一致）。"""
+        _require_bot(bot_id)
         pc = _provider_config()
         if not isinstance(body, dict):
             raise AdapterError("invalid", 422, "请求体必须是键值表")
@@ -311,15 +314,11 @@ class ClaudeLocalAdapter(BackendAdapter):
             raise AdapterError("internal", 500, "供应商设置没写成") from None
         return result
 
-    def _require_enabled(self, bot_id: str) -> dict:
-        cfg = _require_bot(bot_id)
-        if not bots_registry.is_enabled(cfg, bot_id):
-            raise AdapterError("stopped", 409, "bot 已停用，没有执行")
-        return cfg
-
     # ── 进程 ────────────────────────────────────────────────────────────────
     def restart(self, bot_id: str, force: bool) -> dict:
-        _require_bot(bot_id)
+        cfg = _require_bot(bot_id)
+        if not bots_registry.is_enabled(cfg, bot_id):
+            raise AdapterError("stopped", 409, "已停用，先启用再重启")
         try:
             return claude_proc.restart_worker(bot_id, _port(bot_id), force=bool(force))
         except claude_proc.DispatcherError as e:
@@ -572,8 +571,9 @@ class ClaudeLocalAdapter(BackendAdapter):
         state = _features_state(bot_dir)
         if not state["readable"]:
             raise AdapterError("internal", 500, "读不出这只 bot 的功能开关")
-        return {"keys": list(FEATURE_KEYS), "features": state["features"],
-                "requirements": {k: {"missing": []} for k in FEATURE_KEYS},
+        return {"keys": [{"key": k, "label": FEATURE_LABELS[k]} for k in FEATURE_KEYS],
+                "features": state["features"],
+                "requirements": {k: {"ready": True, "missing": [], "notes": []} for k in FEATURE_KEYS},
                 "skills_synced": True, "warnings": state["warnings"]}
 
     def set_features(self, bot_id: str, changes: dict) -> dict:
