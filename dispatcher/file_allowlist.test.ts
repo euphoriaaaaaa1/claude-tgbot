@@ -59,6 +59,17 @@ describe('resolveAllowedFile', () => {
     }
   })
 
+  test('敏感名大小写变体与 realpath 后落点同样拒绝', () => {
+    const root = mkDir()
+    mkdirSync(join(root, 'CONFIGS'))
+    mkdirSync(join(root, 'Secrets'))
+    for (const rel of ['.ENV', '.Env.Local', 'PROVIDERS.JSON', 'CONFIGS/a.png', 'Secrets/b.png']) {
+      const f = join(root, rel)
+      writeFileSync(f, 'x')
+      expect(resolveAllowedFile(f, [root], homedir())).toEqual({ ok: false, reason: 'sensitive' })
+    }
+  })
+
   test('/etc/passwd、不存在的文件、空串、非字符串都被拒', () => {
     const root = mkDir()
     expect(resolveAllowedFile('/etc/passwd', [root], homedir()))

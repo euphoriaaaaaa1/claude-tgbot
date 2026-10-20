@@ -53,9 +53,6 @@ export function resolveAllowedFile(raw: unknown, roots: readonly string[], home 
   if (raw.includes('\0')) return { ok: false, reason: 'invalid' }
 
   const abs = isAbsolute(raw) ? resolve(raw) : resolve(expandHome(raw, home))
-  const base = basename(abs)
-  if (base.startsWith('.env') || base === 'providers.json') return { ok: false, reason: 'sensitive' }
-  if (abs.split(sep).some(s => SENSITIVE_SEGMENTS.has(s))) return { ok: false, reason: 'sensitive' }
 
   let st
   try { st = lstatSync(abs) } catch { return { ok: false, reason: 'not_found' } }
@@ -63,6 +60,14 @@ export function resolveAllowedFile(raw: unknown, roots: readonly string[], home 
 
   let realFile: string
   try { realFile = realpathSync(abs) } catch { return { ok: false, reason: 'not_found' } }
+
+  // 敏感名检查放在 realpath 之后，且统一小写比较：别让大小写变体或软链目录
+  // （realpath 才看得出真实落点）绕过 .env / configs / secrets 这些名字。
+  const realBase = basename(realFile).toLowerCase()
+  if (realBase.startsWith('.env') || realBase === 'providers.json') return { ok: false, reason: 'sensitive' }
+  if (realFile.split(sep).some(s => SENSITIVE_SEGMENTS.has(s.toLowerCase()))) {
+    return { ok: false, reason: 'sensitive' }
+  }
 
   for (const root of roots) {
     if (!root) continue
