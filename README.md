@@ -79,7 +79,11 @@
 3. 把生图 skill 复制到 Claude 的 skills 目录（仓库已自带，脱敏干净）：
    - Mac/Linux：`cp -r skills/novelai-skill ~/.claude/skills/`
    - Windows：`Copy-Item -Recurse skills\novelai-skill $env:USERPROFILE\.claude\skills\`
-4. 这串 token 填进朋友圈网页（`http://localhost:8765` 的设置页），程序会写进 skill 的 `.env.local`。
+4. 用 CLI 把 token 写进 skill 的 `.env.local`（原子写、权限 0600、不打印令牌）：
+   - Mac/Linux：`printf '%s\n' "$NOVELAI_TOKEN" | python3 scripts/set_novelai_key.py`
+   - Windows PowerShell：`$env:NOVELAI_TOKEN | python3 scripts\set_novelai_key.py`
+   检查是否已配置：`python3 scripts/set_novelai_key.py --check`（只输出 `set: true|false`）。
+5. 登录 provider 管理台后可打开 `/styles` 画风页（可选功能；不配 token 也能正常聊天）。
 > 只想聊天不生图的话，这几步整个跳过。
 
 **④' 改用本机 ComfyUI 生图（可选，NovelAI 的替代，不花钱不用外币卡）**
@@ -274,7 +278,7 @@ powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 启动 moments-web 服务后，浏览器开 `http://localhost:8765` 能：刷各 bot 的朋友圈、点赞/评论（bot 会异步读到并回应）、**画风设置**、**切生图引擎**、填 **NovelAI key**。
 
 - **怎么起**：Mac 跑过 `install.sh` 就已经登录自启了；Windows 走 `register-tasks.ps1` 登录自启。手动起：`python3 -m moments.web`。
-- ⚠️ **画风页和 NovelAI key 设置依赖你已装 `novelai-skill`**（`cp -r skills/novelai-skill ~/.claude/skills/`）——没装的话这两个页面是空的（不报错，只是没内容）。朋友圈刷帖/点赞/评论不依赖 skill，正常可用。
+- ⚠️ **画风页依赖你已装 `novelai-skill`**（`cp -r skills/novelai-skill ~/.claude/skills/`）；token 用上面的 `set_novelai_key.py` 配置，不在网页填写——没装 skill 时画风页是空的（不报错，只是没内容）。朋友圈刷帖/点赞/评论不依赖 skill，正常可用。
 - **画风预设能调的参数**：正/负面前缀之外，还能选 **模型**（V5 Full / V5 Curated / V4.5 Full）、**steps**（1–50）、**cfg_scale**（1–10）、**sampler**、**ucPreset**（负面预设强度 0–3）。每项留空 = 跟随全局默认，不用逐个填。填错会当场告诉你哪不对（比如「steps 必须是 1–50 的整数」），不会静默存进去。
 - **点「生成示例图」**：卡片上会盖一层"生成中"遮罩，同一个预设不能重复点（后台也挡着，另开一个窗口点也是 409）。示例图固定 1024 见方，方便横向比画风。
 - 朋友圈里要有帖子，得后台的 `self-initiate` / `jiwen` / 生图任务在跑（即上面那些可选服务挂上）。
