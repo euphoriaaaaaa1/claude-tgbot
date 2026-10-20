@@ -1,0 +1,1508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>管理台</title>
+<style>
+/* 与 provider.html 同一套颜色与控件：字体只用设备自带的，不加载任何站外资源。 */
+:root { --bg:#ededed; --card:#fff; --ink:#181818; --ink-soft:#555; --ink-faint:#888;
+  --hairline:rgba(0,0,0,0.06); --hairline-strong:rgba(0,0,0,0.12);
+  --wxgreen:#07c160; --danger:#fa5151; --warn:#c98a00;
+  --font-body:'Noto Sans SC','Noto Sans CJK SC','Source Han Sans SC',-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,'Roboto Mono','PingFang SC','Microsoft YaHei',monospace; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#000; --card:#1c1c1e; --ink:#f0f0f0; --ink-soft:#c0c0c0; --ink-faint:#8a8a8a;
+    --hairline:rgba(255,255,255,0.08); --hairline-strong:rgba(255,255,255,0.16); }
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
+  line-height:1.6; font-size:15px; padding-bottom:60px; }
+.topbar { position:sticky; top:0; z-index:10; background:var(--bg);
+  border-bottom:1px solid var(--hairline); padding:16px 20px;
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  flex-wrap:wrap; max-width:900px; margin:0 auto; }
+.topbar h1 { font-size:18px; font-weight:600; }
+.btn { border:none; border-radius:8px; padding:8px 14px; font-size:14px; cursor:pointer;
+  font-family:var(--font-body); transition:opacity .15s; white-space:nowrap; text-decoration:none;
+  display:inline-block; line-height:1.4; }
+.btn:hover { opacity:.85; }
+.btn:disabled { opacity:.45; cursor:default; }
+.btn[hidden] { display:none; }
+.btn-primary { background:var(--wxgreen); color:#fff; }
+.btn-ghost { background:transparent; color:var(--ink-soft); border:1px solid var(--hairline-strong); }
+.btn-danger { background:transparent; color:var(--danger); border:1px solid var(--danger); }
+.wrap { max-width:900px; margin:20px auto; padding:0 20px; }
+.panel { background:var(--card); border:1px solid var(--hairline); border-radius:14px;
+  padding:16px 18px; margin-bottom:16px; }
+.panel h2 { font-size:15px; font-weight:600; margin-bottom:12px; }
+.panel[hidden] { display:none; }
+.row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+.field label { font-size:12px; color:var(--ink-soft); }
+.field[hidden] { display:none; }
+input, select, textarea { padding:8px 10px; border-radius:8px; font-size:14px; color:var(--ink);
+  border:1px solid var(--hairline-strong); background:transparent; font-family:var(--font-body);
+  width:100%; max-width:100%; }
+select { background:var(--card); }
+select option { color:var(--ink); background:var(--card); }
+textarea { min-height:110px; resize:vertical; line-height:1.6; }
+.mono { font-family:var(--font-mono); font-size:12px; color:var(--ink-soft);
+  overflow-wrap:anywhere; word-break:break-word; }
+.tag { display:inline-block; font-size:12px; padding:1px 7px; border-radius:20px;
+  border:1px solid var(--hairline-strong); color:var(--ink-soft); white-space:nowrap; }
+.tag.local { color:var(--warn); border-color:var(--warn); }
+.tag.ok { color:var(--wxgreen); border-color:var(--wxgreen); }
+.tag.bad { color:var(--danger); border-color:var(--danger); }
+.tag[hidden] { display:none; }
+.banner { border-radius:10px; padding:10px 14px; margin-bottom:16px; font-size:14px; overflow-wrap:anywhere; }
+.banner.warn { --tint:rgba(201,138,0,.12); background:var(--tint); color:var(--warn); }
+.banner.err { --tint:rgba(250,81,81,.12); background:var(--tint); color:var(--danger); }
+.banner.ok { --tint:rgba(7,193,96,.12); background:var(--tint); color:var(--wxgreen); }
+.banner[hidden] { display:none; }
+.hint { font-size:12px; color:var(--ink-faint); overflow-wrap:anywhere; }
+.hint[hidden] { display:none; }
+.icon-btn { position:relative; flex:none; width:32px; height:32px; border:none; border-radius:8px;
+  background:transparent; color:inherit; cursor:pointer; }
+.icon-btn::before, .icon-btn::after { content:""; position:absolute; left:50%; top:50%;
+  width:14px; height:1.5px; border-radius:1px; background:currentColor; }
+.icon-btn::before { transform:translate(-50%,-50%) rotate(45deg); }
+.icon-btn::after { transform:translate(-50%,-50%) rotate(-45deg); }
+.icon-btn:hover, .icon-btn:active { background:var(--hairline); }
+.banner.notice { display:flex; align-items:flex-start; gap:10px; }
+.banner.notice[hidden] { display:none; }
+.notice-text { flex:1; min-width:0; overflow-wrap:anywhere; white-space:pre-line; }
+.banner.notice .icon-btn { margin:-5px -8px -5px 0; }
+.topbar .banner.notice { position:absolute; left:20px; right:20px; top:calc(100% + 8px); margin:0;
+  background:linear-gradient(var(--tint), var(--tint)), var(--card);
+  border:1px solid currentColor; box-shadow:0 8px 24px rgba(0,0,0,.14); }
+.group h2 { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+.group-count { font-size:12px; font-weight:400; color:var(--ink-faint); }
+.group-reason { margin-bottom:0; }
+.cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:12px; }
+.card { border:1px solid var(--hairline-strong); border-radius:12px; padding:12px 14px; min-width:0;
+  display:flex; flex-direction:column; gap:6px; cursor:pointer; }
+.card[aria-current="true"] { border-color:var(--wxgreen); box-shadow:0 0 0 1px var(--wxgreen) inset; }
+.card[data-busy="1"] { opacity:.7; }
+.card-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.card-name { font-weight:600; font-size:15px; overflow-wrap:anywhere; min-width:0; }
+.card-line { font-size:14px; color:var(--ink-soft); overflow-wrap:anywhere; }
+.card-line .label { color:var(--ink-faint); font-size:12px; margin-right:4px; }
+.card-pending { color:var(--warn); }
+.card-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:4px; }
+.card-actions:empty { display:none; }
+.card-actions .btn { min-height:40px; }
+.bot-head .card-head { margin-bottom:6px; }
+.blk-foot { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:8px; }
+.blk-msg { min-height:1em; }
+.blk-msg[data-kind="ok"] { color:var(--wxgreen); }
+.blk-msg[data-kind="warn"] { color:var(--warn); }
+.blk-msg[data-kind="err"] { color:var(--danger); }
+.ov-line { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.op-banner-title { font-weight:600; margin-bottom:8px; }
+.op-item { display:flex; align-items:flex-start; gap:10px; flex-wrap:wrap; padding:6px 0;
+  border-top:1px solid var(--hairline); }
+.op-item:first-child { border-top:none; }
+.op-text { flex:1; min-width:180px; }
+.arch { border-top:1px solid var(--hairline); margin-top:12px; padding-top:10px; }
+.arch > summary { cursor:pointer; color:var(--ink-soft); font-size:14px; }
+.arch-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:8px 0; }
+.arch-main { flex:1; min-width:180px; }
+.recent-ops > summary { cursor:pointer; color:var(--ink-soft); font-size:14px; }
+.dlg { position:relative; display:flex; flex-direction:column; height:100%; max-height:86vh; min-height:0; }
+dialog { margin:auto; padding:0; width:min(480px, 92vw); max-height:86vh; max-width:none; overflow:hidden;
+  background:var(--card); color:var(--ink); border:1px solid var(--hairline-strong); border-radius:14px;
+  box-shadow:0 10px 34px rgba(0,0,0,.22); font-family:var(--font-body); font-size:15px; line-height:1.6; }
+dialog::backdrop { background:rgba(0,0,0,.45); }
+.dlg-head { padding:14px 54px 8px 16px; border-bottom:1px solid var(--hairline); }
+.dlg-head h2 { font-size:15px; font-weight:600; overflow-wrap:anywhere; outline:none; }
+.dlg-close { position:absolute; top:9px; right:10px; }
+.dlg-body { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch; padding:12px 16px 4px; }
+.dlg-body select { font-size:16px; min-height:40px; }
+.dlg-body input, .dlg-body textarea { font:inherit; font-size:16px; width:100%; box-sizing:border-box; }
+.dlg-msg:empty { display:none; }
+.dlg-msg[data-kind="err"] { color:var(--danger); }
+.dlg-msg[data-kind="warn"] { color:var(--warn); }
+.dlg-foot { display:flex; align-items:center; gap:10px; padding:10px 16px; flex-wrap:wrap;
+  padding-bottom:calc(10px + env(safe-area-inset-bottom)); border-top:1px solid var(--hairline); }
+.dlg-spacer { flex:1; }
+.dlg-text { white-space:pre-line; margin:0 0 12px; overflow-wrap:anywhere; }
+.op-steps { margin:0 0 10px; padding-left:22px; overflow-wrap:anywhere; }
+.op-steps li[data-status="running"] { font-weight:600; }
+.op-steps li[data-status="failed"] { color:var(--danger); }
+.op-steps li[data-status="pending"] { color:var(--ink-faint); }
+.op-result { margin:0 0 10px; overflow-wrap:anywhere; }
+.op-result[hidden] { display:none; }
+.op-result[data-kind="ok"] { color:var(--wxgreen); }
+.op-result[data-kind="warn"] { color:var(--warn); }
+.op-result[data-kind="err"] { color:var(--danger); }
+.voice-row { display:flex; gap:12px; flex-wrap:wrap; }
+.voice-row > .field { flex:1; min-width:150px; }
+@media (max-width:430px) {
+  .op-item .btn, .arch-row .btn { min-height:44px; }
+  .arch > summary, .recent-ops > summary { padding:10px 0; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>管理台</h1>
+  <div class="row">
+    <a class="btn btn-ghost" href="/console">管理台</a>
+    <a class="btn btn-ghost" href="/provider">供应商</a>
+    <a class="btn btn-ghost" href="/console/stickers">表情包</a>
+    <a class="btn btn-ghost" href="/moments">朋友圈</a>
+    <a class="btn btn-ghost" href="/params">系统参数</a>
+    <a class="btn btn-ghost" href="/styles">画风</a>
+    <button type="button" class="btn btn-primary" id="newBotBtn" data-role="new-bot" hidden>新建 bot</button>
+    <button type="button" class="btn btn-ghost" id="reloadBtn">刷新</button>
+    <button type="button" class="btn btn-danger" id="logoutBtn">登出</button>
+  </div>
+  <div id="opMsg" class="banner notice" role="status" hidden><span class="notice-text" id="opMsgText"></span><button type="button" class="icon-btn" id="opMsgClose" aria-label="关闭这条提示"></button></div>
+</div>
+
+<div class="wrap">
+  <div id="banners"></div>
+  <div class="banner op-banner" data-role="op-banner" id="opBanner" hidden><div class="op-banner-title">进行中或需要处理的操作</div><div id="opBannerItems"></div></div>
+  <div class="hint" id="loadingHint">正在读取…</div>
+  <div id="groups"></div>
+
+  <main class="detail" id="detail">
+    <div class="panel hint" id="pickHint" hidden></div>
+
+    <section class="panel bot-head" id="blkHead" hidden>
+      <div class="card-head"><span class="card-name" id="botName"></span><span class="tag" id="backendTag"></span><span class="tag bad" id="dupTag" hidden>两边同时在跑</span><span class="tag" id="stateTag"></span></div>
+      <div class="mono" id="botIdLine"></div>
+      <div class="hint" id="dupHint" hidden></div>
+      <div class="field" id="nameField" hidden><label for="displayNameInput">显示名</label><input id="displayNameInput" data-role="display-name-input" type="text" autocomplete="off" spellcheck="false" disabled></div>
+      <div class="blk-foot" id="nameFoot" hidden><button type="button" class="btn btn-primary" id="displayNameSave" data-role="save-display-name" disabled>保存显示名</button><span class="hint blk-msg" id="displayNameMsg" role="status"></span></div>
+      <div class="blk-foot" id="enableFoot" hidden><button type="button" class="btn" id="toggleEnabled" data-role="toggle-enabled"></button><span class="hint blk-msg" id="enableMsg" role="status"></span></div>
+      <div class="blk-foot" id="lifecycleFoot" hidden><button type="button" class="btn btn-ghost lc-btn" id="switchBot" data-role="switch-backend" hidden>切换底层</button><button type="button" class="btn btn-ghost lc-btn" id="archiveBot" data-role="archive-bot" hidden>归档</button><button type="button" class="btn btn-danger lc-btn" id="deleteBot" data-role="delete-bot" hidden>删除</button></div>
+    </section>
+
+    <section class="panel blk" id="blkOverview" data-block="overview" hidden>
+      <h2>概况</h2>
+      <div class="card-line" id="ovState"></div>
+      <div class="ov-line"><div class="card-line" id="ovProvider"></div></div>
+      <div class="hint card-pending" id="ovPending" hidden></div>
+    </section>
+  </main>
+
+  <details class="panel recent-ops" data-role="recent-ops" id="recentOps"><summary>最近操作</summary><div class="hint" id="recentOpsMsg" hidden></div><div id="recentOpsList"></div></details>
+</div>
+
+<template id="sectionTpl"><section class="panel group" data-role="backend-section" data-backend=""><h2><span data-role="section-label"></span><span class="group-count" data-role="section-count"></span></h2><div class="banner warn group-reason" data-role="section-reason" hidden></div><div class="hint" data-role="section-empty" hidden>这种底层下现在没有 bot。</div><div class="cards" data-role="section-cards"></div></section></template>
+<template id="botCardTpl"><article class="card" data-role="bot-card" data-backend="" data-bot-id="" aria-current="false"><div class="card-head"><span class="card-name" data-role="bot-name"></span><span class="tag" data-role="backend-tag"></span><span class="tag bad" data-role="dup-tag" hidden>两边同时在跑</span><span class="tag" data-role="state-tag"></span></div><div class="mono" data-role="bot-id"></div><div class="card-line" data-role="state-line"></div><div class="card-line" data-role="provider-line"></div><div class="hint card-pending" data-role="pending-line" hidden></div><div class="hint" data-role="dup-hint" hidden></div><div class="card-actions" data-role="actions"></div></article></template>
+<template id="actionLinkTpl"><a class="btn" data-role="bot-link" data-action="" href=""></a></template>
+<template id="archivedTpl"><details class="arch" data-role="archived-section" data-backend=""><summary data-role="archived-count"></summary><div class="hint" data-role="archived-reason" hidden></div><div class="hint" data-role="archived-empty" hidden>这里还没有归档的 bot。</div><div data-role="archived-rows"></div></details></template>
+<template id="archiveRowTpl"><div class="arch-row" data-role="archive-row" data-backend="" data-archive-id="" data-status=""><div class="arch-main"><div class="card-head"><span class="card-name" data-role="archive-name"></span><span class="tag bad" data-role="archive-incomplete" hidden>没做完</span></div><div class="mono" data-role="archive-where"></div><div class="hint" data-role="archive-note"></div></div><button type="button" class="btn btn-primary lc-btn" data-role="restore">恢复</button></div></template>
+<template id="opItemTpl"><div class="op-item" data-role="op-item" data-op-id=""><div class="op-text"><div data-role="op-summary"></div><div class="hint" data-role="op-message" hidden></div></div><button type="button" class="btn btn-ghost" data-role="op-view">看进度</button><button type="button" class="btn btn-primary lc-btn" data-role="op-resolve" hidden>重新收拾</button></div></template>
+<template id="recentOpTpl"><div class="op-item" data-role="recent-op" data-op-id=""><div class="op-text"><div data-role="op-summary"></div><div class="hint" data-role="op-message" hidden></div></div><button type="button" class="btn btn-ghost" data-role="op-view">查看</button></div></template>
+
+<dialog data-role="archive-dialog" id="archiveDialog" class="lc-dlg" aria-labelledby="archiveDialogTitle">
+  <div class="dlg">
+    <div class="dlg-head"><h2 id="archiveDialogTitle" tabindex="-1">归档</h2><div class="hint" id="archiveDialogSub"></div></div>
+    <div class="dlg-body"><p class="dlg-text" id="archiveDialogText"></p></div>
+    <div class="dlg-foot"><span class="dlg-spacer"></span><button type="button" class="btn btn-ghost" id="archiveDialogCancel">取消</button><button type="button" class="btn btn-primary" id="archiveDialogOk">归档</button></div>
+    <button type="button" class="icon-btn dlg-close" id="archiveDialogClose" aria-label="关闭"></button>
+  </div>
+</dialog>
+
+<dialog data-role="delete-dialog" id="deleteDialog" class="lc-dlg" aria-labelledby="deleteDialogTitle">
+  <div class="dlg">
+    <div class="dlg-head"><h2 id="deleteDialogTitle" tabindex="-1">删除</h2><div class="hint" id="deleteDialogSub"></div></div>
+    <div class="dlg-body">
+      <p class="dlg-text" id="deleteDialogText"></p>
+      <div class="field"><label for="deleteConfirmInput" id="deleteConfirmLabel"></label><input id="deleteConfirmInput" data-role="delete-confirm-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64"></div>
+    </div>
+    <div class="dlg-foot"><span class="dlg-spacer"></span><button type="button" class="btn btn-ghost" id="deleteDialogCancel">取消</button><button type="button" class="btn btn-danger" id="deleteDialogOk" disabled>删除</button></div>
+    <button type="button" class="icon-btn dlg-close" id="deleteDialogClose" aria-label="关闭"></button>
+  </div>
+</dialog>
+
+<dialog data-role="create-dialog" id="createDialog" class="lc-dlg" aria-labelledby="createDialogTitle">
+  <div class="dlg">
+    <div class="dlg-head"><h2 id="createDialogTitle" tabindex="-1">新建 bot</h2><div class="hint" id="createDialogSub">令牌只在提交时发给本机管理台；建议在本机 127.0.0.1:8767 操作。</div></div>
+    <div class="dlg-body">
+      <div class="field"><label for="createBackend">底层</label><select id="createBackend" data-role="create-backend"></select></div>
+      <div class="field"><label for="createBotId">编号</label><input id="createBotId" data-role="create-bot-id" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32"><div class="hint" id="createIdRule"></div></div>
+      <div class="field"><label for="createDisplayName">显示名（不填就用编号）</label><input id="createDisplayName" data-role="create-display-name" type="text" autocomplete="off" maxlength="32"></div>
+      <div class="field"><label for="createToken">Telegram 令牌</label><input id="createToken" data-role="create-token" type="password" autocomplete="off" spellcheck="false"><div class="blk-foot"><button type="button" class="btn btn-ghost" id="createCheckToken">校验令牌</button><span class="hint blk-msg" id="createTokenMsg" role="status"></span></div></div>
+      <div class="field"><label for="createChatId">主人的私聊编号</label><input id="createChatId" data-role="create-chat-id" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="20"></div>
+      <div class="field"><label for="createTemplate">人设模板</label><select id="createTemplate" data-role="create-template"><option value="">默认模板</option></select></div>
+      <div class="field"><label for="createPersona">或人设全文（与模板只能给一个）</label><textarea id="createPersona" data-role="create-persona" rows="5" spellcheck="false"></textarea></div>
+      <div class="voice-row">
+        <div class="field"><label for="createVoiceId">语音编号（可选）</label><input id="createVoiceId" type="text" autocomplete="off" spellcheck="false" maxlength="64"></div>
+        <div class="field"><label for="createTtsModel">语音模型（可选）</label><select id="createTtsModel"><option value="">跟随全局</option></select></div>
+      </div>
+      <div class="voice-row">
+        <div class="field"><label for="createTextLang">文字语言（可选）</label><input id="createTextLang" type="text" autocomplete="off" maxlength="20" placeholder="留空 = 简体中文"></div>
+        <div class="field"><label for="createVoiceLang">语音语言（可选）</label><input id="createVoiceLang" type="text" autocomplete="off" maxlength="20"></div>
+      </div>
+      <label class="hint"><input type="checkbox" id="createEnabled" checked> 建好就启动</label>
+      <div class="hint dlg-msg" id="createDialogMsg" role="status"></div>
+    </div>
+    <div class="dlg-foot"><span class="dlg-spacer"></span><button type="button" class="btn btn-ghost" id="createDialogCancel">取消</button><button type="button" class="btn btn-primary" id="createDialogOk">新建</button></div>
+    <button type="button" class="icon-btn dlg-close" id="createDialogClose" aria-label="关闭"></button>
+  </div>
+</dialog>
+
+<dialog data-role="backend-switch-dialog" id="backendSwitchDialog" class="lc-dlg" aria-labelledby="backendSwitchTitle">
+  <div class="dlg">
+    <div class="dlg-head"><h2 id="backendSwitchTitle" tabindex="-1">切换底层</h2><div class="hint" id="backendSwitchSub"></div></div>
+    <div class="dlg-body">
+      <div class="field"><label for="backendSwitchTarget">切到</label><select id="backendSwitchTarget" data-role="switch-target"></select></div>
+      <div class="hint" id="backendSwitchConfirm"></div>
+      <div class="field" id="backendSwitchTokenField" hidden><label for="backendSwitchToken">Telegram 令牌</label><input id="backendSwitchToken" data-role="switch-token-input" type="password" autocomplete="off" spellcheck="false"><div class="hint" id="backendSwitchTokenHint"></div></div>
+      <div class="hint dlg-msg" id="backendSwitchMsg" role="status"></div>
+    </div>
+    <div class="dlg-foot"><span class="dlg-spacer"></span><button type="button" class="btn btn-ghost" id="backendSwitchCancel">取消</button><button type="button" class="btn btn-primary" id="backendSwitchOk">切换</button></div>
+    <button type="button" class="icon-btn dlg-close" id="backendSwitchClose" aria-label="关闭"></button>
+  </div>
+</dialog>
+
+<dialog data-role="op-progress" id="opProgressDialog" class="lc-dlg" aria-labelledby="opProgressTitle">
+  <div class="dlg">
+    <div class="dlg-head"><h2 id="opProgressTitle" tabindex="-1">操作进度</h2><div class="hint">关掉这个框不影响操作；做完后结论会写在页面顶部。</div></div>
+    <div class="dlg-body">
+      <ol class="op-steps" id="opProgressSteps"></ol>
+      <div class="op-result" id="opProgressResult" role="status" hidden></div>
+      <div class="hint dlg-msg" id="opProgressMsg" role="status"></div>
+    </div>
+    <div class="dlg-foot"><span class="dlg-spacer"></span><button type="button" class="btn btn-primary" id="opProgressDone">关闭</button></div>
+    <button type="button" class="icon-btn dlg-close" id="opProgressClose" aria-label="关闭"></button>
+  </div>
+</dialog>
+
+<script id="consoleLogic">
+// 界面判断与文案：纯函数与常量，不碰页面节点、不发请求。
+var ConsoleUX = (function () {
+  'use strict';
+  const GENERIC_FAIL_TEXT = '操作没有成功，请稍后再试。';
+  const NETWORK_FAIL_TEXT = '网络错误，没有收到回应。';
+  const DUPLICATE_HINT_TEXT = '这只 bot 在两边同时在收消息，现在只能停用其中一边。';
+  const DEFAULT_TEXT = '底层默认';
+  const STATUS_TEXT = {down: '底层没在运行', unconfigured: '还没配置', unauthorized: '令牌不对',
+    not_installed: '未安装', error: '出错了'};
+  const STATE_TEXT = {running: '运行中', idle: '空闲', stopped: '已停用', broken: '需要处理'};
+  const STATE_KIND = {running: 'ok', idle: '', stopped: 'local', broken: 'bad'};
+  const text = (v) => (v === null || v === undefined ? '' : String(v));
+  const list = (v) => (Array.isArray(v) ? v : []);
+  const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+
+  function hasCap(backend, key) { return obj(obj(backend).capabilities)[key] === true; }
+  function backendOk(backend) { return obj(backend).status === 'ok'; }
+  function backendLabel(backend) { const b = obj(backend); return text(b.label).trim() || text(b.backend); }
+  function backendReason(backend) {
+    const b = obj(backend);
+    return text(b.message).trim() || STATUS_TEXT[text(b.status)] || STATUS_TEXT.error;
+  }
+  function groupCountText(n) { return '共 ' + (Number(n) || 0) + ' 只'; }
+
+  function groupByBackend(overview) {
+    const o = obj(overview);
+    return list(o.backends).map((raw) => {
+      const b = obj(raw);
+      const name = text(b.backend);
+      const ok = backendOk(b);
+      return {backend: name, label: backendLabel(b), status: text(b.status), message: ok ? '' : backendReason(b),
+        bots: ok ? list(o.bots).filter((bot) => obj(bot) === bot && text(bot.backend) === name) : []};
+    });
+  }
+
+  function displayName(bot) { const b = obj(bot); return text(b.display_name).trim() || text(b.bot_id); }
+  function isDuplicate(bot) { return obj(bot).conflict === true; }
+  function duplicateHint(bot) { return isDuplicate(bot) ? DUPLICATE_HINT_TEXT : ''; }
+  function stateBadge(bot) {
+    const s = text(obj(bot).state);
+    return {kind: STATE_KIND[s] || '', text: STATE_TEXT[s] || s || '未知'};
+  }
+  function stateLine(bot) {
+    const s = text(obj(bot).state_text).trim();
+    return s === stateBadge(bot).text ? '' : s;
+  }
+  function effortText(effort) { return text(effort).trim() ? '思考强度 ' + text(effort).trim() : ''; }
+  function providerLine(bot, backend) {
+    const b = obj(bot);
+    const d = obj(obj(backend).default);
+    const p = b.provider && typeof b.provider === 'object' ? b.provider : null;
+    if (!p) return DEFAULT_TEXT + (text(d.label).trim() ? '（' + text(d.label).trim() + '）' : '');
+    const parts = [text(p.name).trim() || text(p.id).trim(), text(p.model).trim(), effortText(p.effort)].filter(Boolean);
+    const s = parts.join(' · ');
+    return b.provider_source === 'default' ? DEFAULT_TEXT + '：' + s : s;
+  }
+  function pendingText(pending) {
+    if (!pending || typeof pending !== 'object') return '';
+    const msg = text(pending.message).trim() || '已保存，等待生效';
+    return '待生效：' + msg;
+  }
+
+  function enableToggle(backend, bot) {
+    if (!backendOk(backend) || !hasCap(backend, 'bot.enable')) return null;
+    const b = obj(bot);
+    const on = typeof b.enabled === 'boolean' ? b.enabled : b.state !== 'stopped';
+    return on ? {enable: false, label: '停用', busyText: '正在停用，最多要等 50 秒…'}
+      : {enable: true, label: '启用', busyText: '正在启用…'};
+  }
+  function isOtherSideUnknown(r) {
+    const x = obj(r);
+    return x.status === 409 && obj(x.body).code === 'other_side_unknown';
+  }
+  function otherSideConfirmText(r) {
+    const msg = text(obj(obj(r).body).message).trim() || '另一边现在连不上，没法确认那边没有同一只 bot 在跑。';
+    return msg + '\n\n确定那边没有同一只 bot 在跑，就继续启用。';
+  }
+  function enableBody(enable, confirmed) {
+    const body = {enabled: enable === true};
+    if (confirmed === true) body.confirm_other_side_unknown = true;
+    return body;
+  }
+  function enableResult(r) {
+    const x = obj(r);
+    const b = obj(x.body);
+    if (!(x.ok && b.ok === true)) return {kind: 'err', text: failureText(x)};
+    const msg = text(b.message).trim() || (b.enabled === true ? '已启用' : '已停用');
+    return {kind: b.enabled === true && b.running !== true ? 'warn' : 'ok', text: msg};
+  }
+  function actionsDisabled(bot) { return isDuplicate(bot); }
+  function manageUrl(backend, botId) {
+    return '/console?b=' + encodeURIComponent(text(backend)) + '/' + encodeURIComponent(text(botId));
+  }
+  const ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
+  const validId = (s) => ID_RE.test(s) && s.replace(/\./g, '') !== '';
+  function selectedFromQuery(search) {
+    if (typeof search !== 'string') return null;
+    const raw = new URLSearchParams(search).get('b');
+    if (raw === null) return null;
+    const parts = raw.split('/');
+    if (parts.length !== 2 || !validId(parts[0]) || !validId(parts[1])) return null;
+    return {backend: parts[0], bot_id: parts[1]};
+  }
+  function failureText(r) {
+    const x = obj(r);
+    const msg = text(obj(x.body).message).trim();
+    if (msg) return '失败：' + msg;
+    if (!x.status) return '失败：' + NETWORK_FAIL_TEXT;
+    return '失败：' + GENERIC_FAIL_TEXT + '（HTTP ' + x.status + '）';
+  }
+  function loadErrorText(r) {
+    const x = obj(r);
+    const msg = text(obj(x.body).message).trim() || (x.status ? 'HTTP ' + x.status : NETWORK_FAIL_TEXT);
+    return '读取总览失败：' + msg + ' 页面内容可能已过期，请刷新重试。';
+  }
+
+  return {GENERIC_FAIL_TEXT, NETWORK_FAIL_TEXT, DUPLICATE_HINT_TEXT, DEFAULT_TEXT,
+    hasCap, backendOk, backendLabel, backendReason, groupCountText, groupByBackend,
+    displayName, isDuplicate, duplicateHint, stateBadge, stateLine, providerLine, pendingText,
+    enableToggle, isOtherSideUnknown, otherSideConfirmText, enableBody, enableResult,
+    actionsDisabled, manageUrl, selectedFromQuery, failureText, loadErrorText};
+})();
+if (typeof window !== 'undefined') window.ConsoleUX = ConsoleUX;
+</script>
+
+<script id="lifecycleLogic">
+var LifecycleUX = (function () {
+  'use strict';
+  const text = (v) => (v === null || v === undefined ? '' : String(v));
+  const list = (v) => (Array.isArray(v) ? v : []);
+  const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  const pick = (table, key) => (Object.prototype.hasOwnProperty.call(table, key) ? table[key] : key);
+
+  const ARCHIVE_CONFIRM_TEXT = '归档会先停用这只 bot，再把它的本机配置整份移到归档区。可以随时恢复，恢复后保持停用。';
+  const DELETE_TEXT = '只删除本机的数据，Telegram 上的这个 bot 账号照样存在、能用；以后可以用新的人设和对应的 bot 令牌再添加回来。';
+  const CONFIRM_RULE_TEXT = '请原样输入这只 bot 的编号';
+  const POLL_GIVE_UP_TEXT = '进度暂时查不到了。操作可能在后台继续，稍后刷新页面看结果。';
+  const SWITCH_CONFIRM_TEXT = '切换时聊天记录可能接不上：从 claude 切到 dsh 会导入私聊记录与约定，从 dsh 切回 claude 不带。另一边还没有这只 bot 时，令牌由程序自动转交，不用再填。';
+  const STEP_TEXT = {check_unique: '查重', verify_token: '校验令牌', check_token_unique: '查令牌占用',
+    create: '新建', voice: '语音设置', check: '检查', take_token: '取令牌', create_target: '在目标底层新建',
+    stop_source: '停用源边', start_target: '启动目标边', verify: '复核', mark_moved: '记下迁出',
+    refresh: '刷新端口表', stop: '停下', archive: '移到归档区', restore: '恢复', delete: '删除'};
+  const STEP_STATUS_TEXT = {pending: '未开始', running: '进行中', done: '完成', failed: '失败', skipped: '跳过', undone: '已撤回'};
+  const KIND_TEXT = {create: '新建', switch: '切换底层', archive: '归档', restore: '恢复', delete: '删除',
+    enable: '启用', disable: '停用'};
+  const STATE_TEXT = {running: '进行中', done: '已完成', failed: '没做成', needs_attention: '需要处理'};
+  const TERMINAL = ['done', 'failed', 'needs_attention'];
+  const POLL_MS = 1500;
+  const POLL_LIMIT_MS = 10 * 60 * 1000;
+
+  function lifecycleButtons(backend) {
+    const b = obj(backend);
+    const caps = obj(b.capabilities);
+    const ok = b.status === 'ok';
+    return {archive: ok && caps['bot.archive'] === true, del: ok && caps['bot.delete'] === true};
+  }
+  function sameOnOtherSide(overview, bot) {
+    const b = obj(bot);
+    const be = text(b.backend);
+    const person = text(b.person);
+    const user = text(b.username).toLowerCase();
+    return list(obj(overview).bots).some((x) => {
+      const o = obj(x);
+      if (text(o.backend) === be) return false;
+      return (person !== '' && text(o.person) === person) || (user !== '' && text(o.username).toLowerCase() === user);
+    });
+  }
+  function otherSideUnknown(overview, bot) {
+    const be = text(obj(bot).backend);
+    return list(obj(overview).backends).some((x) => text(obj(x).backend) !== be && obj(x).status !== 'ok');
+  }
+  function deleteConfirmText(bot, sameOnOther, otherUnknown) {
+    const lines = [DELETE_TEXT];
+    if (sameOnOther === true) lines.push('另一边还有同一只 bot，删除这边不会动那边。');
+    if (sameOnOther !== true && otherUnknown === true) lines.push('另一边现在连不上，认不出那边有没有同一只 bot；这次只删这一边。');
+    return lines.join('\n');
+  }
+  function archiveConfirmText() { return ARCHIVE_CONFIRM_TEXT; }
+  function canConfirmDelete(bot, typed) {
+    const id = text(obj(bot).bot_id);
+    return typeof typed === 'string' && id !== '' && typed === id;
+  }
+  function stepsLines(steps) {
+    if (!Array.isArray(steps)) return [];
+    return steps.map((s) => {
+      const x = obj(s);
+      const msg = text(x.message).trim();
+      return pick(STEP_TEXT, text(x.step)) + '：' + pick(STEP_STATUS_TEXT, text(x.status)) + (msg ? '（' + msg + '）' : '');
+    });
+  }
+  function isTerminal(op) { return TERMINAL.indexOf(text(obj(op).state)) >= 0; }
+  function nextPollDelay(elapsedMs) { return typeof elapsedMs === 'number' && elapsedMs < POLL_LIMIT_MS ? POLL_MS : null; }
+  function opSummary(op) {
+    const o = obj(op);
+    const id = text(o.bot_id) || text(o.archive_id);
+    return pick(KIND_TEXT, text(o.kind)) + ' ' + text(o.backend) + '/' + id + '：' + pick(STATE_TEXT, text(o.state));
+  }
+  function resultLines(op) {
+    const o = obj(op);
+    const r = obj(o.result);
+    const out = [];
+    const msg = text(o.message).trim();
+    if (msg) out.push(msg);
+    if (text(r.message).trim() && text(r.message).trim() !== msg) out.push(text(r.message).trim());
+    if (o.state === 'done' && o.kind === 'delete' && text(r.trash_path)) {
+      out.push(r.trash === 'own' ? '系统废纸篓写不进，删除件放在 ' + text(r.trash_path)
+        : '删除件在系统废纸篓：' + text(r.trash_path));
+    }
+    return out;
+  }
+  function resultKind(op) {
+    const o = obj(op);
+    if (o.state === 'failed') return 'err';
+    return o.state === 'done' ? 'ok' : 'warn';
+  }
+  function noticeText(op) { return [opSummary(op)].concat(resultLines(op)).join('。'); }
+  function acceptedOpId(r) {
+    const x = obj(r);
+    const body = obj(x.body);
+    return x.status === 202 && body.ok === true ? text(body.op_id) : '';
+  }
+  function opOf(r) {
+    const x = obj(r);
+    const body = obj(x.body);
+    return x.ok && body.ok === true && body.op && typeof body.op === 'object' && !Array.isArray(body.op) ? body.op : null;
+  }
+  function readFailText(what, r) {
+    const x = obj(r);
+    const msg = text(obj(x.body).message).trim() || (x.status ? 'HTTP ' + x.status : ConsoleUX.NETWORK_FAIL_TEXT);
+    return '读不出' + what + '：' + msg;
+  }
+  function opItems(r, max) {
+    const x = obj(r);
+    const body = obj(x.body);
+    if (!(x.ok && body.ok === true && Array.isArray(body.ops))) return null;
+    return body.ops.slice(0, max).map((op) => {
+      const o = obj(op);
+      return {op_id: text(o.op_id), summary: opSummary(o), message: text(o.message).trim(),
+        resolve: o.needs_attention === true};
+    });
+  }
+  function archivedView(r, backend) {
+    const be = obj(backend);
+    const name = text(be.backend);
+    const none = {show: false, reason: '', rows: []};
+    if (!r || !lifecycleButtons(be).archive) return none;
+    const x = obj(r);
+    const body = obj(x.body);
+    if (!(x.ok && body.ok === true)) return {show: true, reason: readFailText('归档清单', x), rows: []};
+    const side = list(body.backends).map(obj).filter((b) => text(b.backend) === name)[0];
+    if (side && side.status === 'unsupported') return none;
+    if (side && side.status !== 'ok') {
+      const msg = text(side.message).trim();
+      return {show: true, reason: '读不出这一边的归档清单' + (msg ? '：' + msg : ''), rows: []};
+    }
+    return {show: true, reason: '', rows: list(body.archives).map(obj).filter((a) => text(a.backend) === name)};
+  }
+  function archiveRowView(a) {
+    const x = obj(a);
+    const notes = [];
+    if (x.status === 'incomplete') notes.push('归档中途断了，恢复会把已移走的放回原处');
+    notes.push(x.was_enabled === true ? '原来在跑，恢复后保持停用' : '恢复后保持停用');
+    return {name: text(x.display_name).trim() || text(x.bot_id) || text(x.archive_id),
+      where: text(x.backend) + '/' + (text(x.bot_id) || text(x.archive_id)),
+      incomplete: x.status === 'incomplete', note: notes.join('，')};
+  }
+
+  const CREATE = {
+    ID_RULE: '编号要小写字母开头，只含小写字母、数字、下划线，2 到 32 个字符',
+    DISPLAY_RULE: '显示名去掉首尾空白后要 1 到 32 个字，不能有换行或控制字符',
+    TOKEN_RULE: '令牌格式不对：应是“数字:一串字母数字”，请从 BotFather 整段复制',
+    CHAT_ID_RULE: '主人的私聊编号是一串数字',
+    PERSONA_EMPTY: '人设全文不能为空，不超过 256 KiB',
+    ID_RE: /^[a-z][a-z0-9_]{1,31}$/,
+    TOKEN_RE: /^[0-9]{5,12}:[A-Za-z0-9_-]{30,64}$/,
+    CHAT_ID_RE: /^[1-9][0-9]{0,19}$/,
+    VOICE_ID_RE: /^[A-Za-z0-9_-]{1,64}$/,
+    TTS_MODELS: ['s1', 's2-pro', 's2.1-pro', 's2.1-pro-free', 'drama-3'],
+    RESERVED_IDS: ['jiwen', 'director', 'voicecall', 'media', 'group_transcripts', 'telegram',
+      'yasuna', 'bot2', 'bot3', 'bot4', 'lili'],
+  };
+  const VOICE_KEYS_CREATE = ['voice_id', 'tts_model', 'text_language', 'voice_language'];
+  const trim = (v) => (typeof v === 'string' ? v.trim() : '');
+  function utf8Bytes(s) {
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s).length;
+    let n = 0;
+    for (const ch of s) {
+      const cp = ch.codePointAt(0);
+      n += cp <= 0x7f ? 1 : cp <= 0x7ff ? 2 : cp <= 0xffff ? 3 : 4;
+    }
+    return n;
+  }
+  function createBody(form) {
+    const f = obj(form);
+    const out = {};
+    for (const key of ['backend', 'bot_id', 'display_name', 'telegram_token', 'chat_id']) {
+      const v = trim(f[key]);
+      if (v !== '') out[key] = v;
+    }
+    const tpl = trim(f.persona_template);
+    const txt = trim(f.persona_text);
+    if (txt !== '') out.persona_text = txt;
+    else if (tpl !== '') out.persona_template = tpl;
+    const voice = obj(f.voice);
+    const vout = {};
+    for (const key of VOICE_KEYS_CREATE) {
+      const v = trim(voice[key]);
+      if (v !== '') vout[key] = v;
+    }
+    if (Object.keys(vout).length) out.voice = vout;
+    if (typeof f.enabled === 'boolean') out.enabled = f.enabled;
+    if (typeof f.confirm_other_side_unknown === 'boolean') out.confirm_other_side_unknown = f.confirm_other_side_unknown;
+    return out;
+  }
+  function createVoiceErrors(voice) {
+    const v = obj(voice);
+    for (const key of Object.keys(v)) if (!VOICE_KEYS_CREATE.includes(key)) return 'voice 里不能有 ' + key;
+    const id = trim(v.voice_id);
+    if (id !== '' && !CREATE.VOICE_ID_RE.test(id)) return '语音编号只能用字母、数字、下划线、连字符，1 到 64 个字符';
+    const model = trim(v.tts_model);
+    if (model !== '' && !CREATE.TTS_MODELS.includes(model)) return '语音模型只能是 ' + CREATE.TTS_MODELS.join('、') + ' 之一';
+    for (const key of ['text_language', 'voice_language']) {
+      const value = trim(v[key]);
+      if (value === '') continue;
+      if (value.length < 1 || value.length > 20) return '语言名去掉首尾空白后必须是 1 到 20 个字符';
+      if (/[\[\]<>{}`|]/.test(value) || /[\r\n]/.test(value)) return '语言名里有不能用的字符';
+    }
+    return '';
+  }
+  function validateCreate(form) {
+    const f = obj(form);
+    const bad = {};
+    const id = trim(f.bot_id);
+    if (!CREATE.ID_RE.test(id)) bad.bot_id = CREATE.ID_RULE;
+    else if (CREATE.RESERVED_IDS.includes(id)) bad.bot_id = '这个编号是保留的，换一个';
+    if (trim(f.display_name) !== '') {
+      const name = trim(f.display_name);
+      if (name.length < 1 || name.length > 32 || /[\x00-\x1f\x7f]/.test(f.display_name)) bad.display_name = CREATE.DISPLAY_RULE;
+    }
+    if (!CREATE.TOKEN_RE.test(trim(f.telegram_token))) bad.telegram_token = CREATE.TOKEN_RULE;
+    if (!CREATE.CHAT_ID_RE.test(trim(f.chat_id))) bad.chat_id = CREATE.CHAT_ID_RULE;
+    const txtRaw = typeof f.persona_text === 'string' ? f.persona_text : '';
+    const txtGiven = txtRaw !== '';
+    if (txtGiven && (trim(txtRaw) === '' || utf8Bytes(trim(txtRaw)) > 256 * 1024)) bad.persona_text = CREATE.PERSONA_EMPTY;
+    if (f.voice !== undefined && f.voice !== null) {
+      const err = createVoiceErrors(f.voice);
+      if (err) bad.voice = err;
+    }
+    if (f.enabled !== undefined && typeof f.enabled !== 'boolean') bad.enabled = 'enabled 必须是 true 或 false';
+    return bad;
+  }
+  function switchTargets(bot, backends) {
+    const cur = text(obj(bot).backend);
+    return list(backends).map(obj).filter((b) => text(b.backend) !== cur
+      && obj(b.capabilities)['bot.enable'] === true && obj(b.capabilities)['bot.group_chat'] === true)
+      .map((b) => text(b.backend));
+  }
+  function switchBody(form) {
+    const f = obj(form);
+    const out = {to: trim(f.to)};
+    const token = trim(f.telegram_token);
+    if (token !== '') out.telegram_token = token;
+    return out;
+  }
+
+  return {ARCHIVE_CONFIRM_TEXT, DELETE_TEXT, CONFIRM_RULE_TEXT, POLL_GIVE_UP_TEXT, SWITCH_CONFIRM_TEXT, CREATE,
+    lifecycleButtons, sameOnOtherSide, otherSideUnknown, deleteConfirmText, archiveConfirmText, canConfirmDelete,
+    stepsLines, isTerminal, nextPollDelay, opSummary, resultLines, resultKind, noticeText,
+    acceptedOpId, opOf, readFailText, opItems, archivedView, archiveRowView,
+    createBody, validateCreate, switchTargets, switchBody};
+})();
+if (typeof window !== 'undefined') window.LifecycleUX = LifecycleUX;
+</script>
+
+<script>
+const _origFetch = fetch;
+let DATA = null;
+let BUSY = false;
+let SEL = null;
+let GEN = 0;
+let ARCH = null;
+const OPS = {active: null, recent: null};
+const ARCH_OPEN = Object.create(null);
+const PROG = {opId: '', started: 0, timer: 0, seq: 0, live: false};
+const LCDLG = {backend: null, bot: null};
+const BSW = {last: null};
+const CF = {form: null, pending: null};
+const N = {on: false, loaded: '', saving: false};
+
+const archiveDialog = document.getElementById('archiveDialog');
+const deleteDialog = document.getElementById('deleteDialog');
+const progressDialog = document.getElementById('opProgressDialog');
+const createDialog = document.getElementById('createDialog');
+const backendSwitchDialog = document.getElementById('backendSwitchDialog');
+const deleteInput = document.getElementById('deleteConfirmInput');
+const txt = (v) => (v === null || v === undefined ? '' : String(v));
+const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+const list = (v) => (Array.isArray(v) ? v : []);
+const tpl = (id) => document.getElementById(id).content.firstElementChild.cloneNode(true);
+
+async function apiFetch(url, opts) {
+  const res = await _origFetch(url, opts);
+  if (res.status === 401) {
+    location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+async function jsonFetch(url, opts) {
+  const res = await apiFetch(url, opts);
+  let body = null;
+  try { body = await res.json(); } catch (e) { body = null; }
+  return {ok: res.ok, status: res.status, body: body};
+}
+async function getJson(url) {
+  try { return await jsonFetch(url); } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+    return {ok: false, status: 0, body: null};
+  }
+}
+async function postJson(url, body) {
+  try {
+    return await jsonFetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+    return {ok: false, status: 0, body: null};
+  }
+}
+async function putJson(url, body) {
+  try {
+    return await jsonFetch(url, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+    return {ok: false, status: 0, body: null};
+  }
+}
+function botUrl(backend, botId, tail) {
+  return '/api/console/bots/' + encodeURIComponent(backend) + '/' + encodeURIComponent(botId) + '/' + tail;
+}
+function opUrl(opId) { return '/api/console/ops/' + encodeURIComponent(opId); }
+function restoreUrl(backend, archiveId) {
+  return '/api/console/archives/' + encodeURIComponent(backend) + '/' + encodeURIComponent(archiveId) + '/restore';
+}
+function setOpMsg(text, kind) {
+  const m = document.getElementById('opMsg');
+  m.className = 'banner notice ' + (kind || 'ok');
+  document.getElementById('opMsgText').textContent = text;
+  m.hidden = !text;
+}
+function setBlockMsg(id, text, kind) {
+  const m = document.getElementById(id);
+  m.textContent = text;
+  m.setAttribute('data-kind', kind || '');
+}
+function showLoadError(text) {
+  const banners = document.getElementById('banners');
+  let b = banners.querySelector('[data-role="load-error"]');
+  if (!b) {
+    b = document.createElement('div');
+    b.className = 'banner err';
+    b.setAttribute('data-role', 'load-error');
+    banners.prepend(b);
+  }
+  b.textContent = text;
+}
+function clearLoadError() {
+  const b = document.getElementById('banners').querySelector('[data-role="load-error"]');
+  if (b) b.remove();
+}
+function findBackend(name) {
+  return ((DATA && DATA.backends) || []).filter((b) => b && b.backend === name)[0] || null;
+}
+function findBot(backendName, botId) {
+  return ((DATA && DATA.bots) || []).filter((b) => b && b.backend === backendName && b.bot_id === botId)[0] || null;
+}
+function selBackend() { return SEL ? findBackend(SEL.backend) : null; }
+function selBot() { return SEL ? findBot(SEL.backend, SEL.botId) : null; }
+function setActionButtons(disabled) {
+  for (const btn of document.querySelectorAll('.lc-btn, #toggleEnabled, #displayNameSave')) btn.disabled = disabled;
+}
+async function runOp(url, body) {
+  BUSY = true;
+  setActionButtons(true);
+  try { return await postJson(url, body); }
+  finally { BUSY = false; setActionButtons(false); }
+}
+
+async function load() {
+  let r;
+  try { r = await jsonFetch('/api/console/overview'); } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+    r = {ok: false, status: 0, body: null};
+  }
+  document.getElementById('loadingHint').hidden = true;
+  if (!r.ok || !r.body || typeof r.body !== 'object') {
+    showLoadError(ConsoleUX.loadErrorText(r));
+    if (DATA) render();
+    return false;
+  }
+  clearLoadError();
+  DATA = r.body;
+  await loadLifecycle();
+  render();
+  return true;
+}
+async function loadLifecycle() {
+  [ARCH, OPS.active, OPS.recent] = await Promise.all([getJson('/api/console/archives'),
+    getJson('/api/console/ops?active=1&limit=20'), getJson('/api/console/ops?limit=10')]);
+}
+
+function render() {
+  renderSections();
+  renderDetail();
+  renderLifecycle();
+}
+function renderSections() {
+  const box = document.getElementById('groups');
+  box.replaceChildren();
+  for (const s of ConsoleUX.groupByBackend(DATA)) {
+    const backend = findBackend(s.backend) || {};
+    const ok = ConsoleUX.backendOk(backend);
+    const node = tpl('sectionTpl');
+    node.setAttribute('data-backend', s.backend);
+    node.querySelector('[data-role="section-label"]').textContent = s.label;
+    node.querySelector('[data-role="section-count"]').textContent = ok ? ConsoleUX.groupCountText(s.bots.length) : '';
+    const reason = node.querySelector('[data-role="section-reason"]');
+    reason.textContent = s.message;
+    reason.hidden = ok;
+    node.querySelector('[data-role="section-empty"]').hidden = !(ok && s.bots.length === 0);
+    const cards = node.querySelector('[data-role="section-cards"]');
+    for (const bot of s.bots) cards.appendChild(renderCard(backend, bot));
+    box.appendChild(node);
+  }
+}
+function renderCard(backend, bot) {
+  const node = tpl('botCardTpl');
+  node.setAttribute('data-backend', backend.backend || '');
+  node.setAttribute('data-bot-id', bot.bot_id || '');
+  node.setAttribute('aria-current', isSelected(backend.backend, bot.bot_id) ? 'true' : 'false');
+  if (typeof bot.enabled === 'boolean') node.setAttribute('data-enabled', String(bot.enabled));
+  node.querySelector('[data-role="bot-name"]').textContent = ConsoleUX.displayName(bot);
+  node.querySelector('[data-role="backend-tag"]').textContent = ConsoleUX.backendLabel(backend);
+  const conflict = ConsoleUX.isDuplicate(bot);
+  if (conflict) node.setAttribute('data-conflict', 'true');
+  node.querySelector('[data-role="dup-tag"]').hidden = !conflict;
+  const badge = ConsoleUX.stateBadge(bot);
+  const stateTag = node.querySelector('[data-role="state-tag"]');
+  stateTag.className = 'tag' + (badge.kind ? ' ' + badge.kind : '');
+  stateTag.textContent = badge.text;
+  node.querySelector('[data-role="bot-id"]').textContent = bot.bot_id || '';
+  const stateLineEl = node.querySelector('[data-role="state-line"]');
+  stateLineEl.textContent = ConsoleUX.stateLine(bot);
+  stateLineEl.hidden = !stateLineEl.textContent;
+  const movedTo = typeof bot.moved_to === 'string' && bot.moved_to ? bot.moved_to : '';
+  if (movedTo) {
+    node.setAttribute('data-moved-to', movedTo);
+    stateTag.className = 'tag local';
+    stateTag.textContent = movedTo === 'pending' ? '正在切换底层' : '已切到 ' + movedTo;
+    stateLineEl.textContent = '已迁出这边，只能经「切换底层」启用';
+    stateLineEl.hidden = false;
+  }
+  node.querySelector('[data-role="provider-line"]').textContent = ConsoleUX.providerLine(bot, backend);
+  const pending = node.querySelector('[data-role="pending-line"]');
+  pending.textContent = ConsoleUX.pendingText(bot.pending);
+  pending.hidden = !pending.textContent;
+  const dupHint = node.querySelector('[data-role="dup-hint"]');
+  dupHint.textContent = ConsoleUX.duplicateHint(bot);
+  dupHint.hidden = !dupHint.textContent;
+  const box = node.querySelector('[data-role="actions"]');
+  const link = tpl('actionLinkTpl');
+  link.setAttribute('data-action', 'manage');
+  link.className = 'btn btn-primary';
+  link.textContent = '管理';
+  link.href = ConsoleUX.manageUrl(backend.backend, bot.bot_id);
+  box.appendChild(link);
+  return node;
+}
+function isSelected(backend, botId) { return !!(SEL && SEL.backend === backend && SEL.botId === botId); }
+function renderDetail() {
+  const backend = selBackend(), bot = selBot();
+  const has = !!(backend && bot);
+  const pick = document.getElementById('pickHint');
+  pick.textContent = SEL && DATA && !has ? '这只 bot 不在列表里，可能刚被归档或删除。' : '点一张卡片，管理这只 bot。';
+  pick.hidden = has;
+  document.getElementById('blkHead').hidden = !has;
+  document.getElementById('blkOverview').hidden = !has;
+  document.title = has ? '管理台 · ' + ConsoleUX.displayName(bot) : '管理台';
+  if (!has) { GEN += 1; return; }
+  renderHead(backend, bot);
+  renderOverview(backend, bot);
+  const key = SEL.backend + '/' + SEL.botId;
+  if (key !== renderDetail._key) {
+    renderDetail._key = key;
+    GEN += 1;
+    const canName = ConsoleUX.backendOk(backend) && ConsoleUX.hasCap(backend, 'bot.profile');
+    document.getElementById('displayNameInput').value = ConsoleUX.displayName(bot);
+    if (canName) loadName(GEN);
+    else {
+      N.on = false;
+      document.getElementById('displayNameInput').value = '';
+      setBlockMsg('displayNameMsg', '', '');
+    }
+  }
+}
+function renderHead(backend, bot) {
+  document.getElementById('botName').textContent = ConsoleUX.displayName(bot);
+  document.getElementById('backendTag').textContent = ConsoleUX.backendLabel(backend);
+  document.getElementById('dupTag').hidden = !ConsoleUX.isDuplicate(bot);
+  const badge = ConsoleUX.stateBadge(bot);
+  const tag = document.getElementById('stateTag');
+  tag.className = 'tag' + (badge.kind ? ' ' + badge.kind : '');
+  tag.textContent = badge.text;
+  document.getElementById('botIdLine').textContent = bot.bot_id || '';
+  const dup = document.getElementById('dupHint');
+  dup.textContent = ConsoleUX.duplicateHint(bot);
+  dup.hidden = !dup.textContent;
+  const tg = ConsoleUX.enableToggle(backend, bot);
+  document.getElementById('enableFoot').hidden = !tg;
+  const toggle = document.getElementById('toggleEnabled');
+  toggle.textContent = tg ? tg.label : '';
+  toggle.disabled = BUSY;
+  const nameOn = ConsoleUX.backendOk(backend) && ConsoleUX.hasCap(backend, 'bot.profile');
+  document.getElementById('nameField').hidden = !nameOn;
+  document.getElementById('nameFoot').hidden = !nameOn;
+  document.getElementById('displayNameInput').disabled = !nameOn || BUSY;
+  document.getElementById('displayNameSave').disabled = !nameOn || BUSY;
+}
+function renderOverview(backend, bot) {
+  const st = document.getElementById('ovState');
+  st.textContent = ConsoleUX.stateLine(bot);
+  st.hidden = !st.textContent;
+  document.getElementById('ovProvider').textContent = ConsoleUX.providerLine(bot, backend);
+  const pending = document.getElementById('ovPending');
+  pending.textContent = ConsoleUX.pendingText(bot.pending);
+  pending.hidden = !pending.textContent;
+}
+
+async function loadName(gen) {
+  const bot = selBot();
+  if (!bot) return;
+  N.on = false;
+  const r = await getJson(botUrl(bot.backend, bot.bot_id, 'profile'));
+  if (gen !== GEN) return;
+  if (r.ok && obj(r.body).ok === true) {
+    N.on = true;
+    N.loaded = txt(obj(r.body).display_name);
+    document.getElementById('displayNameInput').value = N.loaded;
+    setBlockMsg('displayNameMsg', '', '');
+  } else {
+    setBlockMsg('displayNameMsg', ConsoleUX.failureText(r), 'err');
+  }
+  document.getElementById('displayNameInput').disabled = !N.on || BUSY;
+  document.getElementById('displayNameSave').disabled = !N.on || BUSY;
+}
+async function saveName() {
+  const backend = selBackend(), bot = selBot();
+  if (!backend || !bot || BUSY || !N.on) return;
+  const value = document.getElementById('displayNameInput').value;
+  const gen = GEN;
+  N.saving = true;
+  document.getElementById('displayNameSave').disabled = true;
+  const r = await runOp(botUrl(backend.backend, bot.bot_id, 'profile'), {display_name: value});
+  if (gen !== GEN) return;
+  N.saving = false;
+  const b = obj(r.body);
+  if (r.ok && b.ok === true) {
+    N.loaded = txt(b.display_name);
+    setBlockMsg('displayNameMsg', txt(b.message) || '已保存', 'ok');
+    await load();
+  } else {
+    setBlockMsg('displayNameMsg', ConsoleUX.failureText(r), 'err');
+    document.getElementById('displayNameSave').disabled = false;
+  }
+}
+async function toggleEnabled() {
+  const backend = selBackend(), bot = selBot();
+  const tg = backend && bot ? ConsoleUX.enableToggle(backend, bot) : null;
+  if (BUSY || !tg) return;
+  const gen = GEN;
+  document.getElementById('toggleEnabled').disabled = true;
+  setBlockMsg('enableMsg', tg.busyText, '');
+  const url = botUrl(backend.backend, bot.bot_id, 'enabled');
+  let r = await runOp(url, ConsoleUX.enableBody(tg.enable, false));
+  if (tg.enable && ConsoleUX.isOtherSideUnknown(r) && confirm(ConsoleUX.otherSideConfirmText(r))) {
+    r = await runOp(url, ConsoleUX.enableBody(true, true));
+  }
+  const res = ConsoleUX.enableResult(r);
+  if (gen === GEN) setBlockMsg('enableMsg', res.text, res.kind);
+  else setOpMsg(ConsoleUX.displayName(bot) + '：' + res.text, res.kind);
+  await load();
+}
+
+// ── 选中与卡片点击 ──────────────────────────────────────────────────────────
+function selectBot(backend, botId, push) {
+  SEL = {backend: backend, botId: botId};
+  if (push !== false) history.replaceState(null, '', ConsoleUX.manageUrl(backend, botId));
+  render();
+}
+document.getElementById('groups').addEventListener('click', (e) => {
+  const card = e.target.closest('[data-role="bot-card"]');
+  if (!card) return;
+  const link = e.target.closest('a[data-action="manage"]');
+  if (link && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1)) return;
+  if (link) e.preventDefault();
+  selectBot(card.getAttribute('data-backend'), card.getAttribute('data-bot-id'));
+});
+
+// ── 归档、恢复、删除、操作进度 ──────────────────────────────────────────────
+function fmtTime(iso) {
+  const d = new Date(txt(iso));
+  return isNaN(d.getTime()) ? txt(iso) : d.toLocaleString('zh-CN', {hour12: false});
+}
+function renderLifecycle() {
+  renderArchived();
+  renderLifecycleHead();
+  renderOps();
+}
+function renderArchived() {
+  for (const section of document.getElementById('groups').querySelectorAll('[data-role="backend-section"]')) {
+    const name = section.getAttribute('data-backend') || '';
+    const view = LifecycleUX.archivedView(ARCH, findBackend(name));
+    if (!view.show) continue;
+    const box = tpl('archivedTpl');
+    box.setAttribute('data-backend', name);
+    box.open = ARCH_OPEN[name] === true;
+    box.addEventListener('toggle', () => { ARCH_OPEN[name] = box.open; });
+    box.querySelector('[data-role="archived-count"]').textContent = '已归档（' + view.rows.length + '）';
+    const reason = box.querySelector('[data-role="archived-reason"]');
+    reason.textContent = view.reason;
+    reason.hidden = !view.reason;
+    box.querySelector('[data-role="archived-empty"]').hidden = !!view.reason || view.rows.length > 0;
+    const rows = box.querySelector('[data-role="archived-rows"]');
+    for (const a of view.rows) rows.appendChild(renderArchiveRow(a));
+    section.appendChild(box);
+  }
+}
+function renderArchiveRow(a) {
+  const v = LifecycleUX.archiveRowView(a);
+  const row = tpl('archiveRowTpl');
+  row.setAttribute('data-backend', txt(a.backend));
+  row.setAttribute('data-archive-id', txt(a.archive_id));
+  row.setAttribute('data-status', txt(a.status));
+  row.querySelector('[data-role="archive-name"]').textContent = v.name;
+  row.querySelector('[data-role="archive-incomplete"]').hidden = !v.incomplete;
+  row.querySelector('[data-role="archive-where"]').textContent = v.where + (a.archived_at ? ' · 归档于 ' + fmtTime(a.archived_at) : '');
+  row.querySelector('[data-role="archive-note"]').textContent = v.note;
+  row.querySelector('[data-role="restore"]').disabled = BUSY;
+  return row;
+}
+function renderLifecycleHead() {
+  const backend = selBackend(), bot = selBot();
+  const can = backend && bot ? LifecycleUX.lifecycleButtons(backend) : {archive: false, del: false};
+  const targets = backend && bot ? LifecycleUX.switchTargets(bot, (DATA && DATA.backends) || []) : [];
+  const mine = !!(backend && backend.status === 'ok' && (backend.capabilities || {})['bot.enable'] === true);
+  const switchBtn = document.getElementById('switchBot');
+  const archiveBtn = document.getElementById('archiveBot');
+  const deleteBtn = document.getElementById('deleteBot');
+  switchBtn.hidden = !(mine && targets.length);
+  archiveBtn.hidden = !can.archive;
+  deleteBtn.hidden = !can.del;
+  switchBtn.disabled = BUSY;
+  archiveBtn.disabled = BUSY;
+  deleteBtn.disabled = BUSY;
+  document.getElementById('lifecycleFoot').hidden = !(can.archive || can.del || (mine && targets.length));
+}
+function renderOps() {
+  const active = LifecycleUX.opItems(OPS.active, 20) || [];
+  const banner = document.getElementById('opBannerItems');
+  banner.replaceChildren();
+  for (const it of active) {
+    const node = renderOpRow('opItemTpl', it);
+    const resolve = node.querySelector('[data-role="op-resolve"]');
+    resolve.hidden = !it.resolve;
+    resolve.disabled = BUSY;
+    banner.appendChild(node);
+  }
+  document.getElementById('opBanner').hidden = !active.length;
+  const recent = LifecycleUX.opItems(OPS.recent, 10);
+  const box = document.getElementById('recentOpsList');
+  box.replaceChildren();
+  for (const it of recent || []) box.appendChild(renderOpRow('recentOpTpl', it));
+  const msg = document.getElementById('recentOpsMsg');
+  msg.textContent = recent === null ? LifecycleUX.readFailText('最近操作', OPS.recent) : (recent.length ? '' : '还没有操作记录。');
+  msg.hidden = !msg.textContent;
+}
+function renderOpRow(tplId, it) {
+  const node = tpl(tplId);
+  node.setAttribute('data-op-id', it.op_id);
+  node.querySelector('[data-role="op-summary"]').textContent = it.summary;
+  const m = node.querySelector('[data-role="op-message"]');
+  m.textContent = it.message;
+  m.hidden = !it.message;
+  return node;
+}
+function setLifecycleButtons(disabled) {
+  for (const btn of document.querySelectorAll('.lc-btn')) btn.disabled = disabled;
+}
+async function startOp(url, body) {
+  if (BUSY) return;
+  setLifecycleButtons(true);
+  const r = await runOp(url, body);
+  const opId = LifecycleUX.acceptedOpId(r);
+  if (opId) watchOp(opId, true);
+  else setOpMsg(ConsoleUX.failureText(r), 'err');
+  setLifecycleButtons(false);
+  await load();
+}
+function watchOp(opId, live) {
+  clearTimeout(PROG.timer);
+  Object.assign(PROG, {opId: opId, started: Date.now(), timer: 0, seq: PROG.seq + 1, live: live === true});
+  document.getElementById('opProgressTitle').textContent = '操作进度';
+  document.getElementById('opProgressSteps').replaceChildren();
+  showProgressResult(null);
+  setProgressMsg('正在读取…', '');
+  if (typeof progressDialog.showModal === 'function' && !progressDialog.open) {
+    progressDialog.showModal();
+    document.documentElement.classList.add('dlg-open');
+  }
+  pollOp(PROG.seq);
+}
+async function pollOp(seq) {
+  const r = await getJson(opUrl(PROG.opId));
+  if (seq !== PROG.seq) return;
+  const op = LifecycleUX.opOf(r);
+  if (op) renderProgress(op);
+  if (op && LifecycleUX.isTerminal(op)) { finishOp(op); return; }
+  if (!op && r.status === 404) { setProgressMsg(ConsoleUX.failureText(r), 'err'); return; }
+  if (op) PROG.live = true;
+  const delay = LifecycleUX.nextPollDelay(Date.now() - PROG.started);
+  if (delay === null) { giveUpOp(); return; }
+  setProgressMsg(op ? '' : '暂时读不到进度，稍后再试…', op ? '' : 'warn');
+  PROG.timer = setTimeout(() => { pollOp(seq); }, delay);
+}
+function finishOp(op) {
+  setProgressMsg('', '');
+  if (!PROG.live) return;
+  PROG.live = false;
+  const pendingCreate = (op && op.kind === 'create' && CF.pending && CF.pending.opId === op.op_id) ? CF.pending : null;
+  if (pendingCreate) CF.pending = null;
+  if (op && op.state === 'failed' && op.code === 'token_required' && BSW.last) {
+    if (progressDialog.open) progressDialog.close();
+    const be = findBackend(BSW.last.backend), bot = findBot(BSW.last.backend, BSW.last.botId);
+    if (be && bot) openBackendSwitchDialog(be, bot, {tokenRequired: true, to: BSW.last.to});
+  } else if (pendingCreate && op.state === 'failed' && op.code === 'other_side_unknown') {
+    if (progressDialog.open) progressDialog.close();
+    const message = txt(op.message);
+    if (window.confirm(message + '\n\n确认另一边没有同一只 bot 在跑，继续新建？')) {
+      submitCreate(true, pendingCreate.token);
+      return;
+    }
+    setOpMsg(message, 'err');
+  } else if (!progressDialog.open) {
+    setOpMsg(LifecycleUX.noticeText(op), LifecycleUX.resultKind(op));
+  }
+  load();
+}
+function giveUpOp() {
+  setProgressMsg(LifecycleUX.POLL_GIVE_UP_TEXT, 'warn');
+  if (!progressDialog.open) setOpMsg(LifecycleUX.POLL_GIVE_UP_TEXT, 'warn');
+  if (PROG.live) load();
+  PROG.live = false;
+}
+function renderProgress(op) {
+  document.getElementById('opProgressTitle').textContent = LifecycleUX.opSummary(op);
+  const steps = Array.isArray(op.steps) ? op.steps : [];
+  const box = document.getElementById('opProgressSteps');
+  box.replaceChildren();
+  LifecycleUX.stepsLines(steps).forEach((line, i) => {
+    const li = document.createElement('li');
+    li.setAttribute('data-status', txt((steps[i] || {}).status));
+    li.textContent = line;
+    box.appendChild(li);
+  });
+  showProgressResult(LifecycleUX.isTerminal(op) ? op : null);
+}
+function showProgressResult(op) {
+  const box = document.getElementById('opProgressResult');
+  box.replaceChildren();
+  for (const line of op ? LifecycleUX.resultLines(op) : []) {
+    const row = document.createElement('div');
+    row.textContent = line;
+    box.appendChild(row);
+  }
+  box.setAttribute('data-kind', op ? LifecycleUX.resultKind(op) : '');
+  box.hidden = !op;
+}
+function setProgressMsg(text, kind) {
+  const m = document.getElementById('opProgressMsg');
+  m.textContent = text;
+  m.setAttribute('data-kind', kind || '');
+}
+function lifecycleTarget(dlg) {
+  const backend = selBackend(), bot = selBot();
+  if (BUSY || !backend || !bot) return null;
+  if (typeof dlg.showModal !== 'function') {
+    setOpMsg('浏览器版本过低，无法打开对话框', 'err');
+    return null;
+  }
+  LCDLG.backend = backend; LCDLG.bot = bot;
+  return {backend: backend, bot: bot};
+}
+function openArchiveDialog() {
+  const t = lifecycleTarget(archiveDialog);
+  if (!t) return;
+  document.getElementById('archiveDialogTitle').textContent = '归档「' + ConsoleUX.displayName(t.bot) + '」';
+  document.getElementById('archiveDialogSub').textContent = t.backend.backend + '/' + t.bot.bot_id;
+  document.getElementById('archiveDialogText').textContent = LifecycleUX.archiveConfirmText();
+  archiveDialog.showModal();
+  document.documentElement.classList.add('dlg-open');
+  document.getElementById('archiveDialogCancel').focus();
+}
+function openDeleteDialog() {
+  const t = lifecycleTarget(deleteDialog);
+  if (!t) return;
+  document.getElementById('deleteDialogTitle').textContent = '删除「' + ConsoleUX.displayName(t.bot) + '」';
+  document.getElementById('deleteDialogSub').textContent = t.backend.backend + '/' + t.bot.bot_id;
+  document.getElementById('deleteDialogText').textContent = LifecycleUX.deleteConfirmText(
+    t.bot, LifecycleUX.sameOnOtherSide(DATA, t.bot), LifecycleUX.otherSideUnknown(DATA, t.bot));
+  document.getElementById('deleteConfirmLabel').textContent = LifecycleUX.CONFIRM_RULE_TEXT + '：' + t.bot.bot_id;
+  deleteInput.value = '';
+  document.getElementById('deleteDialogOk').disabled = true;
+  deleteDialog.showModal();
+  document.documentElement.classList.add('dlg-open');
+  deleteInput.focus();
+}
+function confirmArchive() {
+  const backend = LCDLG.backend, bot = LCDLG.bot;
+  if (!backend || !bot || BUSY) return;
+  archiveDialog.close();
+  startOp(botUrl(backend.backend, bot.bot_id, 'archive'), {});
+}
+function confirmDelete() {
+  const backend = LCDLG.backend, bot = LCDLG.bot, typed = deleteInput.value;
+  if (!backend || !bot || BUSY || !LifecycleUX.canConfirmDelete(bot, typed)) return;
+  deleteDialog.close();
+  startOp(botUrl(backend.backend, bot.bot_id, 'delete'), {confirm: typed});
+}
+
+// ── 新建向导 ────────────────────────────────────────────────────────────────
+function createFieldsText(r) {
+  const f = r && r.body && r.body.fields;
+  if (!f || typeof f !== 'object') return '';
+  const lines = Object.keys(f).map((k) => txt(f[k]));
+  return lines.length ? '（' + lines.join('；') + '）' : '';
+}
+function setCreateMsg(text, kind) {
+  const m = document.getElementById('createDialogMsg');
+  m.textContent = text;
+  m.setAttribute('data-kind', kind || '');
+}
+async function loadCreateForm() {
+  const r = await getJson('/api/console/create_form');
+  CF.form = r.ok && r.body && r.body.ok === true ? r.body : null;
+  const can = !!(CF.form && Array.isArray(CF.form.backends)
+    && CF.form.backends.some((b) => b && b.can_create === true));
+  document.getElementById('newBotBtn').hidden = !can;
+  return can;
+}
+function fillCreateBackends() {
+  const sel = document.getElementById('createBackend');
+  sel.replaceChildren();
+  for (const b of (CF.form && CF.form.backends) || []) {
+    if (!b || b.can_create !== true) continue;
+    const o = document.createElement('option');
+    o.value = txt(b.backend);
+    o.textContent = txt(b.label || b.backend) + '（' + txt(b.backend) + '）';
+    sel.appendChild(o);
+  }
+}
+function fillCreateTemplates() {
+  const backend = document.getElementById('createBackend').value;
+  const sel = document.getElementById('createTemplate');
+  sel.replaceChildren();
+  const items = (CF.form && CF.form.templates && CF.form.templates[backend]) || [];
+  for (const item of items) {
+    if (!item) continue;
+    const o = document.createElement('option');
+    o.value = txt(item.id);
+    o.textContent = txt(item.label || item.id);
+    sel.appendChild(o);
+  }
+  if (!sel.options.length) {
+    const fallback = document.createElement('option');
+    fallback.value = '';
+    fallback.textContent = '默认模板';
+    sel.appendChild(fallback);
+  }
+  for (const o of sel.options) {
+    if (o.value === 'persona') { sel.value = 'persona'; break; }
+  }
+}
+function fillCreateTts() {
+  const sel = document.getElementById('createTtsModel');
+  sel.replaceChildren();
+  const follow = document.createElement('option');
+  follow.value = '';
+  follow.textContent = '跟随全局';
+  sel.appendChild(follow);
+  for (const m of (CF.form && CF.form.tts_models) || []) {
+    const o = document.createElement('option');
+    o.value = txt(m);
+    o.textContent = txt(m);
+    sel.appendChild(o);
+  }
+}
+function openCreateDialog() {
+  if (BUSY) return;
+  CF.pending = null;
+  if (!CF.form) { loadCreateForm().then((can) => { if (can) openCreateDialog(); }); return; }
+  if (typeof createDialog.showModal !== 'function') { setOpMsg('浏览器版本过低，无法打开对话框', 'err'); return; }
+  for (const id of ['createBotId', 'createDisplayName', 'createToken', 'createPersona',
+    'createVoiceId', 'createTextLang', 'createVoiceLang']) document.getElementById(id).value = '';
+  document.getElementById('createChatId').value = txt((CF.form.defaults || {}).chat_id);
+  document.getElementById('createEnabled').checked = true;
+  document.getElementById('createTokenMsg').textContent = '';
+  document.getElementById('createIdRule').textContent = txt(CF.form.id_rule);
+  setCreateMsg('', '');
+  fillCreateBackends();
+  fillCreateTemplates();
+  fillCreateTts();
+  createDialog.showModal();
+  document.documentElement.classList.add('dlg-open');
+  document.getElementById('createBackend').focus();
+}
+async function checkCreateToken() {
+  const token = document.getElementById('createToken').value.trim();
+  const msg = document.getElementById('createTokenMsg');
+  if (!token) { msg.textContent = '先填令牌'; return; }
+  msg.textContent = '校验中…';
+  const r = await postJson('/api/console/telegram/check', {telegram_token: token});
+  if (r.ok && r.body && r.body.ok === true) {
+    let line = '@' + txt(r.body.username);
+    const used = r.body.in_use_by;
+    if (used) line += '（已被 ' + txt(used.backend) + '/' + txt(used.bot_id) + ' 使用）';
+    msg.textContent = line;
+    return;
+  }
+  msg.textContent = ConsoleUX.failureText(r) + createFieldsText(r);
+}
+function createFormValues() {
+  return {
+    backend: document.getElementById('createBackend').value,
+    bot_id: document.getElementById('createBotId').value,
+    display_name: document.getElementById('createDisplayName').value,
+    telegram_token: document.getElementById('createToken').value,
+    chat_id: document.getElementById('createChatId').value,
+    persona_template: document.getElementById('createTemplate').value,
+    persona_text: document.getElementById('createPersona').value,
+    voice: {voice_id: document.getElementById('createVoiceId').value,
+      tts_model: document.getElementById('createTtsModel').value,
+      text_language: document.getElementById('createTextLang').value,
+      voice_language: document.getElementById('createVoiceLang').value},
+    enabled: document.getElementById('createEnabled').checked,
+  };
+}
+async function submitCreate(confirmed, keptToken) {
+  if (BUSY || !CF.form) return;
+  const form = createFormValues();
+  if (typeof keptToken === 'string') form.telegram_token = keptToken;
+  const bad = LifecycleUX.validateCreate(form);
+  if (Object.keys(bad).length) {
+    setCreateMsg(Object.keys(bad).map((k) => bad[k]).join('；'), 'err');
+    return;
+  }
+  const token = form.telegram_token;
+  setCreateMsg('正在提交…', '');
+  document.getElementById('createToken').value = '';
+  const body = LifecycleUX.createBody(form);
+  if (confirmed) body.confirm_other_side_unknown = true;
+  const r = await runOp('/api/console/bots', body);
+  const opId = LifecycleUX.acceptedOpId(r);
+  if (!opId) {
+    const err = (r && r.body) || {};
+    if (!confirmed && r.status === 409 && err.code === 'other_side_unknown') {
+      if (window.confirm(txt(err.message) + '\n\n确认另一边没有同一只 bot 在跑，继续新建？')) {
+        return submitCreate(true, token);
+      }
+    }
+    setCreateMsg(ConsoleUX.failureText(r) + createFieldsText(r), 'err');
+    return;
+  }
+  createDialog.close();
+  CF.pending = {opId: opId, token: token, form: createFormValues()};
+  watchOp(opId, true);
+  await load();
+}
+
+// ── 切换底层 ────────────────────────────────────────────────────────────────
+function switchTargetLabel(name) {
+  const be = findBackend(name);
+  return (be && be.label ? txt(be.label) : '') + '（' + txt(name) + '）';
+}
+function setBackendSwitchMsg(text, kind) {
+  const m = document.getElementById('backendSwitchMsg');
+  m.textContent = text;
+  m.setAttribute('data-kind', kind || '');
+}
+function openBackendSwitchDialog(backend, bot, opts) {
+  if (BUSY && !(opts && opts.tokenRequired)) return;
+  if (typeof backendSwitchDialog.showModal !== 'function') { setOpMsg('浏览器版本过低，无法打开对话框', 'err'); return; }
+  const targets = LifecycleUX.switchTargets(bot, (DATA && DATA.backends) || []);
+  if (!targets.length) return;
+  const to = (opts && opts.to) || targets[0];
+  BSW.last = {backend: backend.backend, botId: bot.bot_id, to: to};
+  const sel = document.getElementById('backendSwitchTarget');
+  sel.replaceChildren();
+  for (const name of targets) {
+    const o = document.createElement('option');
+    o.value = txt(name);
+    o.textContent = switchTargetLabel(name);
+    sel.appendChild(o);
+  }
+  if (targets.indexOf(to) >= 0) sel.value = to;
+  document.getElementById('backendSwitchSub').textContent = txt(bot.bot_id) + '（现在：' + txt(backend.backend) + '）';
+  document.getElementById('backendSwitchConfirm').textContent = LifecycleUX.SWITCH_CONFIRM_TEXT;
+  const needToken = !!(opts && opts.tokenRequired);
+  document.getElementById('backendSwitchTokenField').hidden = !needToken;
+  document.getElementById('backendSwitchToken').value = '';
+  document.getElementById('backendSwitchTokenHint').textContent = needToken
+    ? '另一边还没有这只 bot，程序没能自动取到它的令牌，请填它的 Telegram 令牌。' : '';
+  setBackendSwitchMsg('', '');
+  if (!backendSwitchDialog.open) {
+    backendSwitchDialog.showModal();
+    document.documentElement.classList.add('dlg-open');
+  }
+  document.getElementById('backendSwitchTitle').focus();
+}
+async function submitBackendSwitch() {
+  const last = BSW.last;
+  if (!last || BUSY) return;
+  const to = document.getElementById('backendSwitchTarget').value;
+  const body = LifecycleUX.switchBody({to: to, telegram_token: document.getElementById('backendSwitchToken').value});
+  last.to = to;
+  document.getElementById('backendSwitchToken').value = '';
+  if (backendSwitchDialog.open) backendSwitchDialog.close();
+  const url = '/api/console/bots/' + encodeURIComponent(last.backend) + '/' + encodeURIComponent(last.botId) + '/switch';
+  await startOp(url, body);
+}
+
+// ── 事件接线 ────────────────────────────────────────────────────────────────
+document.getElementById('newBotBtn').addEventListener('click', openCreateDialog);
+document.getElementById('createCheckToken').addEventListener('click', checkCreateToken);
+document.getElementById('createBackend').addEventListener('change', fillCreateTemplates);
+document.getElementById('createDialogOk').addEventListener('click', () => submitCreate(false));
+for (const id of ['createDialogCancel', 'createDialogClose']) {
+  document.getElementById(id).addEventListener('click', () => createDialog.close());
+}
+document.getElementById('displayNameSave').addEventListener('click', saveName);
+document.getElementById('toggleEnabled').addEventListener('click', toggleEnabled);
+document.getElementById('archiveBot').addEventListener('click', openArchiveDialog);
+document.getElementById('deleteBot').addEventListener('click', openDeleteDialog);
+document.getElementById('archiveDialogOk').addEventListener('click', confirmArchive);
+document.getElementById('deleteDialogOk').addEventListener('click', confirmDelete);
+deleteInput.addEventListener('input', () => {
+  document.getElementById('deleteDialogOk').disabled = !LCDLG.bot || !LifecycleUX.canConfirmDelete(LCDLG.bot, deleteInput.value);
+});
+document.getElementById('switchBot').addEventListener('click', () => {
+  const be = selBackend(), bot = selBot();
+  if (be && bot) openBackendSwitchDialog(be, bot, null);
+});
+document.getElementById('backendSwitchOk').addEventListener('click', submitBackendSwitch);
+for (const id of ['backendSwitchCancel', 'backendSwitchClose']) {
+  document.getElementById(id).addEventListener('click', () => backendSwitchDialog.close());
+}
+function outsideDialog(dlg, e) {
+  const r = dlg.getBoundingClientRect();
+  return e.target === dlg && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom);
+}
+function closeOnBackdrop(dlg, close) {
+  let pressedOutside = false;
+  dlg.addEventListener('pointerdown', (e) => { pressedOutside = outsideDialog(dlg, e); });
+  dlg.addEventListener('click', (e) => {
+    if (pressedOutside && outsideDialog(dlg, e)) close();
+    pressedOutside = false;
+  });
+}
+for (const [dlg, closers] of [[archiveDialog, ['archiveDialogCancel', 'archiveDialogClose']],
+  [deleteDialog, ['deleteDialogCancel', 'deleteDialogClose']],
+  [progressDialog, ['opProgressDone', 'opProgressClose']],
+  [createDialog, ['createDialogCancel', 'createDialogClose']],
+  [backendSwitchDialog, ['backendSwitchCancel', 'backendSwitchClose']]]) {
+  const close = () => dlg.close();
+  for (const id of closers) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', close);
+  }
+  closeOnBackdrop(dlg, close);
+  dlg.addEventListener('close', () => {
+    if (dlg === createDialog) {
+      document.getElementById('createToken').value = '';
+      document.getElementById('createTokenMsg').textContent = '';
+    }
+    if (dlg === backendSwitchDialog) document.getElementById('backendSwitchToken').value = '';
+    if (!document.querySelector('dialog[open]')) document.documentElement.classList.remove('dlg-open');
+  });
+}
+document.getElementById('opMsgClose').addEventListener('click', () => setOpMsg('', 'ok'));
+document.getElementById('reloadBtn').addEventListener('click', () => { if (!BUSY) { SEL = SEL; load(); } });
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await apiFetch('/logout', {method: 'POST'});
+  location.href = '/login';
+});
+document.getElementById('groups').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-role="restore"]');
+  const row = btn && btn.closest('[data-role="archive-row"]');
+  if (!row || btn.disabled) return;
+  startOp(restoreUrl(row.getAttribute('data-backend'), row.getAttribute('data-archive-id')), {});
+});
+document.getElementById('opBanner').addEventListener('click', (e) => {
+  const item = e.target.closest('[data-role="op-item"]');
+  if (!item) return;
+  const opId = item.getAttribute('data-op-id');
+  const resolve = e.target.closest('[data-role="op-resolve"]');
+  if (resolve) { if (!resolve.disabled) startOp(opUrl(opId) + '/resolve', {}); }
+  else if (e.target.closest('[data-role="op-view"]')) watchOp(opId, false);
+});
+document.getElementById('recentOps').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-role="op-view"]');
+  const row = btn && btn.closest('[data-role="recent-op"]');
+  if (row) watchOp(row.getAttribute('data-op-id'), false);
+});
+
+const QSEL = ConsoleUX.selectedFromQuery(location.search);
+SEL = QSEL ? {backend: QSEL.backend, botId: QSEL.bot_id} : null;
+loadCreateForm();
+load();
+</script>
+</body>
+</html>
