@@ -96,7 +96,7 @@ _kill_tree() {
 # pid 是否确实是本仓库的 dispatcher（防重启后 pid 复用误杀无关进程）。
 _pid_is_dispatcher() {
   local cmd
-  cmd="$("$PS_CMD" -o command= -p "$1" 2>/dev/null || true)"
+  cmd="$("$PS_CMD" -ww -o command= -p "$1" 2>/dev/null || true)"
   case "$cmd" in
     *"$REPO_DIR/dispatcher/dispatcher.ts"*) return 0 ;;
   esac
@@ -121,7 +121,7 @@ dispatcher_pids() {
       fi
     done
   fi
-  "$PS_CMD" -eo pid=,command= 2>/dev/null | while read -r pid cmd; do
+  "$PS_CMD" -ww -eo pid=,command= 2>/dev/null | while read -r pid cmd; do
     case "$cmd" in
       *"$REPO_DIR/dispatcher/dispatcher.ts"*) ;;
       *) continue ;;

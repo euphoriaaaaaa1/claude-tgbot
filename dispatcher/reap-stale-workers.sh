@@ -25,13 +25,13 @@ case "${1:-}" in
   *) echo "用法：reap-stale-workers.sh [--dry-run]" >&2; exit 1 ;;
 esac
 
-if ! "$PS_CMD" -eo pid=,ppid=,command= >/dev/null 2>&1; then
+if ! "$PS_CMD" -ww -eo pid=,ppid=,command= >/dev/null 2>&1; then
   echo "reap-stale-workers: ps 不可用，无法判断孤儿 worker-plugin" >&2
   exit 1
 fi
 
 # 一次 ps 同时拿 pid/ppid/命令行；只在管道里过滤，命令行不落日志。
-"$PS_CMD" -eo pid=,ppid=,command= 2>/dev/null |
+"$PS_CMD" -ww -eo pid=,ppid=,command= 2>/dev/null |
 while read -r pid ppid cmd; do
   [ "$ppid" = "1" ] || continue
   case "$cmd" in
