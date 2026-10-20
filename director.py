@@ -106,17 +106,18 @@ MODE_DIR = os.environ.get(
 # 有群配置时，tick 每轮按群现读名单（_load_roster），把下面五张表整体换成该群的成员（_apply_roster）。
 # 公开版给的是占位示例；实际部署用 configs/<bot>.yml 的 display_name / telegram_username /
 # dispatcher_port / bot_channel_path，或环境变量覆盖。
-BOT_DIR_NAME = {"bot1": "bot1", "bot2": "bot2", "bot3": "bot3"}
-BOT_PORTS = {"bot1": "17801", "bot2": "17802", "bot3": "17803"}
+# scan-release: allow 公开版占位名单（测试按其断言），不是真实部署身份
+BOT_DIR_NAME = {"bot1": "bot1", "bot2": "bot2", "bot3": "bot3"}  # scan-release: allow placeholder-roster
+BOT_PORTS = {"bot1": "17801", "bot2": "17802", "bot3": "17803"}  # scan-release: allow placeholder-roster
 
 # 急停口令（用户在群里说了就锁 LOCK_MIN 分钟）。保守词表，避免"别停"之类误伤。
 HARD_STOP_WORDS = ("别聊了", "闭嘴", "安静一下", "都别说", "停停停", "别刷了")
 
 # bot 的 Telegram username → 内部 bot_id。公开版是占位符；有群配置时以 access.json / yml 为准。
-BOT_BY_USERNAME = {"@your_bot1_username": "bot1",
-                   "@your_bot2_username": "bot2",
-                   "@your_bot3_username": "bot3"}
-BOTS = {"bot1": "角色一", "bot2": "角色二", "bot3": "角色三"}
+BOT_BY_USERNAME = {"@your_bot1_username": "bot1",  # scan-release: allow placeholder-roster
+                   "@your_bot2_username": "bot2",  # scan-release: allow placeholder-roster
+                   "@your_bot3_username": "bot3"}  # scan-release: allow placeholder-roster
+BOTS = {"bot1": "角色一", "bot2": "角色二", "bot3": "角色三"}  # scan-release: allow placeholder-roster
 # 导演提示词里对每只的介绍（有群配置时取各自 access.json 该群条目的 intro）
 INTROS = {bid: "" for bid in BOTS}
 _LEGACY_ROSTER = (dict(BOTS), dict(BOT_BY_USERNAME), dict(BOT_PORTS), dict(BOT_DIR_NAME), dict(INTROS))

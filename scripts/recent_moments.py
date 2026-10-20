@@ -14,8 +14,8 @@
     # 查 user 最近 7 天发过的圈
     python3 recent_moments.py user
 
-    # 查 bot3 最近 14 天发过的圈
-    python3 recent_moments.py bot3 14
+    # 查 mybot 最近 14 天发过的圈
+    python3 recent_moments.py mybot 14
 
 输出（一行一条，按时间倒序）：
     [05-04 09:01] (public) 五四青年节快乐...

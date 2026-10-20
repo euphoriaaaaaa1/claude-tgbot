@@ -207,7 +207,7 @@ _DISPLAY_NAME_BAD_RE = re.compile(r"[\x00-\x1f\x7f\ud800-\udfff]")
 NEW_BOT_ID_RE = re.compile(r"[a-z][a-z0-9_]{1,31}")
 NEW_BOT_ID_MESSAGE = "编号要小写字母开头，只含小写字母、数字、下划线，2 到 32 个字符"
 RESERVED_BOT_IDS = frozenset(("jiwen", "director", "voicecall", "media", "group_transcripts", "telegram",
-                              "yasuna", "bot2", "bot3", "bot4", "lili"))
+                              "yasuna", "bot2", "bot3", "bot4", "lili"))  # scan-release: allow reserved-compat
 RESERVED_BOT_MESSAGE = "这个编号是保留的，换一个"
 CHAT_ID_RE = re.compile(r"[1-9][0-9]{0,19}")
 CHAT_ID_MESSAGE = "主人的私聊编号是一串数字"

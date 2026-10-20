@@ -281,7 +281,7 @@ z-image 写实分布和 anime tag 解耦——加 `(anime:1.5)` negative 反而�
 
 ### 完整加权 prompt 示例（img2img 模式）
 
-**场景**：让 anchor 是"室内白衣自拍熟女"的 bot2 出"在厨房做饭穿围裙"
+**场景**：让 anchor 是"室内白衣自拍熟女"的 mybot 出"在厨房做饭穿围裙"
 ```
 (POV:1.3), (medium_shot:1.3),
 1girl, (cooking:1.4), in (kitchen:1.4),
@@ -290,7 +290,7 @@ z-image 写实分布和 anime tag 解耦——加 `(anime:1.5)` negative 反而�
 kitchen counter, vegetables, knife on cutting board
 ```
 
-**场景**：让 bot2 出"夜里独处发情自拍勾引主人"
+**场景**：让 mybot 出"夜里独处发情自拍勾引主人"
 ```
 (POV:1.3), (close-up:1.4), 1girl, nsfw,
 (lying_on_bed:1.3), (blushing:1.3), (lustful_expression:1.4),
@@ -439,18 +439,17 @@ chalkboard, books and notebooks on desks
 | 模型 | NovelAI 4.5 full（云端） | z_image_turbo / 用户配的 workflow |
 
 ## 切换 provider
-```bash
-# 切到 comfyui
-curl -s -X POST http://127.0.0.1:8765/api/image_provider \
-  -H "Content-Type: application/json" -d '{"provider":"comfyui"}'
+公开版在 `configs/_global.yml` 的 `moments.image_generation.provider` 里切换：
 
-# 切回 novelai
-curl -s -X POST http://127.0.0.1:8765/api/image_provider \
-  -H "Content-Type: application/json" -d '{"provider":"novelai"}'
-
-# 查当前
-curl -s http://127.0.0.1:8765/api/image_provider
+```yaml
+moments:
+  image_generation:
+    provider: comfyui      # comfyui | novelai
+    provider_moment: comfyui
+    provider_telegram: comfyui
 ```
+
+改完重启 bot / 管理台相关服务。也可以用 8767 的 `/params` 页修改同一份配置。
 
 ## 失败兜底
 - ComfyUI 没启动 → `comfyui_gen.py` 会报 connection refused

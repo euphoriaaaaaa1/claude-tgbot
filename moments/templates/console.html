@@ -606,7 +606,7 @@ var LifecycleUX = (function () {
     VOICE_ID_RE: /^[A-Za-z0-9_-]{1,64}$/,
     TTS_MODELS: ['s1', 's2-pro', 's2.1-pro', 's2.1-pro-free', 'drama-3'],
     RESERVED_IDS: ['jiwen', 'director', 'voicecall', 'media', 'group_transcripts', 'telegram',
-      'yasuna', 'bot2', 'bot3', 'bot4', 'lili'],
+      'yasuna', 'bot2', 'bot3', 'bot4', 'lili'],  // scan-release: allow reserved-compat
   };
   const VOICE_KEYS_CREATE = ['voice_id', 'tts_model', 'text_language', 'voice_language'];
   const trim = (v) => (typeof v === 'string' ? v.trim() : '');

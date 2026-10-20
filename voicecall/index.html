@@ -283,7 +283,7 @@
   <!-- 通话人信息 -->
   <div class="caller">
     <div class="nameRow">
-      <div class="cname" id="peerName">陈露露</div>
+      <div class="cname" id="peerName">示例角色</div>
       <button id="editName" aria-label="编辑备注" title="编辑备注">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5a2 2 0 000-2.8l-1.2-1.2a2 2 0 00-2.8 0L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg>
       </button>
@@ -332,7 +332,7 @@
 
   <!-- 通话逻辑仍读 #bot.value，保留但隐藏，靠"换角色"键同步 -->
   <select id="bot" hidden>
-    <option value="chenlulu">陈露露</option>
+    <option value="mybot">示例角色</option>
   </select>
 
   <!-- 全屏来电界面（独立层，唤起时 .show）-->
@@ -926,14 +926,14 @@ ptt.addEventListener('touchcancel',e=>{e.preventDefault();pttStop()},{passive:fa
    - 静音还额外 track.enabled=false 做真实闭麦（覆盖按住说话）
    ─────────────────────────────────────────────────────────── */
 const nameEl=$('#peerName'), timerEl=$('#timer'), phoneEl=$('#phone');
-const NAMES={chenlulu:'陈露露'};
+const NAMES={mybot:'示例角色'};
 // 用户可编辑备注（存服务端 call_aliases.json，跨设备一致）。显示名 = 备注 ?? 默认名。
 let ALIASES={};
 function dispName(bot){ return (ALIASES[bot]||'').trim() || NAMES[bot] || '来电'; }
 // per-bot 头像渐变（iPhone 无联系人照片时的默认头像：姓名首字 monogram + 按联系人分配的纯色/渐变圆）。
 // 单一真源：来电头像、通话记录头像统一用这套，别再新造。
 const BOT_GRADIENT={
-  chenlulu:'linear-gradient(160deg,#8fa9c4 0%,#5b7089 100%)',
+  mybot:'linear-gradient(160deg,#8fa9c4 0%,#5b7089 100%)',
 };
 function monogram(bot){ const n=dispName(bot); return n ? [...n][0] : '?'; }  // 首字（[...] 兼容 emoji/汉字）
 function paintAvatar(el,bot){ if(!el)return; el.textContent=monogram(bot); el.style.background=BOT_GRADIENT[bot]||'rgba(255,255,255,.1)'; }
@@ -1079,7 +1079,7 @@ $('#btnSpeaker').onclick=()=>{
   setStatus('音频输出由 iOS 系统控制：连着耳机自动走耳机，否则走听筒/扬声器。网页不能切换。');
 };
 // ② 换角色：循环切 bot，复用隐藏 #bot 的原生 change（挂断+清屏+/end_call+新会话）
-const ORDER=['chenlulu'];
+const ORDER=['mybot'];
 $('#btnRole').onclick=()=>{
   const n=ORDER[(ORDER.indexOf($('#bot').value)+1)%ORDER.length];
   $('#bot').value=n; $('#bot').dispatchEvent(new Event('change'));

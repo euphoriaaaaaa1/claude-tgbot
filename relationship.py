@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover
 
 STATS = ("affection", "trust", "desire", "energy")
 
-# 陌生人阶段(如陈露露)：几乎白纸，欲望锁 0，精力满
+# 陌生人阶段(如刚创建的 bot)：几乎白纸，欲望锁 0，精力满
 DEFAULTS_STRANGER = {"affection": 5, "trust": 5, "desire": 0, "energy": 85}
 # 已确立亲密关系(老 bot)：好感信任高，欲望中性(要被撩才起)，精力满
 DEFAULTS_ESTABLISHED = {"affection": 90, "trust": 88, "desire": 35, "energy": 85}

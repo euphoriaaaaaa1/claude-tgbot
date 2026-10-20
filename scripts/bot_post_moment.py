@@ -5,7 +5,7 @@ bot CLAUDE.md 加规则即可：用户说"发个朋友圈/晒一下/分享个 X"
 调 Bash: python3 ~/claudebotlife/scripts/bot_post_moment.py <bot_id> [topic_hint] [visibility]
 
 参数：
-    bot_id        必填，chenlulu
+    bot_id        必填，例如 mybot
     topic_hint    可选，主题提示（"刚做的菜"、"下午的咖啡"），传给 LLM 引导
     visibility    可选，public/private，默认 LLM 自决
 

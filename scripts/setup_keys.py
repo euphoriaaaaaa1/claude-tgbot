@@ -7,11 +7,11 @@
   ~/.claude/channels/<bot>/access.json → allowFrom（JSON；整体读写，其余键原样保留）
 
 用法：
-  python3 scripts/setup_keys.py status  [--bot chenlulu] [--repo <dir>] [--home <dir>]
+  python3 scripts/setup_keys.py status  [--bot mybot] [--repo <dir>] [--home <dir>]
       → 打印 JSON {"deepseek": true|false, "token": …, "userid": …}（true = 已填）
   python3 scripts/setup_keys.py set-deepseek <key>       [--repo <dir>]
-  python3 scripts/setup_keys.py set-token   <token>      [--bot chenlulu] [--home <dir>]
-  python3 scripts/setup_keys.py set-userid  <user_id>    [--bot chenlulu] [--home <dir>]
+  python3 scripts/setup_keys.py set-token   <token>      [--bot mybot] [--home <dir>]
+  python3 scripts/setup_keys.py set-userid  <user_id>    [--bot mybot] [--home <dir>]
 退出码：0 成功；2 参数错；3 目标文件不存在（先跑 install.sh 铺配置）。
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ from pathlib import Path
 DEEPSEEK_PLACEHOLDER = "YOUR_DEEPSEEK_API_KEY"
 TOKEN_PLACEHOLDER_RE = re.compile(r"^TELEGRAM_BOT_TOKEN=\s*$|your-telegram-bot-token|YOUR", re.M)
 USERID_PLACEHOLDER = "YOUR_TELEGRAM_USER_ID"
-DEFAULT_BOT = "chenlulu"
+DEFAULT_BOT = "chenlulu"  # scan-release: allow legacy-compat（测试按此默认值走，CLI 正常都显式传 --bot）
 
 #: 三把密钥的格式校验。**与 scripts/setup_keys.sh 里 ask 的正则逐字一致** —— 终端向导
 #: 和 /hub/setup 网页向导必须一个口径。tests/unit/test_hub_setup.py 有一条用例直接从

@@ -42,7 +42,7 @@ const DISPATCHER_URL = `http://127.0.0.1:${process.env.DISPATCHER_PORT || '17801
 // ─── UUIDv5（纯 TS，替代两处 python3 shellout）─────────────────────────
 // **必须与 chat_history.py 的 _BOT_NAMESPACES 完全一致**，否则丢记忆。
 export const BOT_NAMESPACES: Record<string, string> = {
-  chenlulu: '550e8400-e29b-41d4-a716-446655440001',
+  chenlulu: '550e8400-e29b-41d4-a716-446655440001', // scan-release: allow legacy-compat
 }
 
 export function uuidv5(namespace: string, name: string): string {

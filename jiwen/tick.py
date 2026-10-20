@@ -221,8 +221,8 @@ def _marker_user_ts(bot_id: str, chat_id: str) -> int:
     非 bot 发送 + 非合成注入 + chat_type=private 的入站消息上写它，值取 ctx.message.date
     （发送时刻）—— 结构性地不含任何框架注入，不像正文标记表那样是个会漏的开放集合。
 
-    键形 {BOT_NAME}-{chat_id}.last-user，BOT_NAME 就是 bot_id（yasuna 的 channel
-    目录名是 telegram，但 marker 用的是 yasuna）。
+    键形 {BOT_NAME}-{chat_id}.last-user，BOT_NAME 就是 bot_id（旧版里 channel
+    目录名与 bot_id 可能不同，但 marker 用的是 bot_id）。
     marker 是 writeFileSync 非原子写，可能读到半个数字 → int() 抛 → 当作 0，下 tick 重读。
 
     "没有 marker"（正常态：首次部署、被清过、dispatcher 没跑过该 bot）与"读不了 marker"
@@ -471,14 +471,14 @@ def _find_recent_messages_unified(channel_dir: str, human_id: str, bot_id: str,
     if not channel_dir:
         return [], 0
     # ⚠️ 两个入参不可互换：_project_dir 吃的是 **channel 目录路径**（bot_cfg.bot_channel_path），
-    # unified_session_uuid 吃的是 **bot_id**。两者不恒等——yasuna 的 bot_id 是 yasuna，
-    # 但 channel 目录名是 telegram，拿 bot_id 去拼目录会得到不存在的路径。
+    # unified_session_uuid 吃的是 **bot_id**。两者不恒等——旧版里 bot_id 与
+    # channel 目录名可能不同，拿 bot_id 去拼目录会得到不存在的路径。
     proj_dir = chat_history._project_dir(channel_dir)
     if not os.path.isdir(proj_dir):
         return [], 0
 
     # R5：不再取"目录里 mtime 最新的 jsonl"。统一会话后每个 bot 只有一个正确的会话文件，
-    # 同目录还躺着历史文件，猜错就静默读到空壳（bot4 的游标因此从未推进过）。
+    # 同目录还躺着历史文件，猜错就静默读到空壳（旧版曾因此让某只 bot 的游标从未推进）。
     uuid_ = chat_history.unified_session_uuid(bot_id)
     if not uuid_:
         print(f"[jiwen.tick] 警告: {bot_id} 不在 chat_history._BOT_NAMESPACES 里，无法定位会话文件",
@@ -850,7 +850,7 @@ def tick_one_bot(bot_id: str, jiwen_cfg: dict, state_dir: str, dry_run: bool = F
         import relationship as _rel
         from datetime import datetime as _dt3
         # relationship._path 以 ~/.claude/channels/<目录名> 拼路径：取配置里的频道目录名，
-        # 不用 bot_id（两者可能不同，例如目录名 telegram、bot_id yasuna）。
+        # 不用 bot_id（两者可能不同，例如旧版目录名与 bot_id 不一致）。
         _bot_dir = os.path.basename(os.path.normpath(os.path.expanduser(channel_dir))) or bot_id
         _prof = "established"
         _rstats = _rel.load(_bot_dir, _prof)
@@ -984,7 +984,7 @@ def main():
     state_dir = jiwen_cfg.get("state_dir", DEFAULT_STATE_DIR)
     os.makedirs(state_dir, exist_ok=True)
 
-    # F-06：bot 名单来自配置，不写死（旧名单含已删除的 bot4，每个 tick 对它失败一次）。
+    # F-06：bot 名单来自配置，不写死（旧版名单含已删除的 bot，每个 tick 对它失败一次）。
     # bot 标识取 _bot_id；目录名由各自 bot_cfg.bot_channel_path 提供（tick_one_bot 内 load_bot 取）。
     if args.bot:
         bots = [args.bot]

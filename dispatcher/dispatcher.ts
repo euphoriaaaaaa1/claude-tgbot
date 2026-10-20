@@ -2,7 +2,7 @@
 /**
  * Per-bot Telegram dispatcher — grammY long-poll + HTTP server.
  *
- * Runs one process per bot (e.g. chenlulu). Owns the Telegram bot token,
+ * Runs one process per bot (e.g. mybot). Owns the Telegram bot token,
  * performs gate+route, writes inbound messages to inbox files, and exposes
  * /send /react /download /add_group_alias /ensure_worker /status /inject.
  *

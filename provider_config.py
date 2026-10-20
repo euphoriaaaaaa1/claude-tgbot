@@ -1452,7 +1452,7 @@ def del_model(provider_id: str, model_id: str):
 
     **被任何 bot 绑定使用**（该 provider 下 binding.model == id）→ 拒绝，返回使用名单。
     返回 ``({"was_manual": bool, "count": int}, None)`` 或 ``(None, 错误码)``；
-    使用中错误码形如 ``"bound:bot2,bot3"``。
+    使用中错误码形如 ``"bound:bot_a,bot_b"``。
     """
     if not isinstance(model_id, str) or not model_id:
         return None, "missing"

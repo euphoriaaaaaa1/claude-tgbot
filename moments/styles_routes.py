@@ -312,7 +312,7 @@ def api_set_active():
         # 数组/标量/坏 JSON 一律 400（原先对数组会 AttributeError 500，契约要求 400）
         return jsonify({"error": "请求体必须是 JSON 对象"}), 400
     style_id = (body.get("id") or "").strip()
-    # bot 不做 strip：" bot2" 被 strip 成 "bot2" 会让一个笔误静默改掉真实绑定，必须报错
+    # bot 不做 strip：" bot_a" 被 strip 成 "bot_a" 会让一个笔误静默改掉真实绑定，必须报错
     bot = body.get("bot") or ""
     with _SAVE_LOCK:
         data = _load_styles()

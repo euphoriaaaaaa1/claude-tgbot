@@ -50,7 +50,7 @@ def _load_bots() -> dict:
 
 
 BOTS = _load_bots()
-DEFAULT_BOT = next(iter(BOTS), "chenlulu")
+DEFAULT_BOT = next(iter(BOTS), "mybot")
 CALL_RULE = ("这是实时语音通话。你只说会说出口的话,1-2句,大白话口语,"
              "不要任何旁白/动作/心理描写/括号/emoji/markdown。直接说话。")
 

@@ -37,7 +37,7 @@ from .guard import TOKEN_RE, SecretToken
 # 操作编号规则（T15 的 ops 模块尚未移植时本模块自己也要能校验）。
 OP_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,100}")
 
-LEGACY_BOTS = ("yasuna", "bot2", "bot3", "lili")       # 旧四只：令牌在 bot-tokens.env，由 restart-bots.sh 旧段启动
+LEGACY_BOTS = ("yasuna", "bot2", "bot3", "lili")       # 旧四只：令牌在 bot-tokens.env，由 restart-bots.sh 旧段启动  # scan-release: allow legacy-compat
 SECRET_NAMES = (".env", ".worker-secrets.env", ".api-token")
 SETTINGS_BASES = ("settings.json", "settings.local.json")   # 频道目录 .claude/ 下的 settings 类文件（3.5.4 B-I1）
 SECRET_ENV_KEYS = ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY")   # 可能存供应商密钥明文的 env 键

@@ -34,10 +34,11 @@ REPO_ROOT = Path(__file__).resolve().parent
 BASE_PORT = 17801
 
 # legacy 兜底表：**只读**，加 bot 不往这里加。
-# namespace 绝不派生（uuid5(项目ns, bot_id) 会给 chenlulu 算出另一个值 →
+# namespace 绝不派生（uuid5(项目ns, bot_id) 会给旧版 bot 算出另一个值 →
 # unifiedSessionUuid 变 → worker 丢整段会话历史）；端口同理，派生会把既有 bot 挤走。
-LEGACY_PORTS = {"chenlulu": 17801}
-LEGACY_NAMESPACES = {"chenlulu": "550e8400-e29b-41d4-a716-446655440001"}
+# 历史部署兼容键：保留原值，测试也按此值断言。不是示例人设，不对外展示。
+LEGACY_PORTS = {"chenlulu": 17801}  # scan-release: allow legacy-compat
+LEGACY_NAMESPACES = {"chenlulu": "550e8400-e29b-41d4-a716-446655440001"}  # scan-release: allow legacy-compat
 
 
 # ---------------------------------------------------------------- 本机 dispatcher HTTP 口令（H-15）
@@ -205,7 +206,7 @@ def _resolve_ports(rows):
     """端口解析（F3，与 namespace 对称）：env → yml → legacy 表 → 派生。
 
     派生规则定死为「取 ≥17801 且**未被任何显式/legacy 端口占用**的最小空闲号，按 id 排序依次分配」。
-    原稿的 ``17801 + index`` 会让新 bot 把 chenlulu 从 17801 挤到 17802，
+    原稿的 ``17801 + index`` 会让新 bot 把旧版 bot 从 17801 挤到 17802，
     而消费方仍按注册表去连 —— **既有生产 bot 静默失联**。
     返回 ``(确定端口, 派生端口)`` 两张表，``port_derived`` 据后者判定。
     """

@@ -94,7 +94,7 @@ def compact_one(bot_cfg: dict) -> bool:
         new_memory = call_claude(prompt, timeout=180)
         quota.record_call("memory_compact", quota.MEMORY_COMPACT_WEIGHT)
         # 剥掉 LLM 可能加的 ```markdown … ``` 包裹：否则 Claude Code auto-memory
-        # 解析器会把整个 MEMORY.md 当成一个代码块 → 记忆条目全部失效（bot3 已中招）。
+        # 解析器会把整个 MEMORY.md 当成一个代码块 → 记忆条目全部失效（旧版曾踩过）。
         _nm = new_memory.strip()
         if _nm.startswith("```"):
             _lines = _nm.split("\n")[1:]
