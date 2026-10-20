@@ -429,3 +429,56 @@ def test_set_key_cli_empty_token_and_bad_args(tmp_path):
     c = _run_cli(root, args=("--check",))
     assert c.returncode == 0
     assert c.stdout == "set: false\n"
+
+
+# ── style_id 路径穿越 ─────────────────────────────────────────────────────
+
+from urllib.parse import quote  # noqa: E402
+
+
+@pytest.mark.parametrize("bad", [
+    "..\\..\\x", "../../../x", "a/b", "", "bad id", "ok.PNG", "a" * 65, "a\x00b",
+])
+def test_valid_style_id_rejects_bad_values(bad):
+    assert not styles_routes._valid_style_id(bad)
+
+
+@pytest.mark.parametrize("good", ["a", "style-1", "Style_2", "x" * 64])
+def test_valid_style_id_accepts_identifiers(good):
+    assert styles_routes._valid_style_id(good)
+
+
+@pytest.mark.parametrize("bad", ["../../x", "..\\..\\x", "a/b", "bad id", "a" * 65])
+def test_upsert_rejects_bad_style_id(client, bad):
+    r = client.post("/api/styles", json={
+        "id": bad, "name": "x", "positive_prefix": "p", "negative_prefix": "n",
+    })
+    assert r.status_code == 422, r.get_data(as_text=True)
+    assert r.get_json() == {"error": "invalid"}
+
+
+@pytest.mark.parametrize("bad", ["..\\..\\x", "bad id", "a" * 65])
+def test_delete_and_sample_routes_reject_bad_style_id(client, bad):
+    seg = quote(bad, safe="")
+    assert client.delete("/api/styles/" + seg).status_code == 422
+    assert client.post("/api/styles/" + seg + "/sample").status_code == 422
+    assert client.get("/api/styles/" + seg + "/sample").status_code == 422
+
+
+def test_slash_style_id_never_reaches_handler(client):
+    """含 `/` 的 id 被 URL 路由切段，根本到不了 handler；同样属于拒绝。"""
+    assert client.delete("/api/styles/a%2Fb").status_code in (404, 422)
+    assert not styles_routes._valid_style_id("a/b")
+
+
+def test_normal_style_id_still_works(client):
+    entry = _create(client, id="ok-1_2")
+    assert entry["id"] == "ok-1_2"
+    assert client.delete("/api/styles/ok-1_2").status_code == 200
+
+
+def test_run_sample_revalidates_style_id(tmp_path, monkeypatch, styles_env):
+    monkeypatch.setattr(styles_routes, "SAMPLE_DIR", tmp_path / "media" / "__styles__")
+    with pytest.raises(ValueError):
+        styles_routes._run_sample("../../x")
+    assert not (tmp_path / "media" / "__styles__").exists()

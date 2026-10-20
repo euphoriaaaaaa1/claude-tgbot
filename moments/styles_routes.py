@@ -31,6 +31,17 @@ styles_bp = Blueprint("styles", __name__)
 _SAVE_LOCK = threading.Lock()
 _SAMPLING_IDS = set()  # 正在生成示例图的 style_id，由 _SAVE_LOCK 保护
 
+# style_id 会拼进示例图/state 目录的文件名，必须限制成纯标识符。
+_STYLE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _valid_style_id(style_id) -> bool:
+    return isinstance(style_id, str) and _STYLE_ID_RE.fullmatch(style_id) is not None
+
+
+def _invalid_style_id():
+    return jsonify({"error": "invalid"}), 422
+
 # 生图脚本的 stderr 可能带上 NovelAI 令牌（请求头回显、异常里的 curl 命令等），
 # 存储与回包前都必须先抹掉。
 _SECRET_RE = re.compile(r"pst-[\w-]+|Bearer\s+\S+|Authorization[^\n]*", re.I)
@@ -218,7 +229,7 @@ def styles_page():
 @styles_bp.route("/styles/sample/<style_id>")
 def style_sample_image(style_id):
     """只读示例图：provider 模式下旧的 ``/image/<path>`` 路由不可达，画风页改走这里。"""
-    if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", style_id):
+    if not _valid_style_id(style_id):
         abort(404)
     path = _sample_dir() / f"{style_id}.png"
     try:
@@ -262,6 +273,8 @@ def api_upsert_style():
         return jsonify({"error": err}), 400
 
     style_id = (body.get("id") or "").strip()
+    if style_id and not _valid_style_id(style_id):
+        return _invalid_style_id()
 
     # 与生成示例图的回写共用同一把锁：否则本次的整表覆写会把并发写入的 sample_* 抹掉
     with _SAVE_LOCK:
@@ -290,6 +303,8 @@ def api_upsert_style():
 
 @styles_bp.route("/api/styles/<style_id>", methods=["DELETE"])
 def api_delete_style(style_id):
+    if not _valid_style_id(style_id):
+        return _invalid_style_id()
     with _SAVE_LOCK:  # 同 upsert：读改写整表期间不能有别的请求插进来写
         data = _load_styles()
         remaining = [s for s in data["styles"] if s["id"] != style_id]
@@ -339,6 +354,8 @@ _SAMPLE_TASKS_LOCK = threading.Lock()
 
 @styles_bp.route("/api/styles/<style_id>/sample", methods=["POST"])
 def api_generate_sample(style_id):
+    if not _valid_style_id(style_id):
+        return _invalid_style_id()
     with _SAVE_LOCK:
         data = _load_styles()
         if not any(s["id"] == style_id for s in data["styles"]):
@@ -362,6 +379,8 @@ def api_generate_sample(style_id):
 def api_sample_status(style_id):
     """轮询示例图任务（与 POST 同路径的 GET）：running 时 done=False；done/failed 后给
     sample_image 或 error。路径不另开新参数化路由。"""
+    if not _valid_style_id(style_id):
+        return _invalid_style_id()
     with _SAMPLE_TASKS_LOCK:
         task = _SAMPLE_TASKS.get(style_id)
         snapshot = dict(task) if task else None
@@ -413,6 +432,9 @@ def _sample_dir() -> Path:
 
 def _run_sample(style_id):
     """同步生图 + 回写 styles.json，返回结果 dict（供后台线程与轮询出站）。"""
+    # 拼接文件名前再校验一次：即使调用方绕过路由，也不能把 style_id 变成路径。
+    if not _valid_style_id(style_id):
+        raise ValueError("invalid style_id")
     sample_dir = _sample_dir()
     sample_dir.mkdir(parents=True, exist_ok=True)
     output_image_path = sample_dir / f"{style_id}.png"
