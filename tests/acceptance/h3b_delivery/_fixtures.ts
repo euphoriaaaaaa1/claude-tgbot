@@ -144,9 +144,12 @@ export function snapshotDir(dir: string): string[] {
   return out
 }
 
-/** 造一张真实存在的图片文件（内容为 Png 魔数，供 sendPhoto 读取）。 */
+/** 造一张真实存在的图片文件（内容为 Png 魔数，供 sendPhoto 读取）。
+ *  必须落在 /send 的媒体白名单内（CHANNEL_DIR/media），否则会被安全闸丢弃。 */
 export function makeImage(name: string): string {
-  const p = join(BASE, name)
+  const dir = join(CHANNEL_DIR, 'media')
+  mkdirSync(dir, { recursive: true })
+  const p = join(dir, name)
   writeFileSync(p, Buffer.from('89504e470d0a1a0a', 'hex'))
   return p
 }

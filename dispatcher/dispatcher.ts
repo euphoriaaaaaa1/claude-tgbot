@@ -33,6 +33,9 @@ import { makePauseCheck } from './pause_gate'
 import { sanitizePromiseIds } from './promise_plan'
 import { readProviderFpStatus } from './provider_fp'
 import { telegramApiBase, planFileDrops } from './feature_gate'
+import { resolveAllowedFile } from './file_allowlist'
+import { senderAllowed } from './inbound_access'
+import { voiceBridgeAuthHeaders } from './voice_bridge_auth'
 import { readFeatures, featureOn, type FeatureFlags } from './features'
 import {
   deletePhotoState, isValidPhotoChatId, isPhotoExit, nextPhotoRound, nowMsFromEnv, parsePhotoTrigger,
@@ -200,6 +203,18 @@ const IMAGE_OUTPUT_DIR = join(homedir(), 'resource', 'media', BOT_NAME)
 function stickerImageRoot(): string {
   const raw = process.env.STICKERS_DIR || '~/resource/stickers'
   return raw === '~' || raw.startsWith('~/') ? join(homedir(), raw.slice(1)) : raw
+}
+// /send 的 files 只允许这些根目录（软链逃逸由 resolveAllowedFile 的 realpath 校验兜住）。
+function allowedFileRoots(): string[] {
+  const roots = [
+    IMAGE_OUTPUT_DIR,
+    stickerImageRoot(),
+    join(CHANNEL_DIR, 'inbox'),
+    join(CHANNEL_DIR, 'media'),
+  ]
+  const moments = process.env.MOMENTS_MEDIA_ROOT
+  if (moments) roots.push(moments)
+  return roots
 }
 
 // ─── party-camera：状态目录与 owner 观测 ─────────────────────────────
@@ -572,18 +587,9 @@ function transcribeUrl(): string {
   return process.env.TRANSCRIBE_URL || 'http://127.0.0.1:7788/transcribe_telegram'
 }
 
-/** H-14：发送者是否在白名单内（私聊=access.allowFrom；群=该群策略 allowFrom，空=不设限）。 */
+/** H-14：发送者是否在白名单内（私聊=access.allowFrom；群=该群策略 allowFrom，空则回退 owner 名单）。 */
 function inboundSenderAllowed(ctx: Context): boolean {
-  const fromId = String(ctx.from?.id ?? '')
-  const acc = loadAccess()
-  const chatType = ctx.chat?.type
-  if (chatType === 'group' || chatType === 'supergroup') {
-    const pol = acc.groups[String(ctx.chat!.id)]
-    if (!pol) return false
-    const af = pol.allowFrom ?? []
-    return af.length === 0 || af.includes(fromId)
-  }
-  return acc.allowFrom.includes(fromId)
+  return senderAllowed(loadAccess(), ctx.chat?.type, String(ctx.chat?.id ?? ''), String(ctx.from?.id ?? ''))
 }
 
 /** H-14：dispatcher 自己用令牌取回文件字节（令牌只在服务端 URL 里用，绝不外发）。 */
@@ -1446,7 +1452,7 @@ bot.on('message:voice', async ctx => {
     if (bytes) {
       // H-14 §9b：只把音频字节 POST 给本机转写服务，请求体绝不含 bot token。
       const r = await fetchWithTimeout(transcribeUrl(),
-        { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes },
+        { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', ...voiceBridgeAuthHeaders() }, body: bytes },
         VOICE_TIMEOUT_MS)
       if (r.ok) {
         const j = await r.json() as { text?: string }
@@ -1879,6 +1885,16 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
           { image: featureOn(feats, 'image'), stickers: featureOn(feats, 'stickers') })
         if (fileDrops.counts.image > 0) process.stderr.write(`dispatcher[${BOT_NAME}]: image_feature_off 生图功能关着，${fileDrops.counts.image} 个文件不发\n`)
         if (fileDrops.counts.stickers > 0) process.stderr.write(`dispatcher[${BOT_NAME}]: sticker_feature_off 表情包功能关着，${fileDrops.counts.stickers} 个文件不发\n`)
+        // 出口白名单：files 只认媒体目录内的真实文件。拒绝项按下标跳过（[[图N]] 映射不变），
+        // 日志只记原因码，路径原文不进日志。
+        let fileDroppedDenied = 0
+        files.forEach((f, i) => {
+          const d = resolveAllowedFile(f, allowedFileRoots(), homedir())
+          if (d.ok) return
+          fileDrops.dropped.add(i)
+          fileDroppedDenied++
+          process.stderr.write(`dispatcher[${BOT_NAME}]: file_dropped reason=${d.reason}\n`)
+        })
         // 只表示请求要求发语音；这次真发不发还要看语音开关
         const wantVoice = body.as_voice === true || body.as_voice === 'true'
         const voiceFeatureOn = featureOn(feats, 'voice')
@@ -1887,6 +1903,7 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
         const featureNotes: Record<string, unknown> = {}
         if (voiceDropped) featureNotes.voice_dropped = 'feature_off'
         if (fileDrops.names.length > 0) Object.assign(featureNotes, { dropped_files: fileDrops.names, dropped_reason: 'feature_off' })
+        if (fileDroppedDenied > 0) featureNotes.file_dropped = fileDroppedDenied
         const asVoice = wantVoice && voiceFeatureOn
         const voiceEmotion = body.voice_emotion != null ? String(body.voice_emotion) : 'NEUTRAL'
         const voiceInstruct = body.voice_instruct != null ? String(body.voice_instruct) : ''
@@ -1987,7 +2004,7 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
               try {
                 const vResp = await fetch('http://127.0.0.1:7788/send_voice', {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
+                  headers: { 'Content-Type': 'application/json', ...voiceBridgeAuthHeaders() },
                   body: JSON.stringify({
                     bot_token: bot.token,
                     chat_id: chatId,

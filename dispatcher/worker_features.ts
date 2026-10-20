@@ -12,7 +12,7 @@ export function featuresOffRule(features: FeatureFlags): string {
 }
 
 const REPLY_DESC_HEAD = '回复消息。默认回到你正在处理的那条消息所在的聊天（群回群、私聊回私聊）；只有要主动跨聊天发时才传 chat_id。'
-const REPLY_DESC_FILES = '带 files 时可在 text 中想发图的位置单独一行写 [[图1]]/[[图2]]（对应 files 第几张），图片就插在那两段文字之间发出，像真人聊天；不写标记则图片在所有文字之后发。'
+const REPLY_DESC_FILES = '带 files 时可在 text 中想发图的位置单独一行写 [[图1]]/[[图2]]（对应 files 第几张），图片就插在那两段文字之间发出，像真人聊天；不写标记则图片在所有文字之后发。files 只能填媒体目录（生图输出、表情库、本 bot 的 inbox/media、朋友圈媒体目录）里的文件；其他路径、软链和 .env/配置/密钥文件会被丢弃。'
 
 /**
  * reply 工具的描述。语音开着时与改动前逐字相同（全开的 bot 读到的文字零变化）；
