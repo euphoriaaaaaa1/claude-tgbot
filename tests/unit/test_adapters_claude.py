@@ -252,6 +252,23 @@ def test_create提交产物且令牌只在env(home, monkeypatch, caplog, capsys)
     assert TELEGRAM_TOKEN not in caplog.text
 
 
+def test_create省略features也写全关文件(home, monkeypatch):
+    make_templates(home)
+    spec = _spec("newbot2")
+    spec.pop("features")
+    spec.pop("voice")
+    with FakeDispatcher(bot_id="newbot2", phase="running", allow_missing=True) as fake:
+        monkeypatch.setattr(claude_create, "allocate_port", lambda ctx: fake.port)
+        monkeypatch.setattr(claude_create, "_install_schedule", lambda *a, **k: "ok")
+        monkeypatch.setattr(claude_create, "_uninstall_schedule", lambda *a, **k: None)
+        monkeypatch.setattr(claude_create, "_ensure_dispatcher", lambda *a, **k: None)
+        ClaudeLocalAdapter().create(spec, SecretToken(TELEGRAM_TOKEN))
+    channel = home["channels"] / "newbot2"
+    doc = json.loads((channel / "features.json").read_text(encoding="utf-8"))
+    assert doc["version"] == 1 and doc["default"] is False
+    assert all(v is False for v in doc["features"].values())
+
+
 def test_create失败整单回滚且不残留令牌(home, monkeypatch, caplog, capsys):
     make_templates(home)
     with FakeDispatcher(bot_id="newbot", phase="stopped", spawn=False, allow_missing=True) as fake:
@@ -301,15 +318,26 @@ def test_persona版本冲突与写入(home):
 
 def test_features默认全开与写入(home):
     channel = write_bot(home)
+    (channel / "access.json").write_text(json.dumps({"voiceId": "v1"}), encoding="utf-8")
     a = ClaudeLocalAdapter()
     got = a.get_features(BOT)
     assert all(a.get_features(BOT)["features"].values())
     assert got["keys"][0]["key"] == "voice" and got["keys"][0]["label"]
     assert got["requirements"]["voice"]["ready"] is True
     out = a.set_features(BOT, {"voice": False})
-    assert out["changed"] == ["voice"] and out["features"]["voice"] is False
+    assert out["features"]["voice"] is False
     doc = json.loads((channel / "features.json").read_text(encoding="utf-8"))
     assert doc["features"]["voice"] is False
+    assert doc["version"] == 1 and doc["default"] is False
+
+
+def test_set_features缺前提422(home):
+    write_bot(home)   # 没有 access.json / voiceId
+    with pytest.raises(base.AdapterError) as ei:
+        ClaudeLocalAdapter().set_features(BOT, {"voice": True})
+    assert ei.value.code == "requirement_missing"
+    assert ei.value.http_status == 422
+    assert "voice" in ei.value.fields
 
 
 def test_groups进退(home):
