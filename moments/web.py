@@ -22,6 +22,7 @@ from moments.console_routes import console_bp
 from moments.features_routes import features_bp
 from moments.lifecycle_routes import lifecycle_bp
 from moments.provider_routes import provider_bp
+from moments.styles_routes import styles_bp
 
 # 公众版只有供应商模式；cookie 名按 INTERFACE §2.1 固定为 cb_provider。
 COOKIE_NAME = panel_auth.COOKIE_NAME
@@ -35,6 +36,9 @@ app.register_blueprint(lifecycle_bp)
 app.register_blueprint(features_bp)
 # 供应商栈（INTERFACE §2.7）：providers.json 单写者 + CRUD/绑定/代理接口。
 app.register_blueprint(provider_bp)
+# 画风页（INTERFACE §2.11）：只放行页面与样式管理端点；/api/novelai_key 不在
+# 白名单内（密钥走 scripts/set_novelai_key.py，provider 模式下该路径恒 404）。
+app.register_blueprint(styles_bp)
 from provider_config import SeamsNotConfigured as _SeamsNotConfigured  # noqa: E402
 from provider_config import SafetyGateTripped as _SafetyGateTripped  # noqa: E402
 
@@ -241,10 +245,24 @@ def logout_all():
 _SESSION_ENDPOINTS = frozenset(
     f.__name__ for f in (login_page, login_submit, logout, logout_all))
 
+# 画风页可达面（INTERFACE §0.5）：逐端点白名单，不按 styles. 前缀整体放行。
+# /api/novelai_key 不在此集合内，登录后也由下面的闸门返回 404。
+_STYLES_ENDPOINTS = frozenset({
+    "styles.styles_page",
+    "styles.style_sample_image",
+    "styles.api_get_styles",
+    "styles.api_upsert_style",
+    "styles.api_delete_style",
+    "styles.api_set_active",
+    "styles.api_generate_sample",
+    "styles.api_sample_status",
+})
+
 
 @app.before_request
 def _reachable_gate():
-    """登录后的可达面：登录/登出，以及 console/lifecycle/features/provider 蓝图。
+    """登录后的可达面：登录/登出、console/lifecycle/features/provider 蓝图，
+    以及画风页的页面与样式管理端点（INTERFACE §0.5）。
 
     未匹配到路由的请求交给 Flask 回 404/405。后续任务的蓝图注册后，把对应端点
     加进这里或按蓝图名放行。
@@ -254,7 +272,7 @@ def _reachable_gate():
     endpoint = request.endpoint
     if endpoint is None:
         return None
-    if (endpoint in _SESSION_ENDPOINTS
+    if (endpoint in _SESSION_ENDPOINTS or endpoint in _STYLES_ENDPOINTS
             or endpoint.startswith("console.") or endpoint.startswith("lifecycle.")
             or endpoint.startswith("features.") or endpoint.startswith("provider.")):
         return None

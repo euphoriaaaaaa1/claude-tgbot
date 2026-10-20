@@ -302,6 +302,6 @@ def test_壳不依赖旧Hub模块():
     source = Path(web.__file__).read_text(encoding="utf-8")
     assert "hub_routes" not in source
     assert "hub_auth" not in source
-    assert "styles_routes" not in source
+    # T11 起 styles 蓝图是本壳的合法依赖（画风页与样式管理端点），不再算旧 Hub 模块。
     assert "moments.hub_routes" not in sys.modules
     assert "moments.hub_config" not in sys.modules
