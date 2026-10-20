@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest
+          # 验收用例会 import voicecall（可选模块），运行时依赖不在 requirements.txt。
+          python -m pip install fastapi httpx uvicorn
+
+      - name: Install Bun dependencies
+        working-directory: dispatcher
+        run: bun install --frozen-lockfile
+
+      - name: Python tests
+        # 与 scripts/test-gate.sh 同样的范围：单元 + 验收；测试自身负责临时 HOME、
+        # 假 Telegram、mock 服务与端口 0，不连真实 Telegram / 模型 / dsh。
+        run: python -m pytest tests/unit tests/acceptance -q
+
+      - name: Bun tests
+        working-directory: dispatcher
+        run: bun test
+
+      - name: Desensitization scan
+        run: python scripts/scan_release.py
