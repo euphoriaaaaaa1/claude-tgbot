@@ -695,8 +695,15 @@ def apply_form(values, data, text):
     ponytail: 每改一个键重新 compose 一次（35 个键、几 KB 的文件，O(n·len) 无所谓），
     换来的是不用自己维护 splice 之后的下标偏移，那才是 3am 要解码的东西。
     """
-    changed = [k for k, v in values.items()
-               if not _same(dig(data, k), v, FIELD_META[k]["type"])]
+    changed = []
+    for k, v in values.items():
+        current = dig(data, k)
+        if current is _MISSING:
+            # yml 里没写这个键时，实际生效值就是 dataclass/代码里的默认值；
+            # GET 原样回写默认值不算改动（接口契约：原样回写 changed == []）。
+            current = FIELD_META[k]["default"]
+        if not _same(current, v, FIELD_META[k]["type"]):
+            changed.append(k)
     new_text = text
     for key in changed:
         new_text = set_scalar(new_text, compose(new_text), key,

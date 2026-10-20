@@ -72,6 +72,14 @@ jiwen:                         # 情绪/关系数值引擎（第二层 DeepSeek 
     pride_erosion_rate: 0.002
     immersion_decay_per_min: 0.01
     activity_connection_relief: 0.0005
+    # 刚聊过就退潮：窗口内 connection 按心情回落到静息底线
+    connection_relief_window_min: 240.0
+    connection_relief_per_min: 0.007
+    connection_relief_floor: 0.15
+    # connection 的另两条下行通道
+    connection_decay_after_min: 240.0
+    connection_silence_decay_per_min: 0.002
+    connection_reply_decay: 0.05
     immersion_map:
       reading: 0.6
       cooking: 0.5
@@ -87,3 +95,6 @@ jiwen:                         # 情绪/关系数值引擎（第二层 DeepSeek 
     valence_activity: -0.6
     arousal_agitation: 0.7
     immersion_block: 0.3
+
+voice:                         # 语音合成（语音桥每次合成时现读，不需要重启）
+  tts_model: drama-3           # drama-3 | s2.1-pro | s2.1-pro-free | s2-pro | s1

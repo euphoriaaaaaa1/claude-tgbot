@@ -353,6 +353,39 @@ def test_系统参数读取与保存(client, tmp_path):
     assert "max_calls_per_5h: 40" in path.read_text(encoding="utf-8")
 
 
+def test_系统参数原样回写changed为空(client, tmp_path):
+    """GET 的 values 原样 POST 回去：缺失键用的是实际生效默认值，不算改动、不写盘。"""
+    path = _write_global(tmp_path)
+    before = path.read_bytes()
+    body = client.get("/api/params").get_json()
+    r = client.post("/api/params", json={"values": body["values"], "version": body["version"]})
+    assert r.status_code == 200
+    assert r.get_json()["changed"] == []
+    assert path.read_bytes() == before
+
+
+def test_系统参数缺失键默认值与代码一致(client, tmp_path):
+    from jiwen import engine
+    _write_global(tmp_path)
+    values = client.get("/api/params").get_json()["values"]
+    rates = engine.Rates()
+    for key in ("connection_relief_window_min", "connection_relief_per_min",
+                "connection_relief_floor", "connection_decay_after_min",
+                "connection_silence_decay_per_min", "connection_reply_decay"):
+        assert values["jiwen.rates." + key] == getattr(rates, key)
+    assert values["voice.tts_model"] == params_config.TTS_MODELS[0]
+
+
+def test_系统参数改一个键changed只含该键(client, tmp_path):
+    """缺失键回写默认值不算改动；真改一个键时 changed 只含它。"""
+    _write_global(tmp_path)
+    body = client.get("/api/params").get_json()
+    body["values"]["moments.daily_post_limit_per_bot"] = 7
+    r = client.post("/api/params", json={"values": body["values"], "version": body["version"]})
+    assert r.status_code == 200
+    assert r.get_json()["changed"] == ["moments.daily_post_limit_per_bot"]
+
+
 def test_系统参数版本冲突409(client, tmp_path):
     _write_global(tmp_path)
     r = client.post("/api/params", json={"values": {"max_calls_per_5h": 40}, "version": "stale"})

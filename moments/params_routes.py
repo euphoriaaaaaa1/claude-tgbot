@@ -24,7 +24,7 @@ READ_WAIT = 5.0     # 读端点等锁的秒数；保存只占几毫秒，等不�
 
 
 def _api(fn):
-    """把 ParamsError 翻成 ``{"error","detail"}`` + 状态码；其余异常照旧冒泡给 500 处理器。"""
+    """把 ParamsError 翻成 ``{"error","code","detail"}`` + 状态码；其余异常照旧冒泡给 500 处理器。"""
     @functools.wraps(fn)
     def wrapper(*a, **kw):
         try:
@@ -32,7 +32,8 @@ def _api(fn):
         except pc.ParamsError as e:
             # 公开版 INTERFACE §2.8 的表单校验错误码统一为 bad_body；具体原因留在 detail。
             code = "bad_body" if e.error == "bad_field" else e.error
-            return jsonify({"error": code, "detail": e.detail}), e.status
+            # 公开版壳沿用的键是 error；验收契约读 code。两个键同值，避免调用方任选其一踩空。
+            return jsonify({"error": code, "code": code, "detail": e.detail}), e.status
     return wrapper
 
 
@@ -109,9 +110,12 @@ def params_save():
     if not isinstance(values, dict):
         raise pc.ParamsError(400, "bad_body", "缺少 values 或它不是 JSON 对象")
     pc.validate_values(values)
-    if not values:      # 空操作：不写盘、不备份，也不是错误
-        return _noop(pc.version_of())
     version = _cfg_version(body)
+    if not values:      # 空操作：不写盘、不备份，也不是错误；但版本仍要核（接口契约要求 stale → 409）
+        current = pc.version_of()
+        if version != current:
+            raise pc.ParamsError(409, "config_stale", "配置已被他人修改，请刷新后重试")
+        return _noop(current)
     with pc.hold_config_lock():
         text, current = pc.snapshot()
         data = pc.parse(text)
