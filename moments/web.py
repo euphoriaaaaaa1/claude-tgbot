@@ -21,6 +21,7 @@ from moments import panel_auth
 from moments.console_routes import console_bp
 from moments.features_routes import features_bp
 from moments.lifecycle_routes import lifecycle_bp
+from moments.provider_routes import provider_bp
 
 # 公众版只有供应商模式；cookie 名按 INTERFACE §2.1 固定为 cb_provider。
 COOKIE_NAME = panel_auth.COOKIE_NAME
@@ -32,6 +33,23 @@ app.register_blueprint(console_bp)
 app.register_blueprint(lifecycle_bp)
 # 功能开关（INTERFACE §2.6）：登录门、跨站校验与可达面闸门对本蓝图生效。
 app.register_blueprint(features_bp)
+# 供应商栈（INTERFACE §2.7）：providers.json 单写者 + CRUD/绑定/代理接口。
+app.register_blueprint(provider_bp)
+from provider_config import SeamsNotConfigured as _SeamsNotConfigured  # noqa: E402
+from provider_config import SafetyGateTripped as _SafetyGateTripped  # noqa: E402
+
+
+@app.errorhandler(_SafetyGateTripped)
+def _safety_gate_500(e):
+    """测试态安全闸：写端点 500 且零写入（INTERFACE §9.4）。"""
+    return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.errorhandler(_SeamsNotConfigured)
+def _seams_read_only_503(_e):
+    """接缝不成组的只读模式：写接口统一 503（INTERFACE §1.2）。"""
+    return jsonify({"error": "测试接缝未成组设置，写操作已拒绝（只读模式）",
+                    "code": "seams_read_only"}), 503
 
 
 # ── 安全响应头 ─────────────────────────────────────────────────────────────
@@ -110,6 +128,10 @@ def _authed() -> bool:
 def _login_gate():
     if not panel_auth.secret_ready():
         return _NOT_READY_HTML, 503  # fail-closed：缺 secret 一律拒之门外
+    if request.path == "/":
+        # INTERFACE §2.1：provider 模式下 GET / 恒 302 /provider（未登录也先落到这里，
+        # 再由下一跳的登录门带去 /login?next=/provider）。
+        return redirect("/provider")
     if request.path == "/login":
         return None
     if _authed():
@@ -220,14 +242,9 @@ _SESSION_ENDPOINTS = frozenset(
     f.__name__ for f in (login_page, login_submit, logout, logout_all))
 
 
-@app.route("/provider")
-def provider_page():
-    return render_template("provider.html")
-
-
 @app.before_request
 def _reachable_gate():
-    """登录后的可达面：登录/登出、/provider 占位页，以及 console/lifecycle 两个蓝图。
+    """登录后的可达面：登录/登出，以及 console/lifecycle/features/provider 蓝图。
 
     未匹配到路由的请求交给 Flask 回 404/405。后续任务的蓝图注册后，把对应端点
     加进这里或按蓝图名放行。
@@ -237,9 +254,9 @@ def _reachable_gate():
     endpoint = request.endpoint
     if endpoint is None:
         return None
-    if (endpoint in _SESSION_ENDPOINTS or endpoint == "provider_page"
+    if (endpoint in _SESSION_ENDPOINTS
             or endpoint.startswith("console.") or endpoint.startswith("lifecycle.")
-            or endpoint.startswith("features.")):
+            or endpoint.startswith("features.") or endpoint.startswith("provider.")):
         return None
     abort(404)
 

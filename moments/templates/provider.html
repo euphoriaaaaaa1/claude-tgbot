@@ -3,46 +3,2079 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>管理台 · 8767</title>
+<title>供应商管理 · 8767</title>
 <style>
+/* 字体只用设备自带的：不加载任何站外字体。原先的首选族名留在最前，装了的设备观感不变；
+   没装的落到系统黑体（苹果=苹方，安卓=思源黑体一系，Windows=雅黑）。等宽栈末尾补中文回退。 */
 :root { --bg:#ededed; --card:#fff; --ink:#181818; --ink-soft:#555; --ink-faint:#888;
-        --hairline:rgba(0,0,0,.08); --wxgreen:#07c160;
-        --font-body:'Noto Sans SC','PingFang SC','Microsoft YaHei',system-ui,sans-serif; }
+  --hairline:rgba(0,0,0,0.06); --hairline-strong:rgba(0,0,0,0.12);
+  --wxgreen:#07c160; --danger:#fa5151; --warn:#c98a00;
+  --font-body:'Noto Sans SC','Noto Sans CJK SC','Source Han Sans SC',-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,'Roboto Mono','PingFang SC','Microsoft YaHei',monospace; }
 @media (prefers-color-scheme: dark) {
-  :root { --bg:#000; --card:#1c1c1e; --ink:#f0f0f0; --ink-soft:#c0c0c0;
-          --ink-faint:#8a8a8a; --hairline:rgba(255,255,255,.1); }
+  :root { --bg:#000; --card:#1c1c1e; --ink:#f0f0f0; --ink-soft:#c0c0c0; --ink-faint:#8a8a8a;
+    --hairline:rgba(255,255,255,0.08); --hairline-strong:rgba(255,255,255,0.16); }
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
-       min-height:100vh; }
-.wrap { max-width:760px; margin:0 auto; padding:24px 16px 48px; }
-.card { background:var(--card); border:1px solid var(--hairline); border-radius:12px;
-        padding:20px; margin-bottom:14px; }
-h1 { font-size:19px; font-weight:600; margin-bottom:6px; }
-.sub { color:var(--ink-faint); font-size:13px; margin-bottom:18px; }
-h2 { font-size:15px; font-weight:600; margin-bottom:8px; }
-p { color:var(--ink-soft); font-size:14px; line-height:1.7; }
-code { font-family:ui-monospace,monospace; font-size:13px; }
-.btn { border:none; border-radius:8px; padding:9px 14px; font-size:14px;
-       font-family:var(--font-body); cursor:pointer; background:var(--wxgreen);
-       color:#fff; }
-.btn.ghost { background:transparent; color:var(--ink-soft);
-             border:1px solid var(--hairline); }
+  line-height:1.6; font-size:15px; padding-bottom:60px; }
+.topbar { position:sticky; top:0; z-index:10; background:var(--bg);
+  border-bottom:1px solid var(--hairline); padding:16px 20px;
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  flex-wrap:wrap;
+  max-width:900px; margin:0 auto; }
+.topbar h1 { font-size:18px; font-weight:600; }
+.btn { border:none; border-radius:8px; padding:8px 14px; font-size:14px; cursor:pointer;
+  font-family:var(--font-body); transition:opacity .15s; white-space:nowrap; }
+.btn:hover { opacity:.85; }
+.btn-primary { background:var(--wxgreen); color:#fff; }
+.btn-ghost { background:transparent; color:var(--ink-soft); border:1px solid var(--hairline-strong); }
+.btn-danger { background:transparent; color:var(--danger); border:1px solid var(--danger); }
+.wrap { max-width:900px; margin:20px auto; padding:0 20px; }
+.panel { background:var(--card); border:1px solid var(--hairline); border-radius:14px;
+  padding:16px 18px; margin-bottom:16px; }
+.panel h2 { font-size:15px; font-weight:600; margin-bottom:12px; }
+.row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+.field label { font-size:12px; color:var(--ink-soft); }
+input, select { padding:8px 10px; border-radius:8px; font-size:14px; color:var(--ink);
+  border:1px solid var(--hairline-strong); background:transparent; font-family:var(--font-body); }
+input[type=text], input[type=password] { width:100%; }
+table { width:100%; border-collapse:collapse; font-size:14px; }
+th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--hairline); vertical-align:top; }
+th { font-size:12px; color:var(--ink-soft); font-weight:500; }
+.mono { font-family:var(--font-mono); font-size:12px; color:var(--ink-soft);
+  overflow-wrap:anywhere; word-break:break-word; }
+.tag { display:inline-block; font-size:12px; padding:1px 7px; border-radius:20px;
+  border:1px solid var(--hairline-strong); color:var(--ink-soft); }
+.tag.local { color:var(--warn); border-color:var(--warn); }
+.tag.ok { color:var(--wxgreen); border-color:var(--wxgreen); }
+.tag.bad { color:var(--danger); border-color:var(--danger); }
+.banner { border-radius:10px; padding:10px 14px; margin-bottom:16px; font-size:14px; }
+.banner.warn { background:rgba(201,138,0,.12); color:var(--warn); }
+.banner.err { background:rgba(250,81,81,.12); color:var(--danger); }
+.banner.ok { background:rgba(7,193,96,.12); color:var(--wxgreen); }
+.hint { font-size:12px; color:var(--ink-faint); }
+#modelPicker { position:fixed; z-index:60; background:var(--card); border:1px solid var(--hairline-strong);
+  border-radius:12px; box-shadow:0 10px 34px rgba(0,0,0,.22); padding:8px; overflow:auto; }
+#modelPicker[hidden] { display:none; }
+.picker-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px; }
+.picker-status { font-size:12px; color:var(--ink-soft); }
+.picker-list { display:flex; flex-direction:column; }
+.mi-row { display:flex; align-items:baseline; gap:8px; padding:7px 8px; border-radius:8px;
+  cursor:pointer; font-size:14px; }
+.mi-row:hover { background:var(--hairline); }
+.mi-id { font-family:var(--font-mono); font-size:11px; color:var(--ink-faint); }
+.picker-more { width:100%; margin-top:6px; }
+
+.protocol-hint { font-size:12px; color:var(--ink-faint); font-weight:400; }
+
+/* ── 图标按钮（关闭叉）：叉用两条线画，不依赖任何字体或图标库 ── */
+.icon-btn { position:relative; flex:none; width:32px; height:32px; border:none; border-radius:8px;
+  background:transparent; color:inherit; cursor:pointer; }
+.icon-btn::before, .icon-btn::after { content:""; position:absolute; left:50%; top:50%;
+  width:14px; height:1.5px; border-radius:1px; background:currentColor; }
+.icon-btn::before { transform:translate(-50%,-50%) rotate(45deg); }
+.icon-btn::after { transform:translate(-50%,-50%) rotate(-45deg); }
+.icon-btn:hover, .icon-btn:active { background:var(--hairline); }
+
+/* ── 提示条：文字占满、可换行；关闭叉固定在右上，负外边距让单行提示保持原高度 ── */
+.banner.notice { display:flex; align-items:flex-start; gap:10px; }
+.banner.notice[hidden] { display:none; }
+.notice-text { flex:1; min-width:0; overflow-wrap:anywhere; }
+.banner.notice .icon-btn { margin:-5px -8px -5px 0; }
+
+/* ── 模型列：默认只有一个「N 个模型」按钮，点开才列出；协议是 provider 级事实，不逐模型选 ── */
+.model-cell { min-width:240px; }
+/* 展开箭头：两条边折成的小尖角，收起时朝右、展开后朝下（线宽与关闭叉一致） */
+.models-toggle::after { content:""; display:inline-block; margin-left:9px; vertical-align:middle;
+  width:6px; height:6px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor;
+  transform:translateY(-1px) rotate(-45deg); transition:transform .15s; }
+.models-toggle[aria-expanded="true"]::after { transform:translateY(-2px) rotate(45deg); }
+.models-default { margin-top:4px; overflow-wrap:anywhere; }
+.models-list { margin-top:8px; }
+.models-list[hidden] { display:none; }
+.model-item { display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px; padding:8px 0;
+  border-top:1px solid var(--hairline); }
+.model-name { flex:1 1 150px; min-width:0; color:var(--ink); }
+.model-actions { display:flex; gap:10px; margin-left:auto; }
+.model-edit { display:flex; align-items:center; flex-wrap:wrap; gap:8px 10px; padding:0 0 10px; }
+.model-edit input { flex:1 1 140px; min-width:0; width:auto; font-size:16px; }
+.model-edit-msg { flex:1 1 100%; color:var(--danger); }
+.model-edit-msg:empty { display:none; }
+.direct-url { margin-top:2px; }
+
+/* ── 供应商来源选项卡：按钮条在内容块上方；窄屏允许换行，文字不折行、不横向溢出 ── */
+.provider-tabs-wrap { margin-bottom:0; }
+.provider-tabs { display:flex; flex-wrap:wrap; gap:8px; }
+.provider-tab { flex:0 1 auto; max-width:100%; border:1px solid var(--hairline-strong);
+  background:transparent; color:var(--ink-soft); }
+.provider-tab[aria-selected="true"] { background:var(--wxgreen); border-color:var(--wxgreen); color:#fff; }
+#claudeBlock[hidden], #dshBlock[hidden] { display:none; }
+
+/* ── 下半块 #dshBlock：dsh 模型页的同源内嵌框架。两页底色同一套变量，框架不加边框，看上去接在一起；
+   高度由脚本跟着框架里的内容调，这里只给加载前的占位高度 ── */
+.dsh-frame { display:block; width:100%; height:520px; border:0; background:transparent; }
+
+/* ── 模型多选对话框：头、工具、尾固定，中间列表是唯一的滚动区 ── */
+#modelDialog { margin:auto; padding:0; width:min(560px, 92vw); height:min(640px, 86vh);
+  max-width:none; max-height:none; overflow:hidden; background:var(--card); color:var(--ink);
+  border:1px solid var(--hairline-strong); border-radius:14px; box-shadow:0 10px 34px rgba(0,0,0,.22);
+  font-family:var(--font-body); font-size:15px; line-height:1.6; }
+#modelDialog::backdrop { background:rgba(0,0,0,.45); }
+.dlg { position:relative; display:flex; flex-direction:column; height:100%; min-height:0; }
+.dlg-head { padding:14px 54px 8px 16px; }
+.dlg-head h2 { font-size:15px; font-weight:600; overflow-wrap:anywhere; outline:none; }
+.dlg-close { position:absolute; top:9px; right:10px; }
+.dlg-tools { display:flex; flex-direction:column; gap:8px; padding:0 16px 10px;
+  border-bottom:1px solid var(--hairline); }
+.dlg-tools input[type=search] { width:100%; font-size:16px; -webkit-appearance:none; appearance:none; }
+.dlg-msg:empty { display:none; }
+.dlg-msg[data-kind="err"] { color:var(--danger); }
+.dlg-msg[data-kind="warn"] { color:var(--warn); }
+.dlg-list { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch; padding:4px 8px; }
+.dlg-empty { padding:16px 8px; }
+.dlg-empty[hidden] { display:none; }
+.md-row { display:flex; align-items:center; gap:10px; min-height:40px; padding:6px 8px;
+  border-radius:8px; cursor:pointer; font-size:14px; }
+.md-row:hover { background:var(--hairline); }
+.md-row input[type=checkbox] { flex:none; width:20px; height:20px; min-height:0; padding:0;
+  accent-color:var(--wxgreen); cursor:pointer; }
+.md-row input[type=checkbox]:disabled { cursor:default; }
+.md-main { flex:1; min-width:0; display:flex; flex-direction:column; overflow-wrap:anywhere; }
+.md-tag { flex:none; }
+.tag[hidden] { display:none; }
+.dlg-foot { display:flex; align-items:center; gap:10px; padding:10px 16px;
+  padding-bottom:calc(10px + env(safe-area-inset-bottom)); border-top:1px solid var(--hairline); }
+.dlg-foot .hint { flex:1; min-width:0; }
+
+/* ── 手机（≤430px）：窄留白 + 两个表格纯 CSS 纵向堆叠，长串不再撑破视口 ── */
+@media (max-width:430px) {
+  .topbar { padding:12px 14px; gap:8px; }
+  .wrap { padding:0 14px; margin:14px auto; }
+  .panel { padding:14px; }
+  /* 表格转纵列：每个 td 独占一行。注意第二张表的 thead 有第 2 行 = protocol-hint
+     （data-role=protocol-hint），只能藏标题行，不能藏整个 thead，否则 hint 被一起隐藏。 */
+  table, thead, tbody, tr, th, td { display:block; width:100%; }
+  thead tr:first-child { display:none; }
+  tbody tr { border:1px solid var(--hairline); border-radius:10px;
+    padding:10px 12px; margin-bottom:12px; }
+  tbody td { padding:4px 0; border-bottom:none; }
+  tbody td:empty { display:none; }
+  /* 列名还原：JS 生成的 td 没有列名属性，只能用 ::before 补标签 */
+  #providerRows td:nth-child(1)::before { content:"id："; }
+  #providerRows td:nth-child(2)::before { content:"名称："; }
+  #providerRows td:nth-child(3)::before { content:"base_url："; }
+  #providerRows td:nth-child(4)::before { content:"key："; }
+  #providerRows td:nth-child(5)::before { content:"模型："; }
+  #providerRows td:nth-child(6)::before { content:""; }
+  #providerRows td::before { color:var(--ink-faint); font-weight:500; }
+  /* 触控目标：手机上按钮与表单控件统一 ≥36px */
+  .btn { min-height:36px; }
+  select, input { min-height:36px; }
+  /* 关闭叉的触控区放大到 40px；负外边距同步加大，单行提示条高度不变 */
+  .icon-btn { width:40px; height:40px; }
+  .banner.notice .icon-btn { margin:-9px -10px -9px 0; }
+  /* 模型行纵向排：模型名一行，窗口与「使用中」一行，两个按钮并排一行（中间留 10px 防误触） */
+  .model-cell { min-width:0; }
+  .model-item { padding:10px 0; }
+  .model-name { flex:1 1 100%; }
+  .model-actions { flex:1 1 100%; margin-left:0; }
+  .model-actions .btn, .model-edit .btn { flex:1; min-height:40px; }
+  .model-edit input { flex:1 1 100%; min-height:40px; }
+  /* 对话框铺满屏幕：头尾固定、列表滚动；高度先按可视高度，脚本再按键盘弹出后的可视区校正 */
+  #modelDialog { width:100vw; height:100vh; height:100dvh; margin:0; border:none; border-radius:0; }
+  .dlg-close { top:6px; right:8px; }
+  .dlg-tools .btn, .dlg-foot .btn { min-height:44px; }
+  .dlg-tools input[type=search] { min-height:44px; }
+  .md-row { min-height:44px; }
+  .md-row input[type=checkbox] { width:22px; height:22px; }
+  /* 对话框开着时锁住背后页面的滚动，列表滚到头不会带着页面一起动 */
+  html.dlg-open, html.dlg-open body { overflow:hidden; }
+}
+
+/* ── 打印：还原为桌面表格布局，避免堆叠被印成纵向单列 ──────────────── */
+@media print {
+  table { display:table; }
+  thead { display:table-header-group; }
+  tbody { display:table-row-group; }
+  tr { display:table-row; }
+  th, td { display:table-cell; }
+  thead tr:first-child { display:table-row; }
+  #providerRows td::before { content:none; }
+}
+
+/* ── 桌面（≥1024px）：容器与单元格更舒展 ───────────────────────────── */
+@media (min-width:1024px) {
+  .topbar, .wrap { max-width:1024px; }
+  th, td { padding:10px 14px; }
+}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="card">
-    <h1>管理台</h1>
-    <div class="sub">8767 · 公开版面板壳</div>
-    <p>登录门与面板进程已就绪。总览、生命周期、功能开关、供应商与画风页面会由后续版本注册。</p>
-  </div>
-  <div class="card">
-    <h2>会话</h2>
-    <form method="post" action="/logout">
-      <button class="btn ghost" type="submit">退出登录</button>
-    </form>
+
+<div class="topbar">
+  <h1>Provider 管理</h1>
+  <div class="row">
+    <!-- 顶栏里的说明只用 HTML 注释：Jinja 注释在未渲染的模板副本（tests/browser 加载的就是它）里显示成文字，会把吸顶栏撑高、盖住下面的框。
+         导航顺序与 _console_nav.html 一致（INTERFACE-bot-lifecycle 3.1）：管理台、供应商、表情包、朋友圈、系统参数、画风、登出 -->
+    <a class="btn btn-ghost" href="/console">管理台</a>
+    <a class="btn btn-ghost" href="/provider">供应商</a>
+    <a class="btn btn-ghost" href="/console/stickers">表情包</a>
+    <!-- 供应商模式（壳，main_panel_url 只在该模式注入）：朋友圈在壳内 /moments，与 _console_nav.html 一致；默认模式仍是本进程的根 -->
+    <a class="btn btn-ghost" href="{{ '/moments' if main_panel_url is defined else '/' }}">朋友圈</a>
+    <a class="btn btn-ghost" href="/params">系统参数</a>
+    <a class="btn btn-ghost" href="{{ main_panel_url|default('') }}/styles">画风</a>
+    <button class="btn btn-ghost" id="syncAllBtn">同步全部 bot</button>
+    <button class="btn btn-danger" id="logoutBtn">登出</button>
   </div>
 </div>
+
+<div class="wrap provider-tabs-wrap">
+  <div class="provider-tabs" role="tablist" aria-label="供应商来源">
+    <button type="button" class="btn provider-tab" id="claudeTab" role="tab" aria-selected="true" aria-controls="claudeBlock">claude 供应商</button>
+    <button type="button" class="btn provider-tab" id="dshTab" role="tab" aria-selected="false" aria-controls="dshBlock">dsh 供应商</button>
+  </div>
+</div>
+
+{#- 一页两块（INTERFACE-bot-lifecycle 3.1）：上半 #claudeBlock 是 claude 侧原有的全部内容，下半 #dshBlock 是 dsh 侧 #}
+<div class="wrap" id="claudeBlock">
+  <!-- 「同步全部 bot」的结果反馈：不进 #banners（整表重画会清掉它），留到下一次同步或被点掉。
+       关闭只在页面内隐藏，不记到服务端。 -->
+  <div id="syncAllMsg" class="banner notice" hidden><span class="notice-text" id="syncAllMsgText"></span><button type="button" class="icon-btn" id="syncAllMsgClose" aria-label="关闭这条提示"></button></div>
+  <div id="banners"></div>
+
+  <div class="panel" id="proxyPanel">
+    <h2>本机代理实例（provider 协议转换）</h2>
+    <div class="row">
+      <span class="tag" id="proxyStatus" data-state="bad">未运行</span>
+      <span class="mono" id="proxyKey"></span>
+      <span class="mono" id="proxyCount"></span>
+      <button class="btn btn-ghost" id="proxySyncBtn">同步代理配置</button>
+      <span id="proxySyncMsg" class="hint"></span>
+    </div>
+    <div id="proxyError" class="banner err" hidden></div>
+    <span id="proxyGenMsg" class="hint"></span>
+    <div id="proxySuspended" class="banner err" hidden><span></span>
+      <button type="button" class="btn btn-ghost" id="proxyRestartBtn" onclick="restartProxy()">重启实例</button></div>
+    <div class="hint">开启代理开关的 provider 的模型会注册进这个实例；已绑定 provider 的 bot 通过它调用上游（协议转换由实例完成）。</div>
+    <div class="hint">此实例只服务本面板的 bot，与本机其它工具使用的代理互不影响。</div>
+  </div>
+
+  <div class="panel">
+    <h2>全局（继承兜底）</h2>
+    <div class="row"><span class="mono" id="globalInfo">…</span></div>
+    <div class="hint">未单独配置 provider 的 bot 会继承这里的设置。切换全局 profile 时请确认模型名与上游匹配。</div>
+  </div>
+
+  <div class="panel" id="auxPanel">
+    <h2>朋友圈模型（全部 bot 共用）</h2>
+    <div class="row">
+      <select id="auxProviderSelect" aria-label="朋友圈供应商"></select>
+      <select id="auxModelSelect" aria-label="朋友圈模型"></select>
+      <button class="btn btn-primary" id="auxSaveBtn">保存</button>
+      <span id="auxMsg" class="hint"></span>
+    </div>
+    <div class="hint" id="auxStatusHint">未启用（跟随默认）</div>
+    <div class="hint">朋友圈文案与生图提示词翻译走这里选定的供应商直连；未启用时跟随默认（DeepSeek 或 Claude CLI）。全部 bot 共用这一份。</div>
+  </div>
+
+  <div class="panel">
+    <h2 id="formTitle">新建 provider</h2>
+    <div class="field"><label>名称</label><input type="text" id="pName"></div>
+    <div class="field"><label>base_url</label><input type="text" id="pBaseUrl" placeholder="https://api.example.com">
+      <div class="hint" data-role="base-url-hint">照上游文档给的地址填，结尾带不带 /v1 都可以，bot 直连时会自动处理。协议选 openai 时请带上 /v1。</div></div>
+    <div class="field"><label>协议（该 provider 的全部模型都按此协议发送；请选上游实际使用的协议。新建时必选）</label>
+      <select id="pProtocol" data-role="protocol-input" name="protocol">
+        <option value="">请选择协议…</option>
+        <option value="anthropic">anthropic</option>
+        <option value="openai">openai</option>
+      </select></div>
+    <div class="field"><label>api_key（留空 = 沿用原来的 key；如果这次改了 base_url，必须在这里重新填一遍）</label>
+      <input type="password" id="pApiKey" autocomplete="off"></div>
+    <div class="field"><label>默认模型（会随 provider 一起保存；绑定 bot 时自动带出。可手填、可点开选）</label>
+      <input type="text" id="pModel" role="combobox" aria-expanded="false" placeholder="deepseek-chat">
+      <!-- models_datalist 是候选集的数据载体：拉取结果写成它的 option，组合框面板从它读。
+           没有任何输入框用 list= 引用它（否则原生下拉会与自绘面板叠成两个列表）。
+           删掉它会弄红 tests/acceptance/provider_isolation/test_panel_pages.py:29。 -->
+      <datalist id="models_datalist"></datalist></div>
+    <div class="row">
+      <button class="btn btn-ghost" id="fetchModelsBtn">拉取模型</button>
+      <button class="btn btn-primary" id="saveProviderBtn">保存 provider</button>
+      <button class="btn btn-ghost" id="cancelEditBtn" style="display:none">取消编辑</button>
+      <span id="formMsg" class="hint"></span>
+    </div>
+    <!-- 新建时在选择框里勾好的模型先留在这里，点「保存 provider」才一并提交 -->
+    <div id="pickedModelsMsg" class="hint" data-role="picked-models" hidden></div>
+    <div id="modelsMsg" class="hint" style="color:var(--danger)"></div>
+    <table style="margin-top:14px">
+      <thead><tr><th>id</th><th>名称</th><th>base_url</th><th>key</th><th>模型</th><th></th></tr>
+        <tr><td colspan="6"><div class="protocol-hint" data-role="protocol-hint">协议是 provider 级设置（在下方表单里选）；bot 仍按 Anthropic 调用，转换由本机实例完成。</div></td></tr></thead>
+      <tbody id="providerRows"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="wrap" id="dshBlock" hidden>
+  {%- if hub_links_visible is defined and hub_links_visible() %}
+  <iframe id="dshModelFrame" class="dsh-frame" src="/hub/dsh-model?embed=1" title="dsh 侧的模型设置"></iframe>
+  {%- else %}
+  <div class="panel">
+    <h2>dsh 侧</h2>
+    <div class="hint" data-role="dsh-unconfigured">dsh 侧还没配置，配置后这里会显示 dsh 的模型设置</div>
+  </div>
+  {%- endif %}
+</div>
+
+<input type="hidden" id="editingId" value="">
+
+<!-- 模型候选面板：全页唯一，静止态收起。展开入口只有模型输入框本身（只看不写）；
+     「拉取模型 / 刷新模型」打开的是下面的多选对话框。 -->
+<div id="modelPicker" class="picker" data-scope="" data-bot-id="" data-provider-id="" data-open="0" data-state="idle" hidden>
+  <div class="picker-head">
+    <span id="modelPickerStatus" class="picker-status"></span>
+    <button type="button" class="btn btn-ghost" id="modelPickerRefresh">重新拉取</button>
+    <button type="button" class="btn btn-ghost" id="modelPickerClose">关闭</button>
+  </div>
+  <div id="modelPickerList" class="picker-list" role="listbox"></div>
+  <button type="button" class="btn btn-ghost picker-more" id="modelPickerMore" hidden>显示更多（剩余 <span id="modelPickerMoreCount">0</span>）</button>
+</div>
+<template id="miRowTpl"><div class="mi-row" role="option" data-model-id=""><span class="mi-label"></span></div></template>
+<!-- 协议是 provider 级设置，在表单的 [data-role="protocol-input"] 里选；不再有模型级协议控件。 -->
+<!-- 本轮新增控件的开标签模板（属性要在 HTML 标签上，JS 只填值）：proxy-toggle 带 data-provider-id。 -->
+<template id="proxyCtlTpl"><button type="button" class="btn btn-ghost" data-role="proxy-toggle" data-provider-id=""></button></template>
+
+<!-- 模型多选对话框：全页唯一，原生模态（自带焦点圈定与 Esc 关闭）。「拉取模型」与每行「刷新模型」都打开它；
+     点「确定」才写回，取消 / 关闭 / Esc / 点遮罩都是零写入。关闭叉放在结构末尾，Tab 顺序里排最后。 -->
+<dialog id="modelDialog" data-role="model-dialog" aria-labelledby="modelDialogTitle">
+  <div class="dlg">
+    <div class="dlg-head"><h2 id="modelDialogTitle" tabindex="-1">选择模型</h2></div>
+    <div class="dlg-tools">
+      <input type="search" id="modelDialogSearch" aria-label="搜索模型" placeholder="搜索模型名" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+      <div class="row">
+        <button type="button" class="btn btn-ghost" id="modelDialogAll">全选</button>
+        <button type="button" class="btn btn-ghost" id="modelDialogNone">全不选</button>
+        <span class="hint" id="modelDialogCount"></span>
+      </div>
+      <div class="hint dlg-msg" id="modelDialogMsg" role="status"></div>
+    </div>
+    <div class="dlg-list" id="modelDialogList">
+      <div class="hint dlg-empty" id="modelDialogEmpty" hidden>没有匹配的模型</div>
+      <button type="button" class="btn btn-ghost picker-more" id="modelDialogMore" hidden>显示更多（剩余 <span id="modelDialogMoreCount">0</span>）</button>
+    </div>
+    <div class="dlg-foot">
+      <span class="hint" id="modelDialogDiff"></span>
+      <button type="button" class="btn btn-ghost" id="modelDialogCancel">取消</button>
+      <button type="button" class="btn btn-primary" id="modelDialogOk">确定</button>
+    </div>
+    <button type="button" class="icon-btn dlg-close" id="modelDialogClose" aria-label="关闭"></button>
+  </div>
+</dialog>
+
+<!-- 本批由脚本在运行期生成的结构（脚本只克隆并填值，一律以纯文本写入）。 -->
+<template id="noticeTpl"><div class="banner warn notice" data-role="notice" data-notice-id="" data-bot-id=""><span class="notice-text" data-role="notice-text"></span><button type="button" class="icon-btn" data-role="notice-dismiss" aria-label="关闭这条提示"></button></div></template>
+<template id="modelCellTpl"><button type="button" class="btn btn-ghost models-toggle" data-role="models-toggle" aria-expanded="false"></button><div class="hint models-default" data-role="models-default"></div><div class="models-list" data-role="models-list" hidden></div></template>
+<template id="modelsRefreshTpl"><button type="button" class="btn btn-ghost" data-role="models-refresh" data-provider-id="">刷新模型</button></template>
+<template id="modelItemTpl"><div class="model-item" data-role="model-item" data-model-id=""><span class="mono model-name" data-role="model-name"></span><span class="hint" data-role="model-context"></span><span class="tag local" data-role="model-used" hidden></span><span class="model-actions"><button type="button" class="btn btn-ghost" data-role="model-context-edit">改窗口</button><button type="button" class="btn btn-danger" data-role="model-remove">删除</button></span></div></template>
+<template id="modelCtxEditTpl"><div class="model-edit" data-role="model-context-editor" data-model-id=""><input type="text" data-role="model-context-input" aria-label="上下文窗口" placeholder="如 200k、1m、131072" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done"><button type="button" class="btn btn-primary" data-role="model-context-save">保存</button><button type="button" class="btn btn-ghost" data-role="model-context-cancel">取消</button><div class="hint model-edit-msg" data-role="model-context-msg" role="status"></div></div></template>
+<template id="modelDialogRowTpl"><label class="md-row" data-role="dialog-row" data-model-id=""><input type="checkbox"><span class="md-main"><span class="md-label"></span><span class="mi-id"></span></span><span class="tag md-tag" hidden></span></label></template>
+
+<script id="uxLogic">
+// 界面里的判断与文案：这一块只有纯函数与常量，不碰页面节点、不发请求、不读时钟，
+// 所以可以把它的原文单独交给任意 JS 引擎执行来验证。页面主脚本只通过 ProviderUX.<函数> 使用它们。
+var ProviderUX = (function () {
+  'use strict';
+
+  const CTX_UNSET_TEXT = '未设置（命令行按默认约 20 万处理）';
+  const NO_UPSTREAM_MODELS_TEXT = '上游没有返回模型';
+  const DIALOG_UNSUPPORTED_TEXT = '浏览器版本过低，无法打开选择框';
+  const SYNC_AFTER_ON = '之后页面会自动重启它们：空闲的马上重启，正忙的等它空下来，最长 30 分钟。';
+  const SYNC_AFTER_OFF = '这些 bot 会在各自收到下一条消息时按新配置重新启动；想立刻生效，点该 bot 那一行的「重启」。';
+  const RESULT_AFTER_ON = '成功的 bot 已排上队，页面会自动重启它们（空闲的马上重启，正忙的等它空下来，最长 30 分钟）。';
+  const RESULT_AFTER_OFF = '成功的 bot 会在各自收到下一条消息时按新配置重新启动；想立刻生效，点该 bot 那一行的「重启」。';
+
+  const text = (v) => (v === null || v === undefined ? '' : String(v));
+  const list = (v) => (Array.isArray(v) ? v : []);
+  // 显示名表里没有（或为空）就用 bot 的编号本身
+  const nameOf = (names, id) => (names && typeof names[id] === 'string' && names[id] ? names[id] : text(id));
+
+  // ── 多选对话框：过滤、勾选增减、提交内容、计数 ──
+  // 正被 bot 使用的模型不能取消勾选
+  function isLocked(candidate) {
+    return !!candidate && list(candidate.used_by).length > 0;
+  }
+
+  // k = 搜索词去首尾空白并转小写；k 为空全留，否则只留模型名或显示名（小写）含 k 的。顺序不变，元素是原对象。
+  function filterCandidates(candidates, query) {
+    const k = text(query).trim().toLowerCase();
+    const all = list(candidates);
+    if (!k) return all.slice();
+    return all.filter((c) => text(c.id).toLowerCase().includes(k) || text(c.label).toLowerCase().includes(k));
+  }
+
+  // 已存清单 + 上游候选：已存项在前并标为 selected，上游新增项追加，同 id 只留第一份。
+  // 返回新数组、项也是新对象，不改入参；空 saved 直接返回上游形状的副本。
+  function mergeCandidates(saved, upstream) {
+    const base = list(saved);
+    const fresh = list(upstream);
+    if (!base.length) return fresh.slice();
+    const out = base.map((m) => {
+      const item = (m && typeof m === 'object') ? Object.assign({}, m) : {id: text(m)};
+      item.selected = true;
+      return item;
+    });
+    const seen = new Set(out.map((m) => m.id));
+    for (const m of fresh) {
+      const id = text(m && typeof m === 'object' ? m.id : m);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(typeof m === 'string' ? {id: m, label: m} : Object.assign({}, m));
+    }
+    return out;
+  }
+
+  function initialSelection(candidates) {
+    return list(candidates).filter((c) => c.selected === true || isLocked(c)).map((c) => c.id);
+  }
+
+  function toggleOne(selection, candidate, checked) {
+    const cur = list(selection);
+    const id = candidate.id;
+    if (checked) return cur.includes(id) ? cur.slice() : cur.concat([id]);
+    if (isLocked(candidate)) return cur.slice();
+    return cur.filter((x) => x !== id);
+  }
+
+  // 全选 / 全不选只作用于当前筛出的项；没筛出来的勾选原样保留
+  function bulkSelect(selection, visible, checked) {
+    const cur = list(selection);
+    if (checked) {
+      const have = new Set(cur);
+      const out = cur.slice();
+      for (const c of list(visible)) {
+        if (!have.has(c.id)) { have.add(c.id); out.push(c.id); }
+      }
+      return out;
+    }
+    const drop = new Set(list(visible).filter((c) => !isLocked(c)).map((c) => c.id));
+    return cur.filter((id) => !drop.has(id));
+  }
+
+  // 按候选的顺序列出被勾选的；上游给了窗口大小的一并带上
+  function buildSubmit(candidates, selection) {
+    const chosen = new Set(list(selection));
+    const out = [];
+    for (const c of list(candidates)) {
+      if (!chosen.has(c.id)) continue;
+      const item = {id: c.id, label: text(c.label) || c.id};
+      if (c.context !== null && c.context !== undefined) item.context = c.context;
+      out.push(item);
+    }
+    return out;
+  }
+
+  function selectionSummary(candidates, selection) {
+    const chosen = new Set(list(selection));
+    const out = {selected: 0, total: 0, added: 0, removed: 0};
+    for (const c of list(candidates)) {
+      const on = chosen.has(c.id);
+      out.total += 1;
+      if (on) out.selected += 1;
+      if (on && c.listed !== true) out.added += 1;
+      if (!on && c.listed === true) out.removed += 1;
+    }
+    return out;
+  }
+
+  function dialogCountText(summary, visibleCount, query) {
+    const base = '已选 ' + summary.selected + ' / 共 ' + summary.total;
+    return text(query).trim() ? base + '，当前筛出 ' + visibleCount : base;
+  }
+
+  // isDraft：新建表单里还没保存的供应商，勾选结果只是先留在表单里
+  function dialogDiffText(summary, isDraft) {
+    if (isDraft) return '已选 ' + summary.selected + ' 个，点「保存 provider」后生效';
+    const parts = [];
+    if (summary.added) parts.push('新增 ' + summary.added + ' 个');
+    if (summary.removed) parts.push('移除 ' + summary.removed + ' 个');
+    return parts.length ? '将' + parts.join('、') : '没有改动';
+  }
+
+  // 每行右侧的小标签：{kind, text} 或 null。kind 对应 .tag 的修饰类。
+  function rowBadge(candidate, names, isDraft) {
+    if (isLocked(candidate)) {
+      return {kind: 'local', text: list(candidate.used_by).map((id) => nameOf(names, id)).join('、') + ' 使用中'};
+    }
+    if (isDraft) return null;
+    if (candidate.listed !== true) return {kind: 'ok', text: '新'};
+    if (candidate.manual === true) return {kind: '', text: '手动添加'};
+    if (candidate.upstream === false) return {kind: '', text: '上游未返回'};
+    return null;
+  }
+
+  function truncatedText(limit) {
+    return '上游模型很多，这里只取到前 ' + (limit || 500) + ' 个，排在后面的没有列出来。';
+  }
+
+  function emptyConfirmText(summary) {
+    return summary.removed > 0
+      ? '一个模型都没勾：确定后这条供应商现有的 ' + summary.removed + ' 个模型会全部移除。继续？'
+      : '一个模型都没勾：确定后这条供应商仍然没有模型。继续？';
+  }
+
+  function pickedText(n) { return '已选 ' + n + ' 个模型，保存后生效'; }
+
+  // ── 供应商表格的模型列 ──
+  function formatCount(n) {
+    return String(Math.floor(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  }
+
+  function contextText(model) {
+    if (!model || model.context === null || model.context === undefined) return CTX_UNSET_TEXT;
+    if (model.context_source === 'owner') return formatCount(model.context) + '（手动设置）';
+    if (model.context_source === 'guessed') return formatCount(model.context) + '（上游提供）';
+    return formatCount(model.context);
+  }
+
+  function modelsToggleText(n) { return n + ' 个模型'; }
+  function moreText(n) { return '显示更多（剩余 ' + n + '）'; }
+  function usedByText(usedBy, names) { return '使用中：' + list(usedBy).map((id) => nameOf(names, id)).join('、'); }
+  function removeConfirmText(model) { return '删除模型 ' + model + '？'; }
+
+  // ── 顶部提示条 ──
+  // running = 本进程的自动重启此刻是否开着；关着时不能再说「会自动重试」
+  function noticeText(notice, convergerRunning) {
+    const bot = text(notice.bot_id);
+    const fails = notice.fail_count > 0 ? '已失败 ' + notice.fail_count + ' 次' : '';
+    const reason = (typeof notice.last_error === 'string' && notice.last_error) ? '最近一次：' + notice.last_error : '';
+    if (notice.kind === 'halted') {
+      return '⛔ ' + bot + ' 自动重启已停止' + (fails ? '（' + fails + '）' : '') + (reason ? '，' + reason : '')
+        + '。处理后点它的「重启」。';
+    }
+    const tail = (fails || reason) ? '（' + [fails, reason].filter(Boolean).join('，') + '）' : '';
+    if (convergerRunning) {
+      return '⏳ ' + bot + ' 待重启：配置已写好但还没加载，页面会自动重试，超 30 分钟强制重启' + tail + '。';
+    }
+    return '⏳ ' + bot + ' 待重启：配置已写好，它收到下一条消息时会按新配置重新启动；想立刻生效就点它的「重启」' + tail + '。';
+  }
+
+  // ── 同步全部 bot ──
+  // 不属于本页的 bot（reason = bot_unknown）不出现在文案里
+  function syncPlanText(plan, convergerRunning, names) {
+    const targets = list(plan && plan.targets);
+    const skipped = list(plan && plan.skipped);
+    const namesFor = (reason) => skipped.filter((s) => s && s.reason === reason).map((s) => nameOf(names, s.bot_id));
+    const stopped = namesFor('bot_stopped');
+    const orphan = namesFor('provider_missing');
+    const notes = [];
+    if (stopped.length) notes.push('已停用、这次不处理：' + stopped.join('、') + '。');
+    if (orphan.length) notes.push('绑定的供应商已被删除、要先重新绑定：' + orphan.join('、') + '。');
+    if (!targets.length) return {canSync: false, text: '现在没有可同步的 bot。' + notes.join('')};
+    const lines = ['同步全部 bot：将重写 ' + targets.length + ' 只 bot 的配置：'
+      + targets.map((id) => nameOf(names, id)).join('、') + '。'].concat(notes);
+    lines.push('', convergerRunning ? SYNC_AFTER_ON : SYNC_AFTER_OFF, '', '确定继续？');
+    return {canSync: true, text: lines.join('\n')};
+  }
+
+  function syncResultText(results, convergerRunning) {
+    const all = list(results);
+    const failed = all.filter((x) => !(x && x.ok === true));
+    const okN = all.length - failed.length;
+    const detail = failed.map((x) => text(x && x.bot_id) + '（' + (text(x && x.error) || '失败') + '）').join('、');
+    let out = '同步全部 bot 完成：成功 ' + okN + ' 只，失败 ' + failed.length + ' 只' + (detail ? '：' + detail : '') + '。';
+    if (okN > 0) out += convergerRunning ? RESULT_AFTER_ON : RESULT_AFTER_OFF;
+    return out;
+  }
+
+  return {
+    CTX_UNSET_TEXT, NO_UPSTREAM_MODELS_TEXT, DIALOG_UNSUPPORTED_TEXT,
+    isLocked, filterCandidates, mergeCandidates, initialSelection, toggleOne, bulkSelect, buildSubmit, selectionSummary,
+    dialogCountText, dialogDiffText, rowBadge, truncatedText, emptyConfirmText, pickedText,
+    formatCount, contextText, modelsToggleText, moreText, usedByText, removeConfirmText,
+    noticeText, syncPlanText, syncResultText,
+  };
+})();
+if (typeof window !== 'undefined') window.ProviderUX = ProviderUX;
+</script>
+
+<script>
+const _origFetch = fetch;
+let DATA = null;
+let EDIT_ID = '';
+// 页面内存里的界面状态：整表重画只读它、照着它恢复，所以重画不会把展开的收回去、也不会丢编辑中的输入。
+// 只存在内存里——浏览器刷新后自然回到默认（全部收起）。
+//   expanded：模型列表已展开的供应商编号；shown：各自已画出的模型条数；
+//   editing：正在改窗口的那一行 {pid, model, draft, error, saving}，同一时刻至多一行。
+const UI = {expanded: new Set(), shown: new Map(), editing: null};
+const MODELS_BATCH = 100;   // 模型行与对话框行都按这个数分批画
+let FORM_MODELS = null;     // 新建表单里在选择框中勾好、还没保存的模型（[{id, label}]）
+
+async function apiFetch(url, opts) {
+  // 不带请求体的写请求也按 JSON 发：服务端对浏览器发来的写请求要求 JSON 内容类型，缺了回 415
+  //（「恢复默认」「删除供应商」「重启代理」这类没有参数的动作原先都中招）。
+  const method = ((opts && opts.method) || 'GET').toUpperCase();
+  if (opts && method !== 'GET' && method !== 'HEAD' && opts.body == null) {
+    opts = Object.assign({}, opts, {
+      headers: Object.assign({'Content-Type': 'application/json'}, opts.headers || {}),
+      body: '{}',
+    });
+  }
+  const res = await _origFetch(url, opts);
+  if (res.status === 401) {
+    location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+async function jsonFetch(url, opts) {
+  const res = await apiFetch(url, opts);
+  let body = null;
+  try { body = await res.json(); } catch (e) { body = null; }
+  // 写入后从响应头取代号（9.15），跟踪它是否生效
+  const gen = res.headers.get('X-Proxy-Generation');
+  if (gen) watchGeneration(Number(gen));
+  return { ok: res.ok, status: res.status, body: body };
+}
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+// 裁定补充 rev5 D3：列表接口失败不再静默空白——错误横幅可见，且不用垃圾 body 覆盖已有 DATA
+function showLoadError(text) {
+  const banners = document.getElementById('banners');
+  let b = banners.querySelector('[data-role="load-error"]');
+  if (!b) {
+    b = el('div', 'banner err');
+    b.setAttribute('data-role', 'load-error');
+    banners.prepend(b);
+  }
+  b.textContent = '加载 provider 列表失败：' + text + '。页面内容可能已过期，请刷新重试。';
+}
+
+async function load() {
+  let r;
+  try {
+    r = await jsonFetch('/api/providers');
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;   // apiFetch 已跳转登录页
+    showLoadError('网络错误 ' + ((e && e.message) || e));
+    return;
+  }
+  if (!r.ok) {
+    showLoadError((r.body && r.body.error) || ('HTTP ' + r.status));
+    return;
+  }
+  DATA = r.body || {};
+  render();
+  await loadProxy();
+  await loadAux();
+}
+
+// bot 编号 → 显示名（文案里用显示名，查不到就用编号本身）
+function botNames() {
+  const out = {};
+  for (const b of (DATA && DATA.bots) || []) out[b.bot_id] = b.display_name || b.bot_id;
+  return out;
+}
+
+// 本进程的自动重启此刻是否开着（服务端如实给出）；文案据此措辞，关着时不说「会自动重试」
+function convergerRunning() {
+  return !!(DATA && DATA.converger && DATA.converger.running === true);
+}
+
+// 关闭一条提示：先从页面拿掉，再告诉服务端（记在服务端，换设备、刷新后都保持关闭）。
+// 关闭只影响显示。接口失败、或服务端说这条已经变了，就重新取一次概览，该出现的提示自然回来。
+async function dismissNotice(node) {
+  const botId = node.getAttribute('data-bot-id');
+  const id = node.getAttribute('data-notice-id');
+  const next = node.nextElementSibling || node.previousElementSibling;
+  node.remove();
+  const nextBtn = next && next.querySelector('[data-role="notice-dismiss"]');
+  if (nextBtn) nextBtn.focus();   // 键盘连续关多条时焦点不丢
+  if (DATA && Array.isArray(DATA.notices)) {
+    DATA.notices = DATA.notices.filter(n => !(n.bot_id === botId && n.id === id));
+  }
+  let r;
+  try {
+    r = await jsonFetch('/api/notices/dismiss', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({bot_id: botId, id: id})});
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+    r = {ok: false, status: 0, body: null};
+  }
+  if (!r.ok) {
+    alert('关闭提示失败：' + ((r.body && r.body.error) || (r.status ? '失败 ' + r.status : '网络错误')));
+    await load();
+  } else if (r.body && r.body.dismissed === false) {
+    await load();
+  }
+}
+
+function render() {
+  // 整表重画会重建 provider 行/输入框 ⇒ 必须先收起面板，否则候选会写进已从文档移除的旧节点
+  closePicker();
+  const banners = document.getElementById('banners');
+  banners.replaceChildren();
+  // 提示条只画服务端筛好的 notices（属于本页的 bot、且没被关掉的）；服务端没给就不画，
+  // 页面不自己判断新旧。失败次数与最近一次失败原因都在文案里（E-25.1），一律以纯文本写入。
+  const noticeTpl = document.getElementById('noticeTpl');
+  for (const n of (Array.isArray(DATA.notices) ? DATA.notices : [])) {
+    const node = noticeTpl.content.firstElementChild.cloneNode(true);
+    node.setAttribute('data-notice-id', n.id);
+    node.setAttribute('data-bot-id', n.bot_id);
+    node.querySelector('[data-role="notice-text"]').textContent = ProviderUX.noticeText(n, convergerRunning());
+    banners.appendChild(node);
+  }
+  const g = DATA.global || {};
+  document.getElementById('globalInfo').textContent =
+    'base_url: ' + (g.base_url || '（未设）') + ' · model: ' + (g.model || '（未设）') +
+    ' · key: ' + (g.has_key ? '已设' : '未设');
+
+  renderProviders();
+  renderProxy();
+}
+
+// ── 代理实例面板（§4）────────────────────────────────────────────────────
+// 端口是**运行期值**（§0 P1：8770 只是缺省），故一律从 GET /api/proxy 的 port 取，
+// 不写死任何端口字面量。
+let PROXY = null;
+
+async function loadProxy() {
+  try {
+    const r = await jsonFetch('/api/proxy');
+    if (!r.ok) return;
+    PROXY = r.body;
+    renderProxy();
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+  }
+}
+
+function renderProxy() {
+  const status = document.getElementById('proxyStatus');
+  const key = document.getElementById('proxyKey');
+  const count = document.getElementById('proxyCount');
+  const errBox = document.getElementById('proxyError');
+  if (!PROXY) return;
+  status.textContent = PROXY.running
+    ? ('运行中 (127.0.0.1:' + PROXY.port + ')')
+    : '未运行';
+  status.setAttribute('data-state', PROXY.running ? 'ok' : 'bad');
+  key.textContent = PROXY.key_masked || '';
+  count.textContent = 'provider ' + PROXY.providers_count + ' · 模型 ' + PROXY.models_count;
+  const le = PROXY.last_error || '';
+  errBox.textContent = le ? (le + '。点『同步』可立即重试') : '';
+  errBox.hidden = !le;
+}
+
+// ── 朋友圈模型（全部 bot 共用）：aux_llm ────────────────────────────────
+let AUX = null;
+
+function auxOption(value, text) {
+  const o = document.createElement('option');
+  o.value = value; o.textContent = text;
+  return o;
+}
+
+async function loadAux() {
+  try {
+    const r = await jsonFetch('/api/aux-llm');
+    if (!r.ok) return;
+    AUX = r.body || {};
+    renderAux();
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+  }
+}
+
+function renderAux() {
+  const psel = document.getElementById('auxProviderSelect');
+  const cur = AUX.provider_id || '';
+  psel.replaceChildren();
+  psel.appendChild(auxOption('', '未启用（跟随默认）'));
+  for (const p of AUX.providers || []) psel.appendChild(auxOption(p.id, p.name || p.id));
+  psel.value = cur;
+  fillAuxModels(cur, AUX.model || '');
+  const hint = document.getElementById('auxStatusHint');
+  hint.textContent = cur ? ('当前：' + (psel.selectedIndex >= 0 ? psel.options[psel.selectedIndex].textContent : cur)) : '未启用（跟随默认）';
+}
+
+function fillAuxModels(providerId, curModel) {
+  const msel = document.getElementById('auxModelSelect');
+  msel.replaceChildren();
+  if (!providerId) { msel.disabled = true; return; }
+  msel.disabled = false;
+  const p = (DATA.providers || []).find(x => x.id === providerId);
+  const models = (p && p.models) || [];
+  for (const m of models) { const id = m.id || m; msel.appendChild(auxOption(id, id)); }
+  if (curModel) msel.value = curModel;
+  if (!models.length) msel.appendChild(auxOption('', '（该供应商暂无模型）'));
+}
+
+document.getElementById('auxProviderSelect').addEventListener('change', (e) => {
+  fillAuxModels(e.target.value, '');
+});
+
+document.getElementById('auxSaveBtn').addEventListener('click', async () => {
+  const pid = document.getElementById('auxProviderSelect').value;
+  const model = pid ? document.getElementById('auxModelSelect').value : '';
+  const msg = document.getElementById('auxMsg');
+  msg.style.color = '';
+  let r;
+  try {
+    r = await jsonFetch('/api/aux-llm', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({provider_id: pid, model: model}),
+    });
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+    msg.textContent = '保存失败：' + ((e && e.message) || e);
+    msg.style.color = 'var(--danger)';
+    return;
+  }
+  if (r.ok && r.body && r.body.ok) {
+    msg.textContent = '已生效';
+    await loadAux();
+  } else {
+    msg.textContent = (r.body && r.body.error) || ('保存失败 ' + r.status);
+    msg.style.color = 'var(--danger)';
+  }
+});
+
+
+// ── 供应商表格的模型列：默认收起，点开才列出；每个模型可改窗口、可删除 ────────────
+function providerById(id) {
+  for (const p of (DATA && DATA.providers) || []) if (p.id === id) return p;
+  return null;
+}
+
+// 概览里按供应商编号给的补充信息（bot 直连用的地址、逐模型的窗口与使用者）；没给就当空
+function providerDetail(id) {
+  const d = ((DATA && DATA.provider_details) || {})[id];
+  return (d && typeof d === 'object') ? d : {};
+}
+
+function modelDetail(providerId, modelId) {
+  for (const m of providerDetail(providerId).models || []) if (m && m.id === modelId) return m;
+  return {id: modelId, context: null, context_source: null, manual: false, used_by: []};
+}
+
+function providerRowOf(id) {
+  for (const tr of document.getElementById('providerRows').children) {
+    if (tr.getAttribute('data-provider-id') === id) return tr;
+  }
+  return null;
+}
+
+// 按 UI.expanded 把某一格画成展开或收起；展开时才生成模型行
+function applyExpanded(cell, providerId) {
+  const open = UI.expanded.has(providerId);
+  const box = cell.querySelector('[data-role="models-list"]');
+  cell.querySelector('[data-role="models-toggle"]').setAttribute('aria-expanded', open ? 'true' : 'false');
+  box.hidden = !open;
+  box.replaceChildren();
+  if (open) renderModelItems(providerId, box);
+}
+
+// 就地重画某条供应商的模型列表（展开、收起、显示更多、进出编辑态都走这里，不动表格其余部分）
+function redrawModels(providerId) {
+  const tr = providerRowOf(providerId);
+  const cell = tr && tr.querySelector('.model-cell');
+  if (cell && cell.querySelector('[data-role="models-list"]')) applyExpanded(cell, providerId);
+}
+
+function buildCtxEditor() {
+  const node = document.getElementById('modelCtxEditTpl').content.firstElementChild.cloneNode(true);
+  const ed = UI.editing;
+  node.setAttribute('data-model-id', ed.model);
+  node.querySelector('[data-role="model-context-input"]').value = ed.draft;
+  node.querySelector('[data-role="model-context-msg"]').textContent = ed.error || '';
+  if (ed.saving) for (const n of node.querySelectorAll('input, button')) n.disabled = true;
+  return node;
+}
+
+function renderModelItems(providerId, box) {
+  const p = providerById(providerId);
+  const models = (p && p.models) || [];
+  const details = new Map();
+  for (const m of providerDetail(providerId).models || []) if (m) details.set(m.id, m);
+  const names = botNames();
+  const shown = Math.min(models.length, Math.max(MODELS_BATCH, UI.shown.get(providerId) || 0));
+  UI.shown.set(providerId, shown);
+  const tpl = document.getElementById('modelItemTpl');
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < shown; i++) {
+    const id = models[i].id;
+    const d = details.get(id) || modelDetail(providerId, id);
+    const row = tpl.content.firstElementChild.cloneNode(true);
+    row.setAttribute('data-model-id', id);
+    row.querySelector('[data-role="model-name"]').textContent = id;
+    row.querySelector('[data-role="model-context"]').textContent = ProviderUX.contextText(d);
+    const usedBy = Array.isArray(d.used_by) ? d.used_by : [];
+    if (usedBy.length) {
+      // 正被 bot 使用的模型：标出是谁在用，不给删除按钮（服务端同样会拒绝）
+      const tag = row.querySelector('[data-role="model-used"]');
+      tag.textContent = ProviderUX.usedByText(usedBy, names);
+      tag.hidden = false;
+      row.querySelector('[data-role="model-remove"]').remove();
+    }
+    frag.appendChild(row);
+    if (UI.editing && UI.editing.pid === providerId && UI.editing.model === id) frag.appendChild(buildCtxEditor());
+  }
+  if (models.length > shown) {
+    const more = el('button', 'btn btn-ghost picker-more', ProviderUX.moreText(models.length - shown));
+    more.type = 'button';
+    more.setAttribute('data-role', 'models-more');
+    frag.appendChild(more);
+  }
+  box.replaceChildren(frag);
+}
+
+function focusIn(root, selector) {
+  const n = root && root.querySelector(selector);
+  if (n) n.focus();
+  return n;
+}
+
+function modelRowOf(providerId, modelId) {
+  const tr = providerRowOf(providerId);
+  for (const n of (tr ? tr.querySelectorAll('[data-role="model-item"]') : [])) {
+    if (n.getAttribute('data-model-id') === modelId) return n;
+  }
+  return null;
+}
+
+function toggleModels(providerId) {
+  if (UI.expanded.has(providerId)) UI.expanded.delete(providerId); else UI.expanded.add(providerId);
+  redrawModels(providerId);
+}
+
+function showMoreModels(providerId) {
+  const before = UI.shown.get(providerId) || MODELS_BATCH;
+  UI.shown.set(providerId, before + MODELS_BATCH);
+  redrawModels(providerId);
+  // 焦点落到新画出的第一行，键盘用户接着往下走
+  const tr = providerRowOf(providerId);
+  const rows = tr ? tr.querySelectorAll('[data-role="model-item"]') : [];
+  if (rows[before]) focusIn(rows[before], '[data-role="model-context-edit"]');
+}
+
+// 点「改窗口」：在该行下方展开编辑行；再点一次或点别的行就收起这一行（同一时刻只有一行在编辑）
+function toggleCtxEditor(providerId, modelId) {
+  const prev = UI.editing;
+  if (prev && prev.saving) return;
+  const same = prev && prev.pid === providerId && prev.model === modelId;
+  if (same) {
+    UI.editing = null;
+  } else {
+    const d = modelDetail(providerId, modelId);
+    const cur = (d.context === null || d.context === undefined) ? '' : String(d.context);
+    UI.editing = {pid: providerId, model: modelId, draft: cur, error: '', saving: false};
+  }
+  if (prev && prev.pid !== providerId) redrawModels(prev.pid);
+  redrawModels(providerId);
+  if (same) {
+    focusIn(modelRowOf(providerId, modelId), '[data-role="model-context-edit"]');
+  } else {
+    const input = focusIn(providerRowOf(providerId), '[data-role="model-context-input"]');
+    if (input) { try { input.select(); } catch (e) { /* 个别移动端不支持 select() */ } }
+  }
+}
+
+function cancelCtxEditor() {
+  const ed = UI.editing;
+  if (!ed || ed.saving) return;
+  UI.editing = null;
+  redrawModels(ed.pid);
+  focusIn(modelRowOf(ed.pid, ed.model), '[data-role="model-context-edit"]');
+}
+
+// 窗口的写法（200k、1m、纯数字）由服务端解析与校验；这里原样交过去，被拒时把服务端给的原因显示在编辑行里
+async function saveModelContext() {
+  const ed = UI.editing;
+  if (!ed || ed.saving) return;
+  ed.saving = true;
+  ed.error = '';
+  redrawModels(ed.pid);
+  let r;
+  try {
+    r = await jsonFetch('/api/providers/' + encodeURIComponent(ed.pid) + '/models/context', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model: ed.model, context: ed.draft.trim()})});
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+    r = {ok: false, status: 0, body: null};
+  }
+  ed.saving = false;
+  if (r.ok && r.body && r.body.ok === true) {
+    if (UI.editing === ed) UI.editing = null;
+    await load();
+    focusIn(modelRowOf(ed.pid, ed.model), '[data-role="model-context-edit"]');
+    return;
+  }
+  ed.error = (r.body && r.body.error) || (r.status ? '失败 ' + r.status : '网络错误，没有保存');
+  if (UI.editing !== ed) return;
+  redrawModels(ed.pid);
+  focusIn(providerRowOf(ed.pid), '[data-role="model-context-input"]');
+}
+
+async function removeModel(providerId, modelId) {
+  if (!confirm(ProviderUX.removeConfirmText(modelId))) return;
+  let r;
+  try {
+    r = await jsonFetch('/api/providers/' + encodeURIComponent(providerId) + '/models/remove', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model: modelId})});
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+    r = {ok: false, status: 0, body: null};
+  }
+  if (!(r.ok && r.body && r.body.ok === true)) {
+    alert((r.body && r.body.error) || (r.status ? '失败 ' + r.status : '网络错误，没有删除'));
+  }
+  await load();
+  focusIn(providerRowOf(providerId), '[data-role="models-toggle"]');
+}
+
+function renderProviders() {
+  const tb = document.getElementById('providerRows');
+  tb.replaceChildren();
+  // 先把已不存在的供应商（及已不存在的模型）从界面状态里清掉，再照着状态画
+  const alive = new Set((DATA.providers || []).map(p => p.id));
+  for (const id of Array.from(UI.expanded)) if (!alive.has(id)) UI.expanded.delete(id);
+  for (const id of Array.from(UI.shown.keys())) if (!alive.has(id)) UI.shown.delete(id);
+  if (UI.editing) {
+    const owner = providerById(UI.editing.pid);
+    if (!owner || !(owner.models || []).some(m => m.id === UI.editing.model)) UI.editing = null;
+  }
+  for (const p of DATA.providers || []) {
+    const tr = el('tr');
+    tr.setAttribute('data-provider-id', p.id);
+    tr.setAttribute('data-default-model', p.default_model || '');
+    tr.setAttribute('data-proxy', p.proxy ? 'true' : 'false');
+    tr.setAttribute('data-protocol', p.protocol || '');
+    tr.setAttribute('data-anthropic-url', p.anthropic_base_url || '');
+    tr.setAttribute('data-openai-url', p.openai_base_url || '');
+    tr.appendChild(el('td', 'mono', p.id));
+    tr.appendChild(el('td', '', p.name));
+    // 地址列回显用户填的原值；直连且实际写给 bot 的地址与所填不同（结尾的 /v1 被去掉）时，
+    // 在下方如实标出。这个地址由服务端给，页面不自己推算。
+    const addr = el('td', 'mono', p.base_url);
+    const direct = providerDetail(p.id).direct_base_url;
+    if (!p.proxy && typeof direct === 'string' && direct !== p.base_url) {
+      const note = el('div', 'hint direct-url', 'bot 直连用：');
+      note.setAttribute('data-role', 'direct-url');
+      note.appendChild(el('span', 'mono', direct));
+      addr.appendChild(note);
+    }
+    tr.appendChild(addr);
+    tr.appendChild(el('td', 'mono', p.key_masked || '（无）'));
+
+    // 模型列：没有模型时保持原文案；有模型时只放一个「N 个模型」按钮，点开才列出
+    // （协议是 provider 级事实，不逐模型标记）。
+    const md = el('td', 'model-cell');
+    const models = p.models || [];
+    if (!models.length) {
+      md.appendChild(el('div', 'mono', '默认模型：' + (p.default_model || '未设') + ' · 候选 0 个'));
+    } else {
+      md.appendChild(document.getElementById('modelCellTpl').content.cloneNode(true));
+      md.querySelector('[data-role="models-toggle"]').textContent = ProviderUX.modelsToggleText(models.length);
+      md.querySelector('[data-role="models-default"]').textContent = '默认模型：' + (p.default_model || '未设');
+      applyExpanded(md, p.id);
+    }
+    tr.appendChild(md);
+
+    const td = el('td');
+    const actions = el('div', 'row');
+    const toggle = document.getElementById('proxyCtlTpl').content.firstElementChild.cloneNode(true);
+    toggle.setAttribute('data-provider-id', p.id);
+    toggle.textContent = p.proxy ? '关闭代理' : '开启代理';
+    toggle.onclick = () => setProxy(p.id, !p.proxy);
+    const refresh = document.getElementById('modelsRefreshTpl').content.firstElementChild.cloneNode(true);
+    refresh.setAttribute('data-provider-id', p.id);
+    const edit = el('button', 'btn btn-ghost', '编辑');
+    edit.setAttribute('data-role', 'provider-edit');
+    edit.onclick = () => startEdit(p);
+    const del = el('button', 'btn btn-danger', '删除');
+    del.setAttribute('data-role', 'provider-delete');
+    del.onclick = () => removeProvider(p.id);
+    actions.appendChild(toggle); actions.appendChild(refresh); actions.appendChild(edit); actions.appendChild(del);
+    td.appendChild(actions);
+    tr.appendChild(td);
+    tb.appendChild(tr);
+  }
+}
+
+
+// 新建表单里勾好的模型先留在表单里（不发请求），点「保存 provider」时作为 models 字段一并提交
+function setFormModels(models) {
+  FORM_MODELS = (models && models.length) ? models : null;
+  const note = document.getElementById('pickedModelsMsg');
+  note.textContent = FORM_MODELS ? ProviderUX.pickedText(FORM_MODELS.length) : '';
+  note.hidden = !FORM_MODELS;
+}
+
+function startEdit(p) {
+  setFormModels(null);
+  EDIT_ID = p.id;
+  document.getElementById('editingId').value = p.id;
+  document.getElementById('formTitle').textContent = '编辑 provider：' + p.name;
+  document.getElementById('pName').value = p.name || '';
+  document.getElementById('pBaseUrl').value = p.base_url || '';
+  document.getElementById('pProtocol').value = p.protocol || '';
+  document.getElementById('pApiKey').value = '';
+  document.getElementById('pModel').value = p.default_model || '';
+  document.getElementById('cancelEditBtn').style.display = '';
+  // 「编辑」按钮在表单下方的列表里：表单顶边已滚出视口或被吸顶栏压住时，把表单滚到顶栏下方，免得要改的框被盖住。
+  // 表单下面还有下半块（dsh），页面不在这里到底，滚动不会被页底挡在表单露全的位置
+  const form = document.getElementById('formTitle').closest('.panel');
+  const bar = document.querySelector('.topbar');
+  const overlap = form.getBoundingClientRect().top - (bar ? bar.getBoundingClientRect().bottom : 0) - 8;
+  if (overlap < 0) window.scrollBy(0, overlap);
+}
+
+function cancelEdit() {
+  EDIT_ID = '';
+  document.getElementById('editingId').value = '';
+  document.getElementById('formTitle').textContent = '新建 provider';
+  for (const id of ['pName', 'pBaseUrl', 'pProtocol', 'pApiKey', 'pModel']) document.getElementById(id).value = '';
+  document.getElementById('cancelEditBtn').style.display = 'none';
+  document.getElementById('formMsg').textContent = '';
+  setFormModels(null);
+}
+
+async function saveProvider() {
+  const msg = document.getElementById('formMsg');
+  msg.textContent = '';
+  const body = {
+    name: document.getElementById('pName').value.trim(),
+    base_url: document.getElementById('pBaseUrl').value.trim(),
+    api_key: document.getElementById('pApiKey').value,
+    default_model: document.getElementById('pModel').value.trim(),
+  };
+  // 协议是 provider 级可写字段：非空才提交（新建留空 → 服务端 400「protocol 必须是 …」；
+  // 编辑留空 → 不提交 = 保留现有有效协议，或改地址时由服务端清空）。
+  const proto = document.getElementById('pProtocol').value;
+  if (proto) body.protocol = proto;
+  // 新建时在选择框里勾好的模型随这次保存一并提交（编辑已有供应商的模型走选择框的「确定」）
+  if (!EDIT_ID && FORM_MODELS) body.models = FORM_MODELS;
+  let r;
+  if (EDIT_ID) {
+    r = await jsonFetch('/api/providers/' + encodeURIComponent(EDIT_ID), {
+      method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  } else {
+    r = await jsonFetch('/api/providers', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  }
+  if (!r.ok) { msg.textContent = (r.body && r.body.error) || ('失败 ' + r.status); return; }
+  cancelEdit();
+  // E-15：保存成功但上游地址未验证（探测 404）→ 把 warning 显示出来，不再静默
+  if (r.body && r.body.warning) { msg.textContent = r.body.warning; }
+  await load();
+}
+
+async function removeProvider(id) {
+  if (!confirm('删除 provider ' + id + '？')) return;
+  const r = await jsonFetch('/api/providers/' + encodeURIComponent(id), {method: 'DELETE'});
+  const msg = document.getElementById('formMsg');
+  if (!r.ok) { msg.textContent = (r.body && r.body.error) || ('失败 ' + r.status); return; }
+  await load();
+}
+
+// ── 模型组合框（点框即展开；每次展开都真拉，无跨次缓存）────────────────────
+// 去重只做一件事：**在途请求合并**。键 = 本次请求的语义目标（模式① provider_id /
+// 模式② #pBaseUrl 的 trim 值）；请求落地（成功或失败）立即销毁，故"关掉再点开"
+// 必定是新请求。不做任何跨次缓存，也不把成功结果留在页面内存里。
+const PICKER_BATCH = 100;
+const PICKER_LOADING_TEXT = '拉取中…（最长 8 秒）';
+const PICKER_MANUAL_TEXT = '请先在该行选择 provider；也可以直接手填模型 id';
+const PICKER_EMPTY_TEXT = '上游返回了空列表，请直接手填模型 id';
+
+// seq：每次拉取递增，显式重拉时让先前那次迟到的响应失效。
+const picker = {scope: '', botId: '', providerId: '', query: '', candidates: [], rendered: 0, trigger: null, seq: 0};
+const inflight = new Map();
+
+function pickerRoot() { return document.getElementById('modelPicker'); }
+
+function setPickerStatus(text) {
+  document.getElementById('modelPickerStatus').textContent = text;
+}
+
+function setMoreButton(remaining) {
+  const btn = document.getElementById('modelPickerMore');
+  if (remaining > 0) {
+    document.getElementById('modelPickerMoreCount').textContent = String(remaining);
+    btn.hidden = false;
+  } else {
+    btn.hidden = true;
+  }
+}
+
+// 候选数据载体：拉取结果整体替换 #models_datalist 的 option，面板从它读。
+// selected 也要落到 DOM：只写 value/label 再读回时勾选状态会丢，已存项就无法作为默认勾选。
+function writeDatalist(models) {
+  const dl = document.getElementById('models_datalist');
+  dl.replaceChildren();
+  for (const m of models) {
+    const o = el('option');
+    o.value = m.id;
+    o.setAttribute('label', m.label || m.id);
+    o.setAttribute('data-selected', m.selected === true ? '1' : '0');
+    dl.appendChild(o);
+  }
+}
+
+function readDatalist() {
+  const out = [];
+  for (const o of document.getElementById('models_datalist').children) {
+    out.push({id: o.value, label: o.getAttribute('label') || o.value,
+              selected: o.getAttribute('data-selected') === '1'});
+  }
+  return out;
+}
+
+const PICKER_MIN_HEIGHT = 160;   // 可见高度下限；低于它就没有可用的点选区域
+const PICKER_MAX_HEIGHT = 360;
+const PICKER_COMPACT_ROOM = 72;  // 无候选时面板只有一行状态+关闭钮；框上方至少有这么多空间才翻上去
+
+function positionPanel(input) {
+  const p = pickerRoot();
+  const box = input.getBoundingClientRect();
+  const vh = window.innerHeight;
+  const room = Math.max(80, vh - 16);   // 视口内可用的最大高度（上下各留 8px）
+  const width = Math.max(240, Math.min(box.width, window.innerWidth - 16));
+  const below = vh - box.bottom - 12;
+  const above = box.top - 12;
+  let height, top;
+
+  p.style.width = width + 'px';
+  p.style.left = Math.max(8, Math.min(box.left, window.innerWidth - width - 8)) + 'px';
+
+  // 面板优先放在输入框上方（只要上方还放得下一行状态 + 少量候选）：
+  // provider 表单的「拉取模型 / 保存 provider」都在输入框下方，放在下方会挡住用户下一步要点的控件（裁定补充 rev5 P9）。
+  // 已存清单会先渲染出若干行，所以这条不能只在"0 候选"时生效。
+  // 用 bottom 锚定，高度随内容、不必量；内容超过 maxHeight 时面板自身 overflow:auto 滚动。
+  if (above >= PICKER_COMPACT_ROOM) {
+    p.style.top = '';
+    p.style.bottom = (vh - box.top + 4) + 'px';
+    p.style.maxHeight = Math.min(above, room, PICKER_MAX_HEIGHT) + 'px';
+    return;
+  }
+  p.style.bottom = '';
+
+  if (below >= PICKER_MIN_HEIGHT || below >= above) {
+    top = box.bottom + 4;
+    height = Math.max(PICKER_MIN_HEIGHT, Math.min(PICKER_MAX_HEIGHT, below));
+  } else {
+    // 下方放不下就翻到输入框上方：面板是 position:fixed，压成一条缝等于没得点
+    height = Math.max(PICKER_MIN_HEIGHT, Math.min(PICKER_MAX_HEIGHT, above));
+    top = box.top - 4 - height;
+  }
+  height = Math.min(height, room);                      // 矮视口兜底：绝不让面板超出视口
+  top = Math.max(8, Math.min(top, vh - height - 8));    // 上移兜底，保证整体留在视口内
+
+  p.style.top = top + 'px';
+  p.style.maxHeight = height + 'px';
+}
+
+// 面板位置只在展开那一刻算一次的话，页面滚动/视口变化后就会与输入框脱开，故要重算。
+// **不自动收起**：滚动是常态（手机上键盘弹起就会滚），收起会让面板"闪一下就没了"，
+// 而固定定位的面板留在视口里照样可点。锚点滚出视口时只是暂不跟随。
+// scroll/resize 在浏览器里本来就是按帧派发的，直接重算即可（读一次 rect + 写几个样式）；
+// 不套 requestAnimationFrame —— 那多一层依赖，且面板很小，省不下什么。
+// （面板内部的滚动事件不冒泡，不会误触发。）
+function repositionPanel() {
+  if (pickerRoot().getAttribute('data-open') !== '1') return;
+  const t = picker.trigger;
+  if (!t || !t.isConnected) return;
+  const box = t.getBoundingClientRect();
+  if (box.bottom < 0 || box.top > window.innerHeight) return;
+  positionPanel(t);
+}
+
+window.addEventListener('scroll', repositionPanel, {passive: true});
+window.addEventListener('resize', repositionPanel);
+
+function closePicker() {
+  const p = pickerRoot();
+  if (picker.trigger) picker.trigger.setAttribute('aria-expanded', 'false');
+  p.setAttribute('data-open', '0');
+  p.setAttribute('data-state', 'idle');
+  p.setAttribute('data-scope', '');
+  p.setAttribute('data-bot-id', '');
+  p.setAttribute('data-provider-id', '');
+  p.hidden = true;
+  picker.scope = ''; picker.botId = ''; picker.providerId = '';
+  picker.query = ''; picker.candidates = []; picker.rendered = 0; picker.trigger = null;
+  document.getElementById('modelPickerList').replaceChildren();
+  setMoreButton(0);
+}
+
+function openPicker(input, scope, botId, providerId) {
+  const p = pickerRoot();
+  picker.scope = scope;
+  picker.botId = botId || '';
+  picker.providerId = providerId || '';
+  picker.query = ''; picker.candidates = []; picker.rendered = 0;
+  // 直接从另一个框切过来（没先收起）：先把上一个的 aria-expanded 复位，否则它永远停在 "true"
+  if (picker.trigger && picker.trigger !== input) picker.trigger.setAttribute('aria-expanded', 'false');
+  picker.trigger = input;
+  p.setAttribute('data-scope', scope);
+  p.setAttribute('data-bot-id', botId || '');
+  p.setAttribute('data-provider-id', providerId || '');
+  p.setAttribute('data-open', '1');
+  p.hidden = false;
+  input.setAttribute('aria-expanded', 'true');
+  document.getElementById('modelPickerList').replaceChildren();
+  setMoreButton(0);
+  positionPanel(input);
+  // 展开时全选：否则一个有值的框一点开就只剩 1 条候选，"完整列表"当场没了
+  try { input.select(); } catch (e) { /* 移动端可能不支持 select() */ }
+  if (scope === 'bot' && !providerId) {
+    // 该行还没选 provider：不发任何请求，只提示；框内照常可打字、可保存
+    p.setAttribute('data-state', 'manual');
+    setPickerStatus(PICKER_MANUAL_TEXT);
+    return;
+  }
+  if (scope === 'provider') document.getElementById('modelsMsg').textContent = '';
+  p.setAttribute('data-state', 'loading');
+  setPickerStatus(PICKER_LOADING_TEXT);
+  loadCandidates(scope, picker.botId, picker.providerId);
+}
+
+// 在途合并：同键请求还在飞就复用，落地即销毁（失败不留存）。
+// 候选面板永远只查不写（E-25.3「看一眼不改配置」）：带 provider_id 的请求一律是只读查询。
+// 要改清单里的模型列表，只有多选对话框点「确定」这一条路。
+// 在途请求的键：模式① provider_id / 模式② 表单地址。显式重拉必须用同一构造，否则清不掉缓存。
+function modelsKey(providerId) {
+  return providerId
+    ? ('id:' + providerId)
+    : ('url:' + document.getElementById('pBaseUrl').value.trim());
+}
+
+function fetchModelsFor(providerId) {
+  const key = modelsKey(providerId);
+  let p = inflight.get(key);
+  if (!p) {
+    let body;
+    if (providerId) {
+      body = {provider_id: providerId, query_only: true};
+    } else {
+      body = {base_url: document.getElementById('pBaseUrl').value.trim(),
+              api_key: document.getElementById('pApiKey').value};
+    }
+    p = jsonFetch('/api/providers/models', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+    }).then(r => r, () => ({ok: false, status: 0, body: null}))
+      // 只销毁自己这一条：显式重拉时 map 里可能已经换成后发的那次请求
+      .finally(() => { if (inflight.get(key) === p) inflight.delete(key); });
+    inflight.set(key, p);
+  }
+  return p;
+}
+
+async function loadCandidates(scope, botId, providerId) {
+  const seq = ++picker.seq;
+  const p = pickerRoot();
+  // 已存清单来自 /api/providers 的 provider_details：展开即先渲染，不等上游是否可达。
+  // （模型明细没有 label，id 就是候选显示名。）
+  // 兼容两种形状：适配器契约是字符串 id，页面概览的 provider_details 是 {id, ...} 对象
+  const savedModels = (providerDetail(providerId).models || [])
+    .map((m) => (typeof m === 'string' ? {id: m, label: m} : m))
+    .filter((m) => m && typeof m.id === 'string' && m.id);
+  writeDatalist(ProviderUX.mergeCandidates(savedModels, []));
+  picker.candidates = readDatalist();
+  repositionPanel();   // 有候选了就从"框上方一行"回到常规位置；仍无候选则原地不动
+  renderCandidates(true);
+  p.setAttribute('data-state', 'loading');
+  setPickerStatus(PICKER_LOADING_TEXT);
+
+  const r = await fetchModelsFor(providerId);
+  // 面板已收起、已换目标或已发起新一次拉取：结果作废（写进去会让用户"点了没反应"或看到旧的候选）
+  if (p.getAttribute('data-open') !== '1' || seq !== picker.seq || picker.scope !== scope
+      || picker.botId !== botId || picker.providerId !== providerId) return;
+
+  const body = r.body || {};
+  const fetchedModels = (r.ok && body.ok === true && Array.isArray(body.models))
+    ? body.models.filter((m) => m && typeof m.id === 'string' && m.id)
+    : [];
+  const models = ProviderUX.mergeCandidates(savedModels, fetchedModels);
+  writeDatalist(models);
+  picker.candidates = readDatalist();
+  repositionPanel();
+
+  if (!r.ok || body.ok !== true) {
+    const text = body.error || ('失败 ' + r.status);
+    p.setAttribute('data-state', 'error');
+    setPickerStatus(text);   // 服务端 error 原文，逐字回显
+    if (scope === 'provider') document.getElementById('modelsMsg').textContent = text;
+    renderCandidates(true);
+    return;
+  }
+  p.setAttribute('data-state', 'ok');
+  setPickerStatus(models.length
+    ? ('共 ' + models.length + ' 个模型')
+    : PICKER_EMPTY_TEXT);
+  renderCandidates(true);
+}
+
+// reset=true 清空重建（首次渲染 / 查询串变化）；否则**追加**下一批，不重建已有行
+function renderCandidates(reset) {
+  const list = document.getElementById('modelPickerList');
+  const k = picker.query;
+  const all = k
+    ? picker.candidates.filter(m => m.id.toLowerCase().includes(k)
+        || (m.label || '').toLowerCase().includes(k))
+    : picker.candidates;
+  if (reset) { list.replaceChildren(); picker.rendered = 0; }
+  const tpl = document.getElementById('miRowTpl');
+  const frag = document.createDocumentFragment();
+  const end = Math.min(all.length, picker.rendered + PICKER_BATCH);
+  for (let i = picker.rendered; i < end; i++) {
+    const m = all[i];
+    const label = m.label || m.id;
+    const row = tpl.content.firstElementChild.cloneNode(true);
+    row.setAttribute('data-model-id', m.id);   // 定位锚点：永远是精确 id
+    row.querySelector('.mi-label').textContent = label;
+    if (label !== m.id) row.appendChild(el('span', 'mi-id', m.id));
+    frag.appendChild(row);
+  }
+  picker.rendered = end;
+  list.appendChild(frag);
+  setMoreButton(all.length - picker.rendered);
+}
+
+// 选中：先在当前文档里重新取目标输入框，取不到就只收起不写值
+function selectCandidate(modelId) {
+  const input = document.getElementById('pModel');
+  closePicker();
+  if (!input) return;
+  input.value = modelId;
+  input.setAttribute('data-autofilled', '0');
+}
+
+// 展开入口：点模型框本身，或收起态下按方向键；已展开时不重拉
+function openFromInput(input) {
+  if (pickerRoot().getAttribute('data-open') === '1' && picker.trigger === input) return;
+  if (input.id === 'pModel') openPicker(input, 'provider', '', EDIT_ID || '');
+}
+
+function onTriggerInput(e) {
+  const input = e.currentTarget;
+  // 手动键入 = 不再是预填值。**无「面板已展开」限定**：Tab 聚焦后打字、粘贴、浏览器
+  // 自动填充都不触发 click，面板可能根本没开，标志位也必须清掉——否则换 provider 时
+  // 会把用户手改的值当"预填值"覆盖成新 provider 的默认模型。
+  input.setAttribute('data-autofilled', '0');
+  if (pickerRoot().getAttribute('data-open') !== '1' || picker.trigger !== input) return;
+  picker.query = input.value.trim().toLowerCase();
+  renderCandidates(true);
+}
+
+function onTriggerKeydown(e) {
+  const input = e.currentTarget;
+  if (e.key === 'Escape') {
+    if (pickerRoot().getAttribute('data-open') === '1') { e.preventDefault(); closePicker(); }
+    return;
+  }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  if (pickerRoot().getAttribute('data-open') === '1') return;
+  e.preventDefault();
+  openFromInput(input);
+}
+
+async function setProxy(providerId, on) {
+  const r = await jsonFetch('/api/providers/' + encodeURIComponent(providerId), {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({proxy: !!on})});
+  if (!r.ok) { alert((r.body && r.body.error) || ('失败 ' + r.status)); return; }
+  await load();
+}
+
+// 代号跟踪（9.15）：verified ≥ g 已生效；last_error_generation ≥ g 且有 last_error 显示错误；
+// 超过 D+1 s（D = 3T+11.2，T 缺省 5 s）显示「核验未完成」，之后每 10 s 续轮询。
+const GEN_DEADLINE_MS = (3 * 5 + 11.2 + 1) * 1000;
+let GEN_WATCH = 0;
+function setGenMsg(text, isErr) {
+  const m = document.getElementById('proxyGenMsg');
+  m.textContent = text;
+  m.style.color = isErr ? 'var(--danger)' : 'var(--wxgreen)';
+}
+function showSuspended(list) {
+  const box = document.getElementById('proxySuspended');
+  box.querySelector('span').textContent = list && list.length
+    ? '以下裸名被实例暂停（上游返回 401/402/403/404），重启实例可恢复；带前缀的名字不受影响：' + list.join(', ') : '';
+  box.hidden = !(list && list.length);
+}
+async function watchGeneration(g) {
+  if (!g || g <= GEN_WATCH) return;
+  GEN_WATCH = g;
+  const start = Date.now();
+  setGenMsg('配置已写入，等待实例生效…', false);
+  while (GEN_WATCH === g) {
+    const r = await jsonFetch('/api/proxy/generation');
+    const b = r.body || {};
+    showSuspended(b.suspended);
+    if (b.verified_generation >= g) { setGenMsg('已生效', false); return; }
+    if (b.last_error && b.last_error_generation >= g) {
+      setGenMsg(b.last_error + '。点『同步』可立即重试', true); return;
+    }
+    const late = Date.now() - start > GEN_DEADLINE_MS;
+    if (late) setGenMsg('核验未完成', true);
+    await new Promise(res => setTimeout(res, late ? 10000 : 1000));
+  }
+}
+async function restartProxy() {
+  const btn = document.getElementById('proxyRestartBtn');
+  btn.disabled = true;
+  try {
+    const r = await jsonFetch('/api/proxy/restart', {method: 'POST'});
+    const b = r.body || {};
+    if (r.status === 429) setGenMsg(b.error + '（' + b.retry_after + ' 秒后）', true);
+    else if (!r.ok || r.status === 202) setGenMsg(b.error || ('失败 ' + r.status), true);
+  } finally { btn.disabled = false; }
+  await loadProxy();
+}
+
+function setProxySyncMsg(text, isErr) {
+  const m = document.getElementById('proxySyncMsg');
+  m.textContent = text;
+  m.style.color = isErr ? 'var(--danger)' : 'var(--wxgreen)';
+}
+
+async function syncProxy() {
+  setProxySyncMsg('', false);
+  const btn = document.getElementById('proxySyncBtn');
+  btn.disabled = true;   // 在途禁用，防重复提交
+  let r;
+  try {
+    r = await jsonFetch('/api/proxy/sync', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+  } finally { btn.disabled = false; }
+  if (!r.ok) {
+    // 500：逐字回显服务端的 error；其余（202）按契约文案。
+    setProxySyncMsg((r.body && r.body.error) || ('失败 ' + r.status), true);
+    await loadProxy();
+    return;
+  }
+  if (r.status === 202) {
+    setProxySyncMsg('同步完成：重载核验失败，请检查实例', true);
+  } else {
+    setProxySyncMsg('同步完成：已重载', false);
+  }
+  await loadProxy();
+}
+
+// kind：ok（绿）/ err（红）/ warn（黄，什么都没做的说明）。关闭叉只在页面内隐藏这一条。
+function setSyncAllMsg(text, kind) {
+  const m = document.getElementById('syncAllMsg');
+  m.className = 'banner notice ' + (kind || 'ok');
+  document.getElementById('syncAllMsgText').textContent = text;
+  m.hidden = !text;
+}
+
+// 「同步全部 bot」：说明与实际会发生的事出自同一份数据——服务端给的同步计划（会重写谁、跳过谁）
+// 与自动重启开关。没有可同步的 bot 时不弹确认、不发请求；有的话先确认，取消零请求。
+async function syncAll() {
+  if (!DATA) { setSyncAllMsg('provider 列表还没有加载出来，请先刷新页面。', 'err'); return; }
+  const plan = ProviderUX.syncPlanText(DATA.sync_plan || {}, convergerRunning(), botNames());
+  if (!plan.canSync) { setSyncAllMsg(plan.text, 'warn'); return; }
+  if (!confirm(plan.text)) return;
+  setSyncAllMsg('', 'ok');
+  const r = await jsonFetch('/api/providers/sync_all', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+  if (!r.ok) {
+    setSyncAllMsg('同步全部 bot 失败：' + ((r.body && r.body.error) || ('失败 ' + r.status)), 'err');
+    return;
+  }
+  const results = (r.body && Array.isArray(r.body.results)) ? r.body.results : [];
+  const anyFailed = results.some(x => !(x && x.ok === true));
+  setSyncAllMsg(ProviderUX.syncResultText(results, convergerRunning()), anyFailed ? 'err' : 'ok');
+  await load();
+}
+
+async function logout() {
+  await apiFetch('/logout', {method: 'POST'});
+  location.href = '/login';
+}
+
+document.getElementById('saveProviderBtn').addEventListener('click', saveProvider);
+document.getElementById('cancelEditBtn').addEventListener('click', cancelEdit);
+// 「拉取模型」：打开多选对话框。表单在编辑已有供应商 → 按它的编号取候选；
+// 新建表单 → 用表单里填的地址与密钥取候选（还没保存，所以勾选结果先留在表单里）。
+document.getElementById('fetchModelsBtn').addEventListener('click', () => {
+  openModelDialog(EDIT_ID
+    ? {provider_id: EDIT_ID}
+    : {base_url: document.getElementById('pBaseUrl').value.trim(),
+       api_key: document.getElementById('pApiKey').value});
+});
+// 新建表单里地址一变，之前勾的模型就不再对得上这个地址，作废
+document.getElementById('pBaseUrl').addEventListener('input', () => { if (!EDIT_ID) setFormModels(null); });
+document.getElementById('syncAllBtn').addEventListener('click', syncAll);
+document.getElementById('logoutBtn').addEventListener('click', logout);
+document.getElementById('proxySyncBtn').addEventListener('click', syncProxy);
+
+// 组合框自身的交互：关闭按钮、分批追加、点候选、点面板外收起
+document.getElementById('modelPickerClose').addEventListener('click', closePicker);
+// 显式重拉：丢掉在途缓存，强制重新发起一次上游查询（已存清单仍先显示）
+document.getElementById('modelPickerRefresh').addEventListener('click', () => {
+  if (pickerRoot().getAttribute('data-open') !== '1') return;
+  if (picker.scope === 'bot' && !picker.providerId) return;
+  inflight.delete(modelsKey(picker.providerId));
+  loadCandidates(picker.scope, picker.botId, picker.providerId);
+});
+document.getElementById('modelPickerMore').addEventListener('click', () => renderCandidates(false));
+document.getElementById('modelPickerList').addEventListener('click', (e) => {
+  const row = e.target.closest('[data-model-id]');
+  if (row) selectCandidate(row.getAttribute('data-model-id'));
+});
+document.addEventListener('click', (e) => {
+  if (pickerRoot().getAttribute('data-open') !== '1') return;
+  if (pickerRoot().contains(e.target) || e.target === picker.trigger) return;
+  closePicker();
+});
+
+// provider 表单那个模型框的展开入口（点框 / 方向键）：只查不写的候选面板
+const pModelInput = document.getElementById('pModel');
+pModelInput.addEventListener('click', (e) => { e.stopPropagation(); openFromInput(e.currentTarget); });
+pModelInput.addEventListener('input', onTriggerInput);
+pModelInput.addEventListener('keydown', onTriggerKeydown);
+
+// ── 模型多选对话框 ─────────────────────────────────────────────────────────
+// 两步走：打开时只取候选（服务端零写入）；点「确定」才按勾选集合写回。取消 / 关闭 / Esc / 点遮罩都不发写请求。
+// 勾选存在数据里（DLG.selection，模型名数组），不存在勾选框节点上：搜索与分批显示只是重画视图，
+// 没画出来的行同样保有勾选。过滤、增减、全选全不选、提交内容、计数都在 ProviderUX 里。
+//   mode：saved = 已保存的供应商（确定即写回）；draft = 新建表单（确定只把结果留在表单里）
+const DLG = {seq: 0, mode: '', providerId: '', candidates: [], byId: new Map(), base: [], selection: [],
+  query: '', shown: 0, visibleCount: 0, ready: false, saving: false};
+const modelDialog = document.getElementById('modelDialog');
+
+function setDialogMsg(text, kind) {
+  const m = document.getElementById('modelDialogMsg');
+  m.textContent = text || '';
+  m.setAttribute('data-kind', kind || '');
+}
+
+// 计数、尾部的改动说明、各按钮可不可用——勾选或搜索每变一次就刷一次（不重画列表）
+function refreshDialogSummary() {
+  const s = ProviderUX.selectionSummary(DLG.candidates, DLG.selection);
+  const usable = DLG.ready && DLG.candidates.length > 0 && !DLG.saving;
+  document.getElementById('modelDialogCount').textContent =
+    DLG.ready ? ProviderUX.dialogCountText(s, DLG.visibleCount, DLG.query) : '';
+  document.getElementById('modelDialogDiff').textContent =
+    (DLG.ready && DLG.candidates.length) ? ProviderUX.dialogDiffText(s, DLG.mode === 'draft') : '';
+  const ok = document.getElementById('modelDialogOk');
+  ok.disabled = !usable;
+  ok.textContent = DLG.saving ? '保存中…' : '确定';
+  document.getElementById('modelDialogAll').disabled = !usable;
+  document.getElementById('modelDialogNone').disabled = !usable;
+  document.getElementById('modelDialogCancel').disabled = DLG.saving;
+  document.getElementById('modelDialogClose').disabled = DLG.saving;
+}
+
+// reset=true 清空重画（首次 / 搜索词变了）；否则在末尾追加下一批。有搜索词时同样只先画筛出的前一批。
+function renderDialogRows(reset) {
+  const list = document.getElementById('modelDialogList');
+  const empty = document.getElementById('modelDialogEmpty');
+  const visible = ProviderUX.filterCandidates(DLG.candidates, DLG.query);
+  if (reset) {
+    for (const n of Array.from(list.querySelectorAll('[data-role="dialog-row"]'))) n.remove();
+    DLG.shown = 0;
+  }
+  const chosen = new Set(DLG.selection);
+  const names = botNames();
+  const tpl = document.getElementById('modelDialogRowTpl');
+  const frag = document.createDocumentFragment();
+  const end = Math.min(visible.length, DLG.shown + MODELS_BATCH);
+  for (let i = DLG.shown; i < end; i++) {
+    const c = visible[i];
+    const label = c.label || c.id;
+    const row = tpl.content.firstElementChild.cloneNode(true);
+    row.setAttribute('data-model-id', c.id);
+    const box = row.querySelector('input');
+    box.checked = chosen.has(c.id);
+    box.disabled = ProviderUX.isLocked(c);   // 正被 bot 使用：勾选锁住，不能取消
+    row.querySelector('.md-label').textContent = label;
+    const idLine = row.querySelector('.mi-id');
+    if (label !== c.id) idLine.textContent = c.id; else idLine.remove();
+    const tag = row.querySelector('.md-tag');
+    const badge = ProviderUX.rowBadge(c, names, DLG.mode === 'draft');
+    if (badge) {
+      tag.textContent = badge.text;
+      if (badge.kind) tag.classList.add(badge.kind);
+      tag.hidden = false;
+    } else {
+      tag.remove();
+    }
+    frag.appendChild(row);
+  }
+  DLG.shown = end;
+  DLG.visibleCount = visible.length;
+  list.insertBefore(frag, empty);   // 行在前；「没有匹配」与「显示更多」留在列表末尾
+  const rest = visible.length - DLG.shown;
+  document.getElementById('modelDialogMoreCount').textContent = String(rest);
+  document.getElementById('modelDialogMore').hidden = rest <= 0;
+  empty.hidden = !(DLG.ready && DLG.candidates.length > 0 && visible.length === 0);
+  refreshDialogSummary();
+}
+
+// 手机上键盘弹出后可视区变矮：把铺满屏幕的对话框压到可视区的高度，「确定」那一栏就落在键盘上方。
+// 只在窄屏、且页面没被双指放大时调整；不支持 visualViewport 的浏览器靠样式里的 100dvh 兜底。
+function fitDialog() {
+  const vv = window.visualViewport;
+  if (!modelDialog.open || !vv || !window.matchMedia('(max-width:430px)').matches) {
+    modelDialog.style.height = '';
+    modelDialog.style.top = '';
+    return;
+  }
+  if (vv.scale && Math.abs(vv.scale - 1) > 0.01) return;
+  modelDialog.style.height = Math.round(vv.height) + 'px';
+  modelDialog.style.top = Math.round(vv.offsetTop) + 'px';
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', fitDialog);
+  window.visualViewport.addEventListener('scroll', fitDialog);
+}
+
+// request：{provider_id} 或 {base_url, api_key}，原样作为候选接口的请求体
+async function openModelDialog(request) {
+  if (typeof modelDialog.showModal !== 'function') {
+    document.getElementById('modelsMsg').textContent = ProviderUX.DIALOG_UNSUPPORTED_TEXT;
+    return;
+  }
+  closePicker();
+  document.getElementById('modelsMsg').textContent = '';
+  if (modelDialog.open) modelDialog.close();
+  const seq = ++DLG.seq;
+  DLG.mode = request.provider_id ? 'saved' : 'draft';
+  DLG.providerId = request.provider_id || '';
+  DLG.candidates = []; DLG.byId = new Map(); DLG.base = []; DLG.selection = [];
+  DLG.query = ''; DLG.ready = false; DLG.saving = false;
+  const owner = providerById(DLG.providerId);
+  document.getElementById('modelDialogTitle').textContent = '选择模型 · ' + (DLG.mode === 'saved'
+    ? ((owner && owner.name) || DLG.providerId)
+    : (document.getElementById('pName').value.trim() || '新建 provider'));
+  document.getElementById('modelDialogSearch').value = '';
+  setDialogMsg(PICKER_LOADING_TEXT, '');
+  renderDialogRows(true);
+  modelDialog.showModal();
+  document.documentElement.classList.add('dlg-open');
+  fitDialog();
+  // 焦点落在标题上而不是搜索框：手机一打开不弹键盘；读屏先读到标题
+  document.getElementById('modelDialogTitle').focus();
+
+  let r;
+  try {
+    r = await jsonFetch('/api/providers/models/candidates', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(request)});
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+    r = {ok: false, status: 0, body: null};
+  }
+  // 对话框已关或已换目标：这次结果作废
+  if (seq !== DLG.seq || !modelDialog.open) return;
+  const body = r.body || {};
+  if (!r.ok || body.ok !== true || !Array.isArray(body.candidates)) {
+    setDialogMsg(body.error || (r.status ? '失败 ' + r.status : '网络错误，没有取到模型列表'), 'err');
+    renderDialogRows(true);
+    return;
+  }
+  DLG.candidates = body.candidates;
+  DLG.byId = new Map(body.candidates.map(c => [c.id, c]));
+  DLG.base = Array.isArray(body.base) ? body.base : [];
+  DLG.selection = ProviderUX.initialSelection(DLG.candidates);
+  DLG.ready = true;
+  if (!DLG.candidates.length) setDialogMsg(ProviderUX.NO_UPSTREAM_MODELS_TEXT, '');
+  else if (body.truncated === true) setDialogMsg(ProviderUX.truncatedText(body.limit), 'warn');
+  else setDialogMsg('', '');
+  renderDialogRows(true);
+}
+
+function closeModelDialog() {
+  if (modelDialog.open && !DLG.saving) modelDialog.close();
+}
+
+async function confirmModelDialog() {
+  if (!DLG.ready || DLG.saving) return;
+  const models = ProviderUX.buildSubmit(DLG.candidates, DLG.selection);
+  if (DLG.mode === 'draft') {
+    setFormModels(models.map(m => ({id: m.id, label: m.label})));
+    closeModelDialog();
+    return;
+  }
+  // 一个都没勾 = 清空这条供应商的模型：再确认一次，取消则不发请求
+  if (!models.length
+      && !confirm(ProviderUX.emptyConfirmText(ProviderUX.selectionSummary(DLG.candidates, DLG.selection)))) return;
+  const seq = DLG.seq;
+  const providerId = DLG.providerId;
+  DLG.saving = true;
+  refreshDialogSummary();
+  let r;
+  try {
+    r = await jsonFetch('/api/providers/' + encodeURIComponent(providerId) + '/models', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({models: models, base: DLG.base})});
+  } catch (e) {
+    DLG.saving = false;
+    if (e && e.message === 'unauthorized') throw e;
+    r = {ok: false, status: 0, body: null};
+  }
+  if (seq !== DLG.seq) return;
+  DLG.saving = false;
+  if (r.ok && r.body && r.body.ok === true) {
+    closeModelDialog();
+    await load();
+    // 行按钮已随重画换成新节点，焦点还给同一条供应商的「刷新模型」；表单的「拉取模型」没换，浏览器自己还
+    if (!modelDialog.open && document.activeElement === document.body) {
+      focusIn(providerRowOf(providerId), '[data-role="models-refresh"]');
+    }
+    return;
+  }
+  // 被拒（列表被别处改过 / 模型正被使用 / 名字重复…）：不关，保留勾选，显示服务端给的原因
+  setDialogMsg((r.body && r.body.error) || (r.status ? '失败 ' + r.status : '网络错误，没有保存'), 'err');
+  refreshDialogSummary();
+}
+
+function bulkDialogSelect(checked) {
+  if (!DLG.ready || DLG.saving) return;
+  const visible = ProviderUX.filterCandidates(DLG.candidates, DLG.query);
+  DLG.selection = ProviderUX.bulkSelect(DLG.selection, visible, checked);
+  const chosen = new Set(DLG.selection);
+  for (const row of document.getElementById('modelDialogList').querySelectorAll('[data-role="dialog-row"]')) {
+    row.querySelector('input').checked = chosen.has(row.getAttribute('data-model-id'));
+  }
+  refreshDialogSummary();
+}
+
+document.getElementById('modelDialogSearch').addEventListener('input', (e) => {
+  DLG.query = e.target.value;
+  renderDialogRows(true);
+  document.getElementById('modelDialogList').scrollTop = 0;
+});
+document.getElementById('modelDialogAll').addEventListener('click', () => bulkDialogSelect(true));
+document.getElementById('modelDialogNone').addEventListener('click', () => bulkDialogSelect(false));
+document.getElementById('modelDialogMore').addEventListener('click', () => renderDialogRows(false));
+document.getElementById('modelDialogOk').addEventListener('click', confirmModelDialog);
+document.getElementById('modelDialogCancel').addEventListener('click', closeModelDialog);
+document.getElementById('modelDialogClose').addEventListener('click', closeModelDialog);
+document.getElementById('modelDialogList').addEventListener('change', (e) => {
+  const row = e.target.closest('[data-role="dialog-row"]');
+  const c = row && DLG.byId.get(row.getAttribute('data-model-id'));
+  if (!c || DLG.saving) return;
+  DLG.selection = ProviderUX.toggleOne(DLG.selection, c, e.target.checked);
+  refreshDialogSummary();
+});
+// 保存途中不让 Esc 关掉（请求已发出，关了也拦不住，只会让人以为取消成功）
+modelDialog.addEventListener('cancel', (e) => { if (DLG.saving) e.preventDefault(); });
+// 点遮罩关闭：按下与抬起都落在对话框盒子之外才算（在里面按下、拖到外面松手不算）
+function outsideDialog(e) {
+  const r = modelDialog.getBoundingClientRect();
+  return e.target === modelDialog
+    && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom);
+}
+let dialogPressedOutside = false;
+modelDialog.addEventListener('pointerdown', (e) => { dialogPressedOutside = outsideDialog(e); });
+modelDialog.addEventListener('click', (e) => {
+  if (dialogPressedOutside && outsideDialog(e)) closeModelDialog();
+  dialogPressedOutside = false;
+});
+// 任何途径关闭后：作废在途的候选请求，放掉数据与行节点，解开背后页面的滚动
+modelDialog.addEventListener('close', () => {
+  if (modelDialog.open) return;   // 关闭事件是稍后才派发的；这期间若已重新打开，别把新的一轮清掉
+  DLG.seq += 1;
+  DLG.ready = false; DLG.saving = false;
+  DLG.candidates = []; DLG.byId = new Map(); DLG.base = []; DLG.selection = []; DLG.query = '';
+  renderDialogRows(true);
+  setDialogMsg('', '');
+  document.documentElement.classList.remove('dlg-open');
+  modelDialog.style.height = '';
+  modelDialog.style.top = '';
+});
+
+// ── 提示条关闭、模型列的各个按钮：都是重画时会被换掉的节点，统一在容器上接事件 ──
+document.getElementById('banners').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-role="notice-dismiss"]');
+  const node = btn && btn.closest('[data-role="notice"]');
+  if (node) dismissNotice(node);
+});
+document.getElementById('syncAllMsgClose').addEventListener('click', () => setSyncAllMsg('', 'ok'));
+
+const providerRowsBody = document.getElementById('providerRows');
+providerRowsBody.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-role]');
+  const tr = btn && btn.closest('tr[data-provider-id]');
+  if (!tr) return;
+  const providerId = tr.getAttribute('data-provider-id');
+  const holder = btn.closest('[data-model-id]');
+  const modelId = holder ? holder.getAttribute('data-model-id') : '';
+  switch (btn.getAttribute('data-role')) {
+    case 'models-toggle': toggleModels(providerId); break;
+    case 'models-more': showMoreModels(providerId); break;
+    case 'models-refresh': openModelDialog({provider_id: providerId}); break;
+    case 'model-context-edit': toggleCtxEditor(providerId, modelId); break;
+    case 'model-context-save': saveModelContext(); break;
+    case 'model-context-cancel': cancelCtxEditor(); break;
+    case 'model-remove': removeModel(providerId, modelId); break;
+  }
+});
+// 编辑行的输入：边打边记进界面状态（重画后照着恢复）；Enter = 保存，Esc = 取消
+providerRowsBody.addEventListener('input', (e) => {
+  if (e.target.getAttribute('data-role') === 'model-context-input' && UI.editing) UI.editing.draft = e.target.value;
+});
+providerRowsBody.addEventListener('keydown', (e) => {
+  if (e.target.getAttribute('data-role') !== 'model-context-input') return;
+  if (e.key === 'Enter') { e.preventDefault(); saveModelContext(); }
+  else if (e.key === 'Escape') { e.preventDefault(); cancelCtxEditor(); }
+});
+
+// 调试访问器：静止态返回 {open:false, scope:"", botId:"", providerId:"", state:"idle", renderedCount:0}
+window.__pickerState = function () {
+  const p = pickerRoot();
+  return {
+    open: p.getAttribute('data-open') === '1',
+    scope: p.getAttribute('data-scope') || '',
+    botId: p.getAttribute('data-bot-id') || '',
+    providerId: p.getAttribute('data-provider-id') || '',
+    state: p.getAttribute('data-state') || '',
+    renderedCount: document.getElementById('modelPickerList')
+      .querySelectorAll('[data-model-id]').length,
+  };
+};
+
+load();
+</script>
+
+<script id="dshFrameLogic">
+// 下半块（dsh 模型页的内嵌框架）的判断：只有纯函数与常量，不碰页面节点，可以单独交给任意 JS 引擎执行验证。
+var DshFrameUX = (function () {
+  'use strict';
+  var LOGIN_URL = '/login?next=/provider';
+  // 框架里的地址变成 /login 开头就是登录过期了：整页跳登录，登录后回到供应商页（INTERFACE-bot-lifecycle 3.1）
+  function isLoginPath(pathname) {
+    return typeof pathname === 'string' && pathname.indexOf('/login') === 0;
+  }
+  // 框架高度：平时等于内容高度；框架里有弹窗开着时至少有屏幕上能看见的那么高（availHeight = 视口高减去吸顶顶栏）。
+  // 原生弹窗只能显示在框架自己的视口里，框架只有内容那么矮时，弹窗会被压扁、按钮要在弹窗里滚动才够得着
+  function frameHeight(contentHeight, dialogOpen, availHeight) {
+    const h = Math.max(0, Math.ceil(Number(contentHeight) || 0));
+    return dialogOpen ? Math.max(h, Math.ceil(Number(availHeight) || 0)) : h;
+  }
+  // 弹窗刚打开时外层页面该滚多少（正数往下）：让弹窗落在顶栏以下的可见区正中；比可见区还高就顶边贴着顶栏。
+  // top 是弹窗顶边在外层视口里的位置，topInset 是吸顶顶栏盖住的高度
+  function centerDelta(top, height, viewportHeight, topInset) {
+    const inset = topInset || 0, avail = viewportHeight - inset;
+    if (height >= avail) return Math.round(top - inset);
+    return Math.round(top + height / 2 - (inset + avail / 2));
+  }
+  // 不跟跳转地问一次供应商页：被登录门 302 走（opaqueredirect）或回 401，就是登录过期了
+  function isSignedOut(type, status) {
+    return type === 'opaqueredirect' || status === 401;
+  }
+  return {LOGIN_URL: LOGIN_URL, isLoginPath: isLoginPath, frameHeight: frameHeight, centerDelta: centerDelta,
+          isSignedOut: isSignedOut};
+})();
+window.DshFrameUX = DshFrameUX;
+</script>
+
+<script id="dshFrameMain">
+// 下半块：框架高度跟着框架里的内容变；框架里出现登录页就整页跳登录。dsh 没配置时页面上没有框架，什么都不做。
+// 带 id：页面里不带属性的主脚本只能有一个，下半块这段是独立的，不并进去。
+(function () {
+  const frame = document.getElementById('dshModelFrame');
+  if (!frame) return;
+  function frameDoc() {
+    try { return frame.contentDocument; } catch (e) { return null; }   // 不同源（如浏览器的错误页）读不到
+  }
+  let dialogShown = false;   // 上一次量的时候框架里有没有开着的弹窗
+  function fit() {
+    const doc = frameDoc();
+    if (!doc || !doc.documentElement) return;
+    const dialog = doc.querySelector('dialog[open]');
+    const bar = document.querySelector('.topbar');   // 吸顶的顶栏盖住视口上沿（手机上按钮换行，能占三行）
+    const inset = bar ? Math.max(0, Math.round(bar.getBoundingClientRect().bottom)) : 0;
+    // 框架页的 body 有 min-height:100vh（= 框架自己的高度），直接量只会变高、不会变矮：先缩到 0 再量。
+    // 量完在同一个任务里设回去，画面上不出现中间态；外层页面的滚动位置可能在缩短时被夹住，量完还原。
+    const x = window.scrollX, y = window.scrollY;
+    frame.style.height = '0px';
+    const content = doc.documentElement.scrollHeight;
+    frame.style.height = DshFrameUX.frameHeight(content, !!dialog, window.innerHeight - inset) + 'px';
+    if (window.scrollX !== x || window.scrollY !== y) window.scrollTo(x, y);
+    // 弹窗在框架里居中，框架比屏幕高时可能落在屏幕外：刚打开时把外层页面滚到弹窗正对可见区中间
+    if (dialog && !dialogShown) {
+      const fr = frame.getBoundingClientRect(), r = dialog.getBoundingClientRect();
+      window.scrollBy(0, DshFrameUX.centerDelta(fr.top + r.top, r.height, window.innerHeight, inset));
+    }
+    dialogShown = !!dialog;
+  }
+  let resizeQueued = false;
+  window.addEventListener('resize', function () {
+    if (resizeQueued) return;
+    resizeQueued = true;
+    requestAnimationFrame(function () { resizeQueued = false; fit(); });
+  });
+  // 登录页带 DENY 与 frame-ancestors 'none'，浏览器不让它进框架：框架换成读不到的错误页，地址也读不到，
+  // 按地址的判断就落空了（实验 E6 实测）。这时问一次供应商页自己的登录状态（HEAD、不跟跳转、不连 dsh），
+  // 确实过期了才整页跳登录；还登录着就不动，框架里留浏览器的错误页，不会来回刷新。
+  // 只在框架先前读得到、这次变成读不到时问：那是框架里的操作撞上了登录门。首次载入就读不到（dsh 页不让嵌、
+  // 地址打不开）与登录无关，供应商页本身刚过登录门，首屏不多发请求
+  function checkSignedIn() {
+    fetch('/provider', {method: 'HEAD', redirect: 'manual', cache: 'no-store', credentials: 'same-origin'})
+      .then(function (r) { if (DshFrameUX.isSignedOut(r.type, r.status)) location.href = DshFrameUX.LOGIN_URL; })
+      .catch(function () {});
+  }
+  let watched = null;   // 已挂上观察的框架文档；框架每载入一次是一份新文档
+  let wasReadable = false;   // 框架先前载入过读得到的页面
+  function onFrameLoad() {
+    let path = null;
+    try { path = frame.contentWindow.location.pathname; } catch (e) { path = null; }
+    if (DshFrameUX.isLoginPath(path)) { location.href = DshFrameUX.LOGIN_URL; return; }
+    const doc = frameDoc();
+    if (!doc || !doc.documentElement) { if (wasReadable) checkSignedIn(); return; }
+    wasReadable = true;
+    if (doc === watched) return;
+    watched = doc;
+    dialogShown = false;
+    // 框架里任何节点、属性、文字变了（列表画出来、面板展开、页签切换、弹窗开关）都重新量一次
+    new frame.contentWindow.MutationObserver(fit).observe(doc.documentElement,
+      {childList: true, subtree: true, attributes: true, characterData: true});
+    fit();
+  }
+  frame.addEventListener('load', onFrameLoad);
+  // 本脚本在页尾：框架若已先载入完，补一次（初始的 about:blank 不算）
+  const early = frameDoc();
+  if (early && early.readyState === 'complete' && early.location.href !== 'about:blank') onFrameLoad();
+})();
+</script>
+
+<script id="providerTabsLogic">
+// 供应商来源选项卡：只切显示与 aria-selected，不发请求、不改 URL，也不重建 iframe。
+(function () {
+  const claudeTab = document.getElementById('claudeTab');
+  const dshTab = document.getElementById('dshTab');
+  const claudeBlock = document.getElementById('claudeBlock');
+  const dshBlock = document.getElementById('dshBlock');
+  if (!claudeTab || !dshTab || !claudeBlock || !dshBlock) return;
+  function select(isDsh) {
+    claudeTab.setAttribute('aria-selected', isDsh ? 'false' : 'true');
+    dshTab.setAttribute('aria-selected', isDsh ? 'true' : 'false');
+    claudeBlock.hidden = isDsh;
+    dshBlock.hidden = !isDsh;
+    if (isDsh) {
+      // 框架隐藏时不排版；显示后让现有高度逻辑重新量一次（不发网络请求）
+      window.requestAnimationFrame(function () { window.dispatchEvent(new Event('resize')); });
+    }
+  }
+  claudeTab.addEventListener('click', function () { select(false); });
+  dshTab.addEventListener('click', function () { select(true); });
+  select(false);
+})();
+</script>
 </body>
 </html>
