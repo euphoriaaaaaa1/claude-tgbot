@@ -386,6 +386,24 @@ class ClaudeLocalAdapter(BackendAdapter):
         return {"status": "delivered"}
 
     # ── 群聊 ────────────────────────────────────────────────────────────────
+    def dm_allow_from(self) -> dict:
+        """各 bot access.json 顶层私聊白名单的并集（群清单新增缺省 allowFrom 用）。
+        返回 ``{"ids": [...], "unreadable": [...]}``；任一只读不出记进 unreadable。"""
+        ids, unreadable = set(), []
+        for item in bots_registry.bots(include_disabled=True):
+            bot_id = item["id"]
+            try:
+                data = _read_json(os.path.join(_channel_dir(bot_id), ACCESS_NAME))
+            except (OSError, ValueError, AdapterError):
+                unreadable.append(bot_id)
+                continue
+            allow = data.get("allowFrom") if isinstance(data, dict) else None
+            if not isinstance(allow, list) or not all(isinstance(v, str) and v for v in allow):
+                unreadable.append(bot_id)
+                continue
+            ids.update(allow)
+        return {"ids": sorted(ids, key=lambda v: (len(v), v)), "unreadable": sorted(unreadable)}
+
     def groups(self, bot_id: str) -> dict:
         _require_bot(bot_id)
         bot_dir = _channel_dir(bot_id)

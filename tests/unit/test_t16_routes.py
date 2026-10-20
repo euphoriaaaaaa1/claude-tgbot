@@ -91,6 +91,9 @@ class FakeAdapter:
         return {"can_read_all": True, "can_join_groups": True,
                 "groups": [{"chat_id": CHAT, "title": "测试群"}], "warnings": []}
 
+    def dm_allow_from(self):
+        return {"ids": ["123456789"], "unreadable": []}
+
 
 @pytest.fixture(autouse=True)
 def _env(tmp_path, monkeypatch):
@@ -282,6 +285,9 @@ def test_群清单新增与非法群号(client):
     assert r.status_code == 200 and r.get_json()["created"] is False
     r = client.post("/api/console/groups", json={"chat_id": "123", "allowFrom": ["1"]})
     assert r.status_code == 422
+    r = client.post("/api/console/groups", json={"chat_id": "-1009999999999"})
+    assert r.status_code == 200
+    assert r.get_json()["group"]["allowFrom"] == ["123456789"]
 
 
 def test_导演开关(client):

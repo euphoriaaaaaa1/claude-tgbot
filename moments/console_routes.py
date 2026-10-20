@@ -416,20 +416,25 @@ def _member_ref(r) -> dict:
 
 
 def _default_allow_from() -> list:
-    """群清单新增时缺省 allowFrom：取各底层 bot 条目里给的私聊编号（正整数）。"""
-    ids = []
-    for name in registry.enabled_backends():
-        try:
-            for b in registry.adapter(name).bots():
-                if isinstance(b, dict):
-                    cid = b.get("chat_id")
-                    if isinstance(cid, int) and not isinstance(cid, bool):
-                        cid = str(cid)
-                    if isinstance(cid, str) and cid.isdigit() and cid:
-                        ids.append(cid)
-        except (AdapterUnavailable, AdapterError):
-            continue
-    return sorted(set(ids))
+    """群清单新增时缺省 allowFrom：claude 侧各 bot access.json 私聊白名单的并集。
+    读不出任何名单时回空列表，由调用方按 422 让用户显式给 allowFrom，不能拿空名单兜底。"""
+    try:
+        ad = registry.adapter("claude")
+    except Exception as e:  # noqa: BLE001  适配器加载失败也按读不出处理
+        _log.error("console 读私聊名单失败：%s", type(e).__name__)
+        return []
+    fn = getattr(ad, "dm_allow_from", None)
+    if fn is None:
+        return []
+    try:
+        result = fn()
+    except (AdapterUnavailable, AdapterError):
+        return []
+    except Exception as e:  # noqa: BLE001
+        _log.error("console 读私聊名单失败：%s", type(e).__name__)
+        return []
+    ids = result.get("ids") if isinstance(result, dict) else None
+    return [str(v) for v in ids] if isinstance(ids, list) else []
 
 
 @console_bp.route("/api/console/bots/<backend>/<bot_id>/groups/discovered", methods=["GET"])
