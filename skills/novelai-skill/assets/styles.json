@@ -1,0 +1,279 @@
+{
+  "active": "style_1783211307",
+  "styles": [
+    {
+      "id": "default",
+      "name": "默认(现有画师串)",
+      "positive_prefix": "",
+      "negative_prefix": "",
+      "params": {},
+      "sample_image": "",
+      "created_at": 0,
+      "sample_ts": 0
+    },
+    {
+      "id": "style_1783178996",
+      "name": "动漫666",
+      "positive_prefix": "wlop, masaki (ekakiningen), blender (medium), alex ross, 1.34::mochirong::, dishwasher1910, hero neisan, juurouta, 1.34::meion, blue gk::, sakimichan, 1.34::nyantcha::, 1.7::akita hika::, rating:explicit, photorealistic, 1.5::expert shading, fully rendered, highly finished, anatomical shading::, 1.5::real skin emphasis, highres textured skin, highly detailed skin::, 0.8::moist skin::, 5::masterpiece, best quality, amazing quality, very aesthetic, absurdres::, 2.8::detailed skin, realistic rendering, detailed textures, intricate details, skindentation, depth of field, curvy, body blush, smell, steaming body::, -3::multiple views, upscaled, blurry, watermark::, -4::artist collaboration::, year 2025, newest, 2.5::super fine illustration, ideal ratio body proportions, realistic material rendering, fine fabric emphasis::, 5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma, detailed hair, intricate hair, loose strands, hair texture, sketch, rough sketch, messy lines, multiple lines, heavy lines, thick outlines, sketch, hatching, shading, contour,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783178996
+    },
+    {
+      "id": "style_1783209849",
+      "name": "动漫555",
+      "positive_prefix": "0.5::freng, akizero1510 , ateoyh::, 0.7::xiujia yihuizi, sy4::, 0.3::alver::, 1.5::ogipote::, 5::masterpiece, best quality, amazing quality, very aesthetic, absurdres::, 2.8::detailed skin, realistic rendering, detailed textures, intricate details, skindentation, depth of field, curvy, body blush, smell, steaming body::, -3::multiple views, upscaled, blurry, watermark::, -4::artist collaboration::, year 2025, newest, 2.5::super fine illustration, ideal ratio body proportions, realistic material rendering, fine fabric emphasis::,\n  {{{{comic, cartoon, speech bubble}}}}, multiple views, {{{volumetric lighting, depth of field}}}, 5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma, detailed hair, intricate hair, loose strands, hair texture, sketch, rough sketch, messy lines, multiple lines, heavy lines, thick outlines, sketch, hatching, shading, contour,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783209849
+    },
+    {
+      "id": "style_1783209869",
+      "name": "fur3",
+      "positive_prefix": "1.2::misaka12003-gou, gdhs, zetsu_red::, 1.8::dino(dinoartforame), wanke, liduke ::, year 2025, realistic, 4k, 1.5::photorealistic::, 1.5::photo(medium)::, 4::miyamoto_issa::, 1.44::poper_(arin_sel)::, 5::ie_(raarami)::, -5::artist collaboration, -5::flat_color::, detailed  face, slap detailed artwork, location, masterpiece, ray tracing, 20::best quality, absurdres, very aesthetic, detailed, masterpiece::,  very aesthetic, masterpiece, text, 1.8::eye contact, depth of field::, -2::muscles::, 0.5::pure background::, -2::2koma, border::, -3::green eyes::,5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "bad proportions, out of focus, username, text, bad anatomy, lowres, worstquality, watermark, cropped, bad body, deformed, mutated, disfigured, poorly drawn face, malformed hands, extra arms, extra limb, missing limb, too many fingers, extra legs, bad feet, missing fingers, fused fingers, acnes, floating limbs, disconnected limbs, long neck, long body, mutation, ugly, blurry, low quality, sketches, normal quality, monochrome, grayscale, signature, logo, jpeg artifacts, unfinished, displeasing, chromatic aberration, extra digits, artistic error, scan, abstract, photo, realism, screencap, negativeXL_D, negativeXL, source_furry, extra limbs, deformations, long fingers, fused fingers, inaccurate_anatomy, bad proportions, poorly drawn hands, bad hands, extra_fingers, extra_hand, extra_arm, distorted fingers, ugly hands, creepy hands, six fingers, malformed fingers, long_fingers, interlocked fingers:1.2, ugly, deformed, uneven, asymmetrical, unnatural, missing fingers, extra digit, fewer digits, opaque eyes, small eyes, ugly eyes, blurred eyes, bad face, (bad anatomy, ugly face:1.2), (worst quality, low quality, not detailed, low resolution:1.2), motion_blur, blur, blur_censor, blurry, simple_background, text, error, cropped, normal quality, jpeg artifacts, watermark, logo, signature, username, artist name, lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, worst quality,low quality,artist collaboration, bad anatomy,extra fingers,extra legs, missing legs, missing fingers, mutation, text, watermark, low resolution, 2koma, boder, muscles, strong, strong muscles, excessive muscles",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783209869
+    },
+    {
+      "id": "style_1783209951",
+      "name": "像素一绝",
+      "positive_prefix": "pixel art, dithering, retro game style, chunky pixels,  low-res pixelated, 8-bit shading, blocky details,masterpiece, best quality, absurdres, {{{pixel art}}}, dithering, retro pixel art, 16-bit, chunky pixels, -0.5::green, warm color::, 1.1::pure background, white skin::, 1.6::eye contact::,5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "smooth shading, anti-aliasing, highres, detailed background, realistic, photorealistic, 3d, blurry, soft edges, gradient, bokeh, depth of field, chromatic aberration, bloom, modern art, vector art, clean lines, overly detailed, plastic skin, doll-like,\n\nlowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fused fingers, poorly drawn face, bad proportions, mutated, deformed, extra limbs, watermark, signature, username, jpeg artifacts, censored, bar censor, mosaic censoring",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783209951
+    },
+    {
+      "id": "style_1783209966",
+      "name": "恋活",
+      "positive_prefix": "{{{{{koikatsu,koikatsu screenshot}}}}},{unity3d (medium),3d},{zbrush (medium)},{{game screenshot}}, 1.6::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  2koma, muscular, muscles, redundant people, shiny skin, oily skin, wet skin, sweat, plastic skin, gloss, specular highlights, bloom, harsh lighting, 3d render, wet look, greasy, sketch, rough sketch, loose lines, fuzzy lines, blurred lines, jagged lines, aliasing, multiple lines, messy drawing, intricate hair, detailed hair, strong color, high contrast,individual strands, intricate hair, detailed hair,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783209966
+    },
+    {
+      "id": "style_1783209984",
+      "name": "线条北条司",
+      "positive_prefix": "5::best quality, absurdres, very aesthetic, detailed, masterpiece::, 2::artist:houjou_tsukasa::, 0.3::misaka_12003-gou::, 1.5::artist:huke::, 1.3::artist:ero404 ::,  -2::artist collaboration::, 4k, dramatic shadow,1.1::flat color::, -0.8::warm color::, -1::muscles::, 1.1::white background, pure background::, -2::2koma, border::, -2::green::,  1.2::golden ratio of human body::, 1.6::eye contact ::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma, muscular, muscles, redundant people,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783209984
+    },
+    {
+      "id": "style_1783210017",
+      "name": "动漫一绝",
+      "positive_prefix": "5::best quality, absurdres, very aesthetic, detailed, masterpiece::, 4::artist:ero404 ::, year 2024, 0.55::artist:huke::, -2::artist collaboration::, 2::golden ratio of human body::, 2::animation::, 4k, 1.5::ray tracing, cinematic lighting ::, 1.3::flat color, vector trace, clean lines, cel shading, minimalism::, -0.8::warm color::, -1::muscles::, -2::2koma, border::, -2::green::,  1.2::golden ratio of human body::,  0.6::depth of field, shallow depth of field, blurry background, bokeh ::, focus on character, f/1.8, 1.6::eye contact ::, 1.4::simple hair, smooth hair, glossy hair, hair highlights::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma, detailed hair, intricate hair, loose strands, hair texture, sketch, rough sketch, messy lines, multiple lines, heavy lines, thick outlines, sketch, hatching, shading, contour,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783210017
+    },
+    {
+      "id": "style_1783210837",
+      "name": "漫画北条司",
+      "positive_prefix": "5::best quality, absurdres, very aesthetic, detailed, masterpiece::, 2::artist:houjou_tsukasa::, 0.5::misaka_12003-gou::, 0.55::artist:huke::, 1.05::artist:ero404 ::,  -2::artist collaboration::, realistic, animation, 4k, 1.5::ray tracing, cinematic lighting ::, 1.1::flat color::, -0.8::warm color::, -1::muscles::, -2::2koma, border::, -2::green::,  1.2::golden ratio of human body::, 1.3::matte skin, detailed skin texture, soft lighting, subsurface scattering ::, 0.6::shiny skin, oily skin, specular highlights, porcelain skin, realistic skin, intricate details::, 1.3::soft lighting, diffuse reflection, highly detailed skin texture, subsurface scattering ::, 1.1::soft focus, delicate features, velvet skin, dry skin, cinematic lighting ::, 1.3::matte hair, cel shading, traditional media ::, 1.4::bold line, strong line weight, ink drawing ::, 1.2::clean lines, crisp outlines ::, 0.6::depth of field, shallow depth of field, blurry background, bokeh ::, focus on character, f/1.8, 5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  2koma, muscular, muscles, redundant people, shiny skin, oily skin, wet skin, sweat, plastic skin, gloss, specular highlights, bloom, harsh lighting, 3d render, wet look, greasy, sketch, rough sketch, loose lines, fuzzy lines, blurred lines, jagged lines, aliasing, multiple lines, messy drawing, intricate hair, detailed hair, strong color, high contrast,individual strands, intricate hair, detailed hair,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783210837,
+      "sample_ts": 0
+    },
+    {
+      "id": "style_1783210858",
+      "name": "目珠一绝",
+      "positive_prefix": "{{{{skindentation,plump,shiny_skin,wet_skin, white_skin,oil_skin,curvy,anime face}}}},{artist:wlopc},1.2::xiaoluo_xl::,1.3::Artist: misaka_12003-gou::,1.2::Artist:shexyo::,1.05::asanagi::,1.3::ratatatat74 ::,0.7::Artist:b.sa_(bbbs)::,1.05::Artist:qiandaiyiyu::,1.05::artist::natedecock::,1.05::artist::kunaboto::,0.75::artist::kandata_nijou::,1.05::artist::zer0zer0::,1.05::artist::jasony::,dino_(dinoartforame), wanke, liduke, year 2025, -2::artist collaboration, redundant people::, realistic,4k,-2::green ::,realistic skin surface, and lifelike flesh with little obliques::, 1.3::photorealistic::, 1.3::photo(medium)::, 5::best quality, absurdres, very aesthetic, detailed, masterpiece::, 5::flat_color::, -5::2koma::, 1.6::eye contact ::, 2::speech bubble::,",
+      "negative_prefix": "{{{{skindentation,plump,shiny_skin,wet_skin, white_skin,oil_skin,curvy,anime face}}}},{artist:wlopc},1.2::xiaoluo_xl::,1.3::Artist: misaka_12003-gou::,1.2::Artist:shexyo::,1.05::asanagi::,1.3::ratatatat74 ::,0.7::Artist:b.sa_(bbbs)::,1.05::Artist:qiandaiyiyu::,1.05::artist::natedecock::,1.05::artist::kunaboto::,0.75::artist::kandata_nijou::,1.05::artist::zer0zer0::,1.05::artist::jasony::,dino_(dinoartforame), wanke, liduke, year 2025, -2::artist collaboration, redundant people::, realistic,4k,-2::green ::,realistic skin surface, and lifelike flesh with little obliques::, 1.3::photorealistic::, 1.3::photo(medium)::, 5::best quality, absurdres, very aesthetic, detailed, masterpiece::, 5::flat_color::, -5::2koma::, 1.6::eye contact ::,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783210858
+    },
+    {
+      "id": "style_1783210900",
+      "name": "黑白漫画",
+      "positive_prefix": "2::black and white only, no color,detailed linework, line art, monochrome::, 1.5::artist:yao liao wang::,  best quality, amazing quality, very aesthetic, absurdres, -2::warm color::, -2::2koma, border::, -2::artist collaboration::, 0.8::dino_(dinoartforame), wanke, liduke ::, year 2025, realistic, 4k, 1.5::photorealistic::, 1.5::photo(medium)::, 1::oily shiny skin ::, 1.5::artist:ero404 ::,  0.5::thick lips::, dramatic shadow, -1::muscles::, 0.1::white background, pure background::,5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "{{{{bad anatomy}}}},{bad feet},bad hands,{{{bad proportions}}},{blurry},cloned face,cropped,{{{deformed}}},{{{disfigured}}},error,{{{extra arms}}},{extra digit},{{{extra legs}}},extra limbs,{{extra limbs}},{fewer digits},{{{fused fingers}}},gross proportions,ink eyes,ink hair,jpeg artifacts,{{{{long neck}}}},low quality,{malformed limbs},{{missing arms}},{missing fingers},{{missing legs}},{{{more than 2 }}},mutated hands,{{{mutation}}},normal quality,owres,{{poorly drawn face}},{{poorly drawn hands}},reen eyes,signature,text,{{too many fingers}},{{{ugly}}},username,uta,watermark,worst quality,{{{more than 2 legs}}},glowing edges, outline glow, halo, bloom, colorful, colors, chromatic,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783210900
+    },
+    {
+      "id": "style_1783210924",
+      "name": "清纯油画3d",
+      "positive_prefix": "1.5::artist:yao liao wang::,  best quality, amazing quality, very aesthetic, absurdres, -2::warm color::, -2::2koma, border::, -2::artist collaboration::, 0.8::dino_(dinoartforame), wanke, liduke ::, year 2025, realistic, 4k, 1.5::photorealistic::, 1.5::photo(medium)::, 1::oily shiny skin ::, 1.5::artist:ero404 ::,  0.5::thick lips::, dramatic shadow, -1::muscles::, 0.1::white background, pure background::, detailed linework,5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "{{{{bad anatomy}}}},{bad feet},bad hands,{{{bad proportions}}},{blurry},cloned face,cropped,{{{deformed}}},{{{disfigured}}},error,{{{extra arms}}},{extra digit},{{{extra legs}}},extra limbs,{{extra limbs}},{fewer digits},{{{fused fingers}}},gross proportions,ink eyes,ink hair,jpeg artifacts,{{{{long neck}}}},low quality,{malformed limbs},{{missing arms}},{missing fingers},{{missing legs}},{{{more than 2 }}},mutated hands,{{{mutation}}},normal quality,owres,{{poorly drawn face}},{{poorly drawn hands}},reen eyes,signature,text,{{too many fingers}},{{{ugly}}},username,uta,watermark,worst quality,{{{more than 2 legs}}},glowing edges, outline glow, halo, bloom,  black and white only,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783210924
+    },
+    {
+      "id": "style_1783211013",
+      "name": "武田弘光写实熟女",
+      "positive_prefix": "5::best quality, absurdres, very aesthetic, detailed, masterpiece::,1.1::misaka_12003-gou ::, 3.3::artist:houjou_tsukasa::, 1.2::artist:takeda_hiromitsu::, -2::artist collaboration::, 0.8::dino_(dinoartforame), wanke, liduke ::, year 2025, realistic, 4k, 1.5::photorealistic::, 1.5::photo(medium)::, 1::oily shiny skin ::, 1.5::artist:ero404 ::,  5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211013
+    },
+    {
+      "id": "style_1783211046",
+      "name": "忧郁油画2",
+      "positive_prefix": "1.2::misaka12003-gou ::, 0.8::dino(dinoartforame), wanke, liduke ::, year 2025, realistic, 4k, 1.5::photorealistic::, 1.5::photo(medium)::, 20::best quality, absurdres, very aesthetic, detailed, masterpiece::, 5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211046
+    },
+    {
+      "id": "style_1783211073",
+      "name": "无敌2",
+      "positive_prefix": "4::masterpiece, best quality ::, 2::official art, year2024 ::,\n1.75::Artist:yoneyama_mai ::,\n0.85::Artist:rella ::,\n0.75::Artist:hiten_(hitenkei) ::,\n1.25::Artist:Vincent van Gogh ::,\n1.25::Artist:qiandaiyiyu ::,\n0.75::Artist:ruanjia ::,\n0.65::Artist:void_0 ::,\n-2::3D,2koma::,no text,5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "blurry, lowres, bad anatomy, extra fingers, malformed hands, text, watermark, signature, ugly, deformed, distorted face, mutation, disfigured, cartoonish, extra limbs, low quality, worst quality, anime, cartoon,painting, drawing, oversaturated, deformed hands, extra fingers, mutated hands, unnatural lighting, unrealistic eyes, plastic skin, doll-like, symmetry, blurry background, poorly drawn face, text, watermark, abstract background, low resolution",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211073
+    },
+    {
+      "id": "style_1783211147",
+      "name": "熟女风3",
+      "positive_prefix": "5::best quality, absurdres, very aesthetic, detailed, masterpiece::, 2::matured female::, artist:yd_(orange_maru), {{{{artist:suzumi_(ccroquette)}}}}, [[artist:jhony_caballero]], [[artist:rella]], artist:starshadowmagician,[[[[[artist:aspara]]]]], [[[artist:akakura]]], [artist:cuso4 suiwabutu], {artist:wlop}, [[[[[[artist:nishiii26miii]]]]]], year 2024, 5::eye contact::,",
+      "negative_prefix": "furry, lowres, {bad}, error, fewer, extra, missing, worst quality, bad quality, watermark, unfinished, displeasing, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract], {bad anatomy}, bad fingers, mutated fingers, mutated hands, extra hand, bad hands, mismatched pupils, heart-shaped pupils, glowing eyes, @_@, toy, chibi, [[[pingu]]]",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211147
+    },
+    {
+      "id": "style_1783211178",
+      "name": "3d5",
+      "positive_prefix": "0.8::ria_(baka-neearts) ::, korean_commentary, 1.1::artist:yoongonji ::, 0.5::m71 ::, realistic, 4k, 2.5::photorealistic ::, 1.5::photo(medium) ::, 20::best quality, absurdres, very aesthetic, detailed, masterpiece :: , best cg, ultra-best rendering, render, 4K resolution, ultra-detailed, real human skin, realistic skin texture, fabric texture, ultra-detailed skin,Octane Render, 3.65::3D, realistic, photorealistic ::,0.8::artist:seven_(sixplusone) ::, 0::artist:nixeu ::,-5::2D ::, year2024,cinematic lighting, ray tracing,volumetric lighting, soft shadows,,2::3D rendering::, 1.5::(Unreal Engine 5)::,  1.05::artist:drayqin::, 1.15::Fabric texture detail::, final_fantasy game_cg,0::cinematic lighting, warm soft light, golden hour, strong rim light::, very aesthetic, masterpiece, no text, 1.5::black eyes,  5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "5::ugly, ugly face, bad face, poorly drawn face, bad ugly skin ::,abstract, deformed hands, deformed feet, distorted body, unnatural body, asymmetrical limbs, floating limbs, disconnected limbs, blood vessel, western,western animation, nsfw, lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 3::2D, anime, cartoon, drawing, painting, Disney style, Pixar style, cel-shaded::, 1.5::western woman, western face, caucasian::, 1.4::ugly, deformed, distorted, disfigured, bad anatomy, malformed, poorly drawn face, bad hands, extra limbs, floating limbs, disconnected limbs, facial asymmetry::, 1.3::plastic skin, wax figure, clay render, doll joint, unreal engine eyes::,1.1::lowres, bad quality, worst quality, blurry, noisy, jpeg artifacts, rendering artifacts, glitch::,\n\nwatermark, text, signature, logo, username, film grain, scan, multiple views, elf ear,1.5:: glossy skin, plastic skin, vinyl skin::, 1.3::uncanny valley, doll, video game character, anime, manga::,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211178
+    },
+    {
+      "id": "style_1783211204",
+      "name": "忧郁油画",
+      "positive_prefix": "2::pov::, 1.2::misaka12003-gou ::, 0.8::dino(dinoartforame), year 2025, realistic, 4k, 1.3::photorealistic::, 1.3::photo(medium)::, 15::best quality, absurdres, very aesthetic, detailed, masterpiece::,{{{heavy atmosphere}}}, {somber}, dramatic shadows,perfect hands, perfect feet, 5 toes,  5 fingers,5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "worst quality,low quality,vibrant colors, neon, saturated, high contrast,\nvivid, colorful, pop art, fluorescent,\nhard lighting, harsh shadows, glare, bloom,\nphotorealistic, 3D render, realistic,lowres,signature,username,bad id,bad twitter id,english commentary,logo,bad hands,mutated hands,mammal,anthro,furry,text, bad anatomy, extra fingers, extra toes, bad hands, extra fingers, missing fingers",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211204
+    },
+    {
+      "id": "style_1783211254",
+      "name": "动漫444",
+      "positive_prefix": "1.8::bunchi::, 0.9::gsusart::, 1.2::sos adult::, 0.5::ndgd::, 1.2::shiroi yoru::, 1.2::betabeet::, b.sa (bbbs), 0.7::ningen mame::, 1.5::ie (raarami)::, 0.9::channel (caststation)::, 1.2::akakura::, 0.8::mochirong::, 5::masterpiece, best quality, amazing quality, very aesthetic, absurdres::, 2.8::detailed skin, realistic rendering, detailed textures, intricate details, skindentation, depth of field, curvy, body blush, smell, steaming body::, -3::multiple views, upscaled, blurry, watermark::, -4::artist collaboration::, year 2025, newest, 2.5::super fine illustration, ideal ratio body proportions, realistic material rendering, fine fabric emphasis::, 5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma, detailed hair, intricate hair, loose strands, hair texture, sketch, rough sketch, messy lines, multiple lines, heavy lines, thick outlines, sketch, hatching, shading, contour,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211254,
+      "sample_ts": 0
+    },
+    {
+      "id": "style_1783211266",
+      "name": "动漫333",
+      "positive_prefix": "mamimi (mamamimi), oil painting (medium), {{traditional media, calligraphy brush (medium)}}, 5::masterpiece, best quality, amazing quality, very aesthetic, absurdres::, 2.8::detailed skin, realistic rendering, detailed textures, intricate details, skindentation, depth of field, curvy, body blush, smell, steaming body::, -3::multiple views, upscaled, blurry, watermark::, -4::artist collaboration::, year 2025, newest, 2.5::super fine illustration, ideal ratio body proportions, realistic material rendering, fine fabric emphasis::, 5::eye contact::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma, detailed hair, intricate hair, loose strands, hair texture, sketch, rough sketch, messy lines, multiple lines, heavy lines, thick outlines, sketch, hatching, shading, contour,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211266
+    },
+    {
+      "id": "style_1783211283",
+      "name": "动漫222",
+      "positive_prefix": "0.82::ie (raarami)::, 0.5::ratatatat74,::, na tarapisu153,::, ask (askzy), bee (deadflow), freng, doremi(doremi4704), gogalking, healthyman, 2::SOS adult::, 5::masterpiece, best quality, amazing quality, very aesthetic, absurdres::, 2.8::detailed skin, realistic rendering, detailed textures, intricate details, skindentation, depth of field, curvy, body blush, smell, steaming body::, -3::multiple views, upscaled, blurry, watermark::, -4::artist collaboration::, year 2025, newest, 2.5::super fine illustration, ideal ratio body proportions, realistic material rendering, fine fabric emphasis::, 5::eye contact::, 5::eye contact::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma, detailed hair, intricate hair, loose strands, hair texture, sketch, rough sketch, messy lines, multiple lines, heavy lines, thick outlines, sketch, hatching, shading, contour,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211283
+    },
+    {
+      "id": "style_1783211307",
+      "name": "动漫111",
+      "positive_prefix": "b.sa (bbbs), bunchi, henriiku (ahemaru), shirabe shiki, 5::masterpiece, best quality, amazing quality, very aesthetic, absurdres::, 2.8::detailed skin, realistic rendering, detailed textures, intricate details, skindentation, depth of field, curvy, body blush, smell, steaming body::, -3::multiple views, upscaled, blurry, watermark::, -4::artist collaboration::, year 2025, newest, 2.5::super fine illustration, ideal ratio body proportions, realistic material rendering, fine fabric emphasis::, 5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma, detailed hair, intricate hair, loose strands, hair texture, sketch, rough sketch, messy lines, multiple lines, heavy lines, thick outlines, sketch, hatching, shading, contour,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211307
+    },
+    {
+      "id": "style_1783211330",
+      "name": "动漫777",
+      "positive_prefix": "fat goose, ruton-niki, taroutk, le (huanglongen), tianliang duohe fangdongye, dm (dai miao), catsmoon, nahaki, gujianshaonu, suiryuu (18559651), rei (sanbonzakura), Kairunoburogu, icecake, omone hokoma agm, xssh, kuroshiro no tsubasa, torino aqua, buko (bukosuki), bodhi wushushenghua, mimoza (96mimo414), atdan, kamue, aiharararara, kyoichi, nekoda (maoda), laserflip, wd (1106592840), ursica, 5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma, detailed hair, intricate hair, loose strands, hair texture, sketch, rough sketch, messy lines, multiple lines, heavy lines, thick outlines, sketch, hatching, shading, contour,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211330
+    },
+    {
+      "id": "style_1783211367",
+      "name": "动漫888",
+      "positive_prefix": "1.4::shuzuku::, irodori warabi, 0.4::yoneyama mai::, rella, junngoro, 5::masterpiece, best quality, amazing quality, very aesthetic, absurdres::, 2.8::detailed skin, realistic rendering, detailed textures, intricate details, skindentation, depth of field, curvy, body blush, smell, steaming body::, -3::multiple views, upscaled, blurry, watermark::, -4::artist collaboration::, year 2025, newest, 2.5::super fine illustration, ideal ratio body proportions, realistic material rendering, fine fabric emphasis::, 5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma, detailed hair, intricate hair, loose strands, hair texture, sketch, rough sketch, messy lines, multiple lines, heavy lines, thick outlines, sketch, hatching, shading, contour,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211367
+    },
+    {
+      "id": "style_1783211399",
+      "name": "动漫999",
+      "positive_prefix": "0.7::nishiii26miii::, 1.3::gtunver::, 1.1::laserflip, q azieru, zynxy, agoto::, 1=2, nekodayo22, 0.9::goldenmiocola::, 1.5::cutesexyrobutts::, 1.6::liduke::, 2.6::dino (dinoartforame)::, 1.2::bm94199,::, nixeu, year 2025, newest, -2::skin glossy, shiny skin::, 1.9::photorealistic, hyperrealistic::, 2::photo (medium), skindentation::, 2.8::path tracing, anti-aliasing shader, subsurface scattering, light diffusion, smooth shading, beautiful detailed face, beautiful detailed eyes, soft lighting, backlighting, blurry background::, 20::best quality, absurdres, very aesthetic, high detailed, masterpiece::, 15::ultra-detailed::, -1.5::cel shading::, muted color, -3.5::outlines, thick outlines, artist name, image noise, deformed::, 2.5::super fine illustration, ideal ratio body proportions, realistic material rendering, fine fabric emphasis::, 5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma, detailed hair, intricate hair, loose strands, hair texture, sketch, rough sketch, messy lines, multiple lines, heavy lines, thick outlines, sketch, hatching, shading, contour,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211399
+    },
+    {
+      "id": "style_1783211537",
+      "name": "动漫aaa",
+      "positive_prefix": "1.2::xiaoluo xl::, 1.6::shexyo::, 1.8::kidmo::, 1.8::ratatatat74, ::, 0.8::aoi sakura (seak5545)::, 1.4::kome cola::, 1.2::yunsang::, 1.0::dishwasher1910, ::, 1.2::omone hokoma agm::, 0.4::c.cu::, 1.2::ame (uten cancel)::, 0.6::club3,::, 1.6::sakimichan::, 5::3D, blender (medium)::, 1.5::photorealistic, photo-referenced::, masterpiece, best quality, amazing quality, very aesthetic, absurdres, -4::artist collaboration::, year 2025, newest,  perfect rendering, detailed textures, smell, steaming body, dramatic shadow, best illumination, detailed lighting, chiaroscuro, 2.8::facial features with three-dimensional sense, delicate skin texture, natural skin glow, velvety skin without veins::, 1.5::skindentation, matte skin, detailed skin, pale skin, clean skin::, 1.3::photo (medium), soft lighting, rim lighting, no lineart::, -2::greasy skin, shiny skin::,5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page,  lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page, 2koma, detailed hair, intricate hair, loose strands, hair texture, sketch, rough sketch, messy lines, multiple lines, heavy lines, thick outlines, sketch, hatching, shading, contour,",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211537
+    },
+    {
+      "id": "style_1783211562",
+      "name": "动漫bbb",
+      "positive_prefix": "2.1::aoi ogata::, 1.5::an yasuri::, 1.2::mx2j::, 0.7::quasarcake::, 0.6::qiandaiyiyu::, 1.5::sos adult, shiroshisu, kome cola, b.sa (bbbs)::, 0.7::yoshio (55level)::, 2::bm94199, ratatatat74, thirty 8ght, nixeu, takeda hiromitsu::, 4::flat color, sketch, clean lines::, 10::high detail::, 4::photorealistic, realistic::, -4::artist collaboration::, year 2025, newest,  animated, dynamic angle, dynamic pose, best illumination, best shadow, 8k resolution, best quality, amazing quality, very aesthetic, absurdres, -1::simple illustration, artist name, logo, ui, gui::, -5::thick outlines::, 1.2::glossy skin, humid skin, steaming body::, very aesthetic, masterpiece, -2::upscaled::, -4::shiny skin::, heart, sound effects, no text, fine fabric emphasis,5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211562
+    },
+    {
+      "id": "style_1783211592",
+      "name": "动漫ccc",
+      "positive_prefix": "0.8::ie (raarami)::, 0.5::ratatatat74,::, na tarapisu153, ask (askzy), bee (deadflow), freng, doremi (doremi4704), gogalking, healthyman, sos adult, 5::masterpiece, best quality, amazing quality, very aesthetic, absurdres::, 2.8::detailed skin, realistic rendering, detailed textures, intricate details, skindentation, depth of field, curvy, body blush, smell, steaming body::, -3::multiple views, upscaled, blurry, watermark::, -4::artist collaboration::, year 2025, newest, 2.5::super fine illustration, ideal ratio body proportions, realistic material rendering, fine fabric emphasis::,5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211592
+    },
+    {
+      "id": "style_1783211606",
+      "name": "动漫ddd",
+      "positive_prefix": "1.1::pija (pianiishimo), toma50,::, 0.8::pepper (arin sel), noveninei::, 1.5::satou kuuki::, 0.7::kase daiki::, 1.2::soraoraora::, 1.2::ie (raarami)::, 0.8::motsuaki::, {{adelie cat}}}, {yasuyuki}, 5::masterpiece, best quality, amazing quality, very aesthetic, absurdres::, 2.8::detailed skin, realistic rendering, detailed textures, intricate details, skindentation, depth of field, curvy, body blush, smell, steaming body::, -3::multiple views, upscaled, blurry, watermark::, -4::artist collaboration::, year 2025, newest, 2.5::super fine illustration, ideal ratio body proportions, realistic material rendering, fine fabric emphasis::, 5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211606
+    },
+    {
+      "id": "style_1783211617",
+      "name": "动漫eee",
+      "positive_prefix": "0.5::shiroi yoru::, 0.4::horn/wood::, yuyu (yuyuworks), akita hika, gsusart, 0.7::ratatatat74, b.sa (bbbs)::, 0.9::mitsuame miiro, choujiroo, bikkii::, 1.1::thirty 8ght, xipa, yanazuri (kimossari337)::, 1.5::henriiku (ahemaru)::, 5::masterpiece, best quality, amazing quality, very aesthetic, absurdres::, 2.8::detailed skin, realistic rendering, detailed textures, intricate details, skindentation, depth of field, curvy, body blush, smell, steaming body::, -3::multiple views, upscaled, blurry, watermark::, -4::artist collaboration::, year 2025, newest, 2.5::super fine illustration, ideal ratio body proportions, realistic material rendering, fine fabric emphasis::,5::eye contact::, 2::speech bubble::,",
+      "negative_prefix": "",
+      "params": {},
+      "sample_image": "",
+      "created_at": 1783211617
+    }
+  ],
+  "active_by_bot": {}
+}

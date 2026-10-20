@@ -1,0 +1,576 @@
+# claude-tgbot · 数字生命 Telegram bot 引擎
+
+用 Claude Code 当"大脑"驱动的 Telegram 角色扮演机器人。每个机器人是一个持续运行的 Claude 会话，有人设、记忆、情绪，还有随时间变化的「好感/信任/NSFW/精力」四个关系数值，会像真人一样有分寸地回应——不随叫随到、也不无脑拒绝。
+
+内附一个示例人设 **陈露露**（35 岁小学语文老师，慢热高冷，从陌生人起步）演示整套机制。
+
+> ⚠️ 成人向角色扮演项目，仅供授权的个人娱乐用途。请遵守当地法律与 Telegram / 模型服务条款。
+>
+> ✅ **单 bot 私聊**（主链路）已在 macOS 端到端验证通过。原生 Windows 在上一版验证通过；本版专门修了 Windows 的 worker 启动命令行、claude 探测、摘要子进程收尾三处，目前只有模拟器与单测证据，**待真机复验**。
+> 🧪 **朋友圈生图、多 bot 群聊导演**是进阶功能，代码齐全但尚未在所有平台完整跑通，用到时留意。
+
+---
+
+## 先搞懂几个词（不然后面看不懂）
+
+| 词 | 大白话 |
+|----|--------|
+| **仓库 / repo** | 就是这堆代码。用 `git clone` 下载到你电脑上。 |
+| **Telegram bot token** | 你在 Telegram 里找 `@BotFather` 申请机器人后，它给你的一串密码（形如 `12345:AAxxxx`）。程序拿它替你收发消息。 |
+| **你的 Telegram user_id** | 你自己账号的数字 ID（不是用户名）。用来限定「只有你能跟这个 bot 私聊」。查法：Telegram 里找 `@userinfobot` 发条消息，它回你的 id。 |
+| **DeepSeek key** | 去 [platform.deepseek.com](https://platform.deepseek.com) 注册拿的 API key（形如 `sk-xxxx`）。程序用它在后台给对话打情绪分、算关系数值。**和下面的 Claude provider 是两回事。** |
+| **Claude provider** | 机器人「说话」用哪个模型。可以是你的 Claude 官方订阅，也可以是第三方中转站。详见后面「切换模型来源」。 |
+| **dispatcher** | 常驻后台的收发进程，每个 bot 一个。它收 Telegram 消息、唤起 Claude 生成回复。 |
+| **worker** | 真正「扮演角色说话」的那个 Claude 进程，由 dispatcher 按需拉起。 |
+
+---
+
+## 开始之前：装 3 样东西
+
+无论 Mac 还是 Windows，先装好这三个（都是一次性的）：
+
+1. **Python 3.10 以上** —— [python.org](https://www.python.org/downloads/) 下载安装（Windows 安装时勾选 "Add Python to PATH"）。
+2. **Bun** —— 一个 JS 运行时，跑收发进程用。装法见 [bun.sh](https://bun.sh)。
+3. **Claude Code CLI** —— 机器人的大脑。装好后在终端跑一次 `claude` 登录你的 Claude 账号（或按后面「切换模型来源」配中转站）。
+
+装完在终端敲 `python --version`、`bun --version`、`claude --version`，三条都能打出版本号就算齐了。
+
+---
+
+## 需要哪些密钥（钥匙清单）
+
+### 必需的 3 把（不配 bot 跑不起来）
+
+| 密钥 | 配在哪 | 干什么 |
+|------|--------|--------|
+| **Telegram bot token** | `channels/<bot>/.env` 的 `TELEGRAM_BOT_TOKEN` | 收发 Telegram 消息（每个 bot 一把，找 `@BotFather` 拿） |
+| **DeepSeek key** | `configs/_global.yml` 的 `jiwen.delta_llm.api_key` | 后台给对话打情绪分、算关系数值、群聊导演、主动消息 |
+| **Claude provider** | `~/.claude/settings.json` 或直接 `claude` 订阅登录 | 机器人「说话」的模型。见下方「切换模型来源」 |
+
+### 可选的（对应功能才需要，不用就不配）
+
+| 密钥/服务 | 配在哪 | 什么时候需要 |
+|-----------|--------|--------------|
+| **NovelAI token** | 朋友圈网页(`:8765`)的设置页填写 → 写进 novelai-skill 的 `.env.local` | 仅当你要**用 NovelAI 生图**（自拍/配图）。生图 skill **仓库已自带**（`skills/novelai-skill/`），把它复制到 `~/.claude/skills/` 即可用 |
+| **ComfyUI** | `configs/_global.yml` 的 `moments.image_generation.comfyui.url` | 用本地 ComfyUI 生图时。是本地服务，**无需 key**，只填地址（默认 `127.0.0.1:8188`） |
+
+**不需要 key 的**：天气（wttr.in）、RSS 热榜（rsshub）、节假日（timor.tech）——都是免费公开接口。
+
+> 小结：**只想让 bot 能私聊聊天** → 配前 3 把里的 Telegram token + DeepSeek key + Claude 登录，就够了。生图、朋友圈是锦上添花，用到再配。
+
+### 每把钥匙具体怎么弄
+
+**① Telegram bot token + 你的 user_id**
+1. Telegram 里搜 **@BotFather**，发 `/newbot`，按提示起个名字和用户名 → 它回给你一串 token（形如 `12345678:AAxxxx`），这就是 `TELEGRAM_BOT_TOKEN`。
+2. 再搜 **@userinfobot**，随便发条消息，它回你的数字 **user_id**（填进 `access.json` 的 `allowFrom`）。
+
+**② DeepSeek key**
+1. 打开 [platform.deepseek.com](https://platform.deepseek.com)，注册/登录。
+2. 充值几块钱（后台打分很省，一个月几毛钱）。
+3. 左侧「API keys」→「创建 API key」→ 复制那串 `sk-xxxx`，填进 `configs/_global.yml`。
+
+**③ Claude provider（机器人说话用的模型）—— 二选一**
+- **官方订阅**：有 Claude Pro/Max 订阅的话，终端跑 `claude` 登录一次即可，不用填 key。
+- **第三方中转（没有官方订阅走这个）**：某宝 / 发卡网搜「Claude API 中转」「Claude 镜像站」买一个中转 key，会给你一个**中转地址**和一把 **key**，按下方「切换模型来源」的 B 方案填进 `settings.json`。⚠️ 认准支持 **Claude Messages API 格式**的中转（多数都支持），纯 ChatGPT/OpenAI 格式的不能用。
+
+**④ NovelAI token（可选，只有要 NovelAI 生图才需要）**
+1. 需要一个 NovelAI 订阅账号：官网 [novelai.net](https://novelai.net) 自己订阅（要外币卡/PayPal），或**某宝搜「NovelAI 账号」直接买一个已订阅的**（便宜省事）。
+2. 拿到账号后登录 novelai.net → 右上头像 → **Account / User Settings** → 找 **"Get Persistent API Token"** 生成一串长 token。
+3. 把生图 skill 复制到 Claude 的 skills 目录（仓库已自带，脱敏干净）：
+   - Mac/Linux：`cp -r skills/novelai-skill ~/.claude/skills/`
+   - Windows：`Copy-Item -Recurse skills\novelai-skill $env:USERPROFILE\.claude\skills\`
+4. 这串 token 填进朋友圈网页（`http://localhost:8765` 的设置页），程序会写进 skill 的 `.env.local`。
+> 只想聊天不生图的话，这几步整个跳过。
+
+**④' 改用本机 ComfyUI 生图（可选，NovelAI 的替代，不花钱不用外币卡）**
+1. 本机装好并启动 ComfyUI（监听 `http://127.0.0.1:8188`），准备一个 txt2img 的 workflow API JSON。
+2. `configs/_global.yml` 里 `moments.image_generation.comfyui` 段填上你的 `workflow`（API JSON 路径）、`output_dir`（ComfyUI 的 output 目录）；`url` 默认 `127.0.0.1:8188`。
+3. 装 ComfyUI 生图 skill（和 novelai-skill **二选一**，别同时装，触发词会打架）：
+   - Mac/Linux：`cp -r skills/comfyui-skill ~/.claude/skills/`（如已装 novelai-skill 先 `rm -rf ~/.claude/skills/novelai-skill`）
+   - Windows：`Copy-Item -Recurse skills\comfyui-skill $env:USERPROFILE\.claude\skills\`（如已装 novelai-skill 先删掉那个目录）
+4. 跑生图脚本的 Python 需装 `PyYAML`（就是你跑朋友圈网页那个 Python）。ComfyUI 是本地服务，**无需任何 key**。
+
+> **谁用哪个引擎**：**聊天里发图** = 你装了哪个 skill（novelai-skill 或 comfyui-skill）就用哪个；**朋友圈配图** = `configs/_global.yml` 里 `image_generation.provider` 填 `novelai` 还是 `comfyui`。两者独立。
+
+> **图片怎么发出来的**：bot 用 `reply` 工具的 `files` 参数发图。想让图**插在文字中间**（像真人聊天那样"说两句 → 甩张图 → 再说两句"），在正文里想发图的位置单独一行写 `[[图1]]` / `[[图2]]`，数字对应 `files` 的第几张；不写标记，图片就统一在所有文字之后发。人设模板的「图片内容规则」一节已经写好了这条规矩，照抄即可。
+
+---
+
+## 换成你自己的人设（重要！别一直用陈露露）
+
+**陈露露只是个示例。** 你几乎肯定想要自己的角色。人设写在两个地方：
+
+| 文件 | 改什么 |
+|------|--------|
+| `channels/<bot>/CLAUDE.md` 的 **`# SOUL.md`** 和 **`# USER.md`** 段 | 角色的性格、说话方式、和你的关系、怎么称呼你——**这是核心** |
+| `configs/<bot>.yml` | `display_name`(显示名)、`user_address`(角色怎么叫你)、`bio`、`persona_summary`(一句话摘要) |
+
+（`CLAUDE.md` 最上面的 `# AGENTS.md` 段是通用回复规则，不用动。）
+
+### 两条路，挑一条
+
+**路 A — 让 AI 帮你写（最省事，推荐给小白）**
+把下面这段丢给 ChatGPT 或 Claude，描述你想要的角色，让它生成，然后把结果贴进 `channels/chenlulu/CLAUDE.md` 的 `# SOUL.md` 段（替换掉陈露露那部分）：
+> 「我在做一个 Telegram 角色扮演 bot。请帮我写一份角色人设，包含这些小节：核心设定、外貌特征、性格特征、说话特点、行为准则（含对 NSFW 内容的态度）、关系网（角色和用户是什么关系）、3-4 组示例对话。我想要的角色是：**<在这里描述你的角色：名字、年龄、身份、性格、和你的关系>**。语言口语化、有分寸、像真人。」
+
+**路 B — 照模板手动填**
+仓库里有个填空模板 `channels/_persona_template/`，每一段都标了「这里写什么」。复制它建自己的角色：
+```bash
+# Mac/Linux（把 myrole 换成你的角色英文名）
+cp -r channels/_persona_template ~/.claude/channels/myrole
+# 然后用编辑器打开 ~/.claude/channels/myrole/CLAUDE.md，把每个 < > 占位换成你的角色
+```
+```powershell
+# Windows
+Copy-Item -Recurse channels\_persona_template $env:USERPROFILE\.claude\channels\myrole
+notepad $env:USERPROFILE\.claude\channels\myrole\CLAUDE.md
+```
+用新角色名（如 `myrole`）时，还要建一份 `configs/myrole.yml`（复制 `configs/_example.yml` 改）——详见文末「加更多机器人」。端口和启动脚本不用动。
+
+> **最简单的玩法**：不想新建，直接改 `channels/chenlulu/CLAUDE.md` 的 `# SOUL.md`/`# USER.md` 两段，把陈露露换成你的角色即可，其它配置都不用动。改完重启一次 bot 生效。
+
+---
+
+## 部署（Mac / Linux）
+
+**一键安装**（推荐）——一条命令装依赖、铺好全部配置，最后列出仅剩的 3 个手填密钥位置：
+
+```bash
+git clone https://github.com/euphoriaaaaaa1/claude-tgbot.git ~/claudebotlife && cd ~/claudebotlife && bash install.sh
+```
+
+脚本第 ④ 步会逐项告诉你**去哪拿、填哪**，并让你当场粘贴写进文件（bot token / 你的 user_id / DeepSeek key；漏填的随时 `bash scripts/setup_keys.sh` 补），然后跑 `bash restart-bots.sh` 就上线了。管理台在 `http://127.0.0.1:8765/hub`，登录口令用 `cat ~/.claude-tgbot/hub.env` 查看。脚本可重复运行（复查用），不会覆盖你填过的配置。**不想在终端里填**：装完开 `http://127.0.0.1:8765/hub/setup`，同样这三项，网页里填一样生效（写的是同一批文件）。
+
+`install.sh` 还会顺手把**开机自启**注册好（launchd，以后每次登录自动起 bot），不用再手动填 plist。不想要就卸掉：
+
+```bash
+launchctl bootout gui/$UID/com.claudebotlife.autostart
+rm ~/Library/LaunchAgents/com.claudebotlife.autostart.plist
+```
+
+<details>
+<summary>想手动一步步来？点开看分步说明（与脚本等价）</summary>
+
+> 下面每一行 `#` 后面是"这条命令干什么"的说明。`cd 某目录` = "进入某个文件夹"。
+> 仓库可以放任何位置，本文统一放在用户主目录下的 `claudebotlife` 文件夹（即 `~/claudebotlife`）。
+
+```bash
+# ① 下载代码到 ~/claudebotlife 这个文件夹，然后进入它
+git clone https://github.com/euphoriaaaaaa1/claude-tgbot.git ~/claudebotlife
+cd ~/claudebotlife
+
+# ② 装 Python 依赖 + 装 dispatcher 的 JS 依赖
+python3 -m pip install -r requirements.txt   # Homebrew/Debian 的 Python 报 externally-managed-environment 时加 --user --break-system-packages（install.sh 会自动判断）
+cd dispatcher && bun install && cd ..     # 进 dispatcher 装依赖，再退回上级目录
+
+# ③ 全局配置：填你的 DeepSeek key
+cp configs/_global.example.yml configs/_global.yml   # 复制示例配置为正式配置
+nano configs/_global.yml                             # 打开编辑，把 jiwen.delta_llm.api_key 改成你的 sk-xxxx
+
+# ④ 把示例机器人「陈露露」的资料放到 Claude 的 channels 目录
+mkdir -p ~/.claude/channels
+cp -r channels/chenlulu ~/.claude/channels/          # 复制整个 chenlulu 文件夹过去
+
+# ⑤ 配置这个机器人的 token 和白名单
+cd ~/.claude/channels/chenlulu
+cp .env.example .env
+nano .env                # 把 TELEGRAM_BOT_TOKEN 改成你从 @BotFather 拿的 token
+nano access.json         # 把 allowFrom 里的 YOUR_TELEGRAM_USER_ID 改成你自己的数字 user_id
+cd ~/claudebotlife       # 回到仓库目录
+
+# ⑤.5 换成你自己的人设（强烈建议！别一直用陈露露）——详见下方「换成你自己的人设」
+#      最省事：编辑器打开 ~/.claude/channels/chenlulu/CLAUDE.md，改里面的 # SOUL.md 段
+
+# ⑥ 启动！
+cp restart-bots.example.sh restart-bots.sh
+bash restart-bots.sh     # 起后台收发进程；之后在 Telegram 给你的 bot 发消息就有回应了
+
+# ⑦ 开机自启（install.sh 自动做的就是这两条；仅 macOS，Linux 用 cron/systemd）
+sed "s#{REPO_DIR}#$HOME/claudebotlife#g; s#~/.bun/bin#$HOME/.bun/bin#g" \
+  plist-templates/autostart.plist.tmpl > ~/Library/LaunchAgents/com.claudebotlife.autostart.plist
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.claudebotlife.autostart.plist
+
+# ⑧（可选）开启情绪/关系数值引擎，每 5 分钟算一次
+python3 jiwen/tick.py    # 想长期自动跑，就挂到 launchd / cron 定时任务
+```
+
+看实时对话：`bash scripts/watch-bot.sh chenlulu`
+
+</details>
+
+---
+
+## 部署（Windows 10/11，原生，不需要 WSL）
+
+> 在 **PowerShell** 里跑（开始菜单搜 "PowerShell"）。`cd 某目录` = "进入某个文件夹"。
+> 本文把仓库放在 `你的用户目录\claudebotlife`（即 `$env:USERPROFILE\claudebotlife`）。
+
+```powershell
+# ① 下载代码到 用户目录\claudebotlife，然后进入它
+git clone https://github.com/euphoriaaaaaa1/claude-tgbot.git $env:USERPROFILE\claudebotlife
+cd $env:USERPROFILE\claudebotlife
+
+# ② 装 Python 依赖 + dispatcher 的 JS 依赖
+python3 -m pip install -r requirements.txt   # Homebrew/Debian 的 Python 报 externally-managed-environment 时加 --user --break-system-packages（install.sh 会自动判断）
+cd dispatcher; bun install; cd ..        # 进 dispatcher 装依赖，再退回上级目录
+
+# ③ 全局配置：填 DeepSeek key
+Copy-Item configs\_global.example.yml configs\_global.yml
+notepad configs\_global.yml              # 记事本打开，把 jiwen.delta_llm.api_key 改成你的 sk-xxxx，存盘
+
+# ④ 把示例机器人「陈露露」的资料放到 Claude 的 channels 目录
+mkdir $env:USERPROFILE\.claude\channels -Force
+Copy-Item -Recurse channels\chenlulu $env:USERPROFILE\.claude\channels\
+# 模板里"压缩后补群聊近况"钩子写的是 python3 + $CLAUDEBOTLIFE_REPO（只有 mac/Linux 的 shell 认），Windows 必须跑一遍安装器改成绝对路径：
+python scripts\install_compact_hook.py $env:USERPROFILE\.claude\channels\chenlulu
+
+# ⑤ 配置这个机器人的 token 和白名单
+cd $env:USERPROFILE\.claude\channels\chenlulu
+Copy-Item .env.example .env
+notepad .env                # 把 TELEGRAM_BOT_TOKEN 改成 @BotFather 给的 token
+notepad access.json         # 把 allowFrom 里的 YOUR_TELEGRAM_USER_ID 改成你自己的数字 user_id
+cd $env:USERPROFILE\claudebotlife    # 回到仓库目录
+
+# ⑤.5 换成你自己的人设（强烈建议！别一直用陈露露）——详见下方「换成你自己的人设」
+#      最省事：notepad $env:USERPROFILE\.claude\channels\chenlulu\CLAUDE.md，改里面的 # SOUL.md 段
+
+# ⑥ 装管理台后端 cliproxy（约 20 MB 下载）
+#    这一步同时生成 %USERPROFILE%\.claude-tgbot\hub.env —— 管理台 :8765/hub 的登录口令
+#    **只有这里会生成**。Windows 上不跑它就没有口令，而没口令 = 管理台零鉴权，
+#    所以哪怕你不打算换 provider，也建议先跑一次。
+powershell -ExecutionPolicy Bypass -File windows\install-cliproxy.ps1
+
+# ⑦ 启动！（首次若提示"禁止运行脚本"，前面加 -ExecutionPolicy Bypass）
+powershell -ExecutionPolicy Bypass -File windows\start-bots.ps1
+
+# ⑧ 注册后台任务：开机自启 + 主动消息 + 情绪引擎 + 朋友圈 + 记忆压缩 + cliproxy
+#    不用改任何文件，脚本会自己去 access.json 读你填的 user_id
+powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
+```
+
+看实时对话：`powershell -File windows\watch-bot.ps1 chenlulu`
+常用运维：`windows\restart-bots.ps1` 重启全部 · `windows\unregister-tasks.ps1` 卸载后台任务（含开机自启）。
+
+> ⑧ 里的「主动消息」任务需要你的数字 user_id。如果 ⑤ 的 `access.json` 还没填，脚本会黄字提示跳过这一个任务、其余照常注册；填好后重跑一次 ⑧ 就补上了。
+>
+> 跳过 ⑥ 的话，⑧ 也会黄字提示跳过 cliproxy 那个任务（其余照常注册）；补装后重跑 ⑧ 即可。
+
+**先自测环境（强烈建议，不碰 Telegram）**：`cd dispatcher; bun test-e2e.ts` —— 打出 `5 过 / 0 挂` 说明这台机器整条链路 OK。
+
+---
+
+## 启动 / 停止 / 开机自启 / 后台服务
+
+| 操作 | Mac / Linux | Windows |
+|------|-------------|---------|
+| **启动 / 重启全部 bot** | `bash restart-bots.sh` | `powershell -File windows\restart-bots.ps1` |
+| **停止全部 bot** | `cp stop-bots.example.sh stop-bots.sh && bash stop-bots.sh` | `powershell -File windows\stop-bots.ps1` |
+| **开机自启** | `bash install.sh` 已自动注册，无需额外操作 | `windows\register-tasks.ps1`（已含 dispatcher 登录自启，一步到位） |
+| **不想要开机自启** | `launchctl bootout gui/$UID/com.claudebotlife.autostart`<br>`rm ~/Library/LaunchAgents/com.claudebotlife.autostart.plist` | `powershell -File windows\unregister-tasks.ps1`（连同其它后台任务一起卸） |
+
+**Mac 开机自启的细节**：`install.sh` 第 ⑤ 步会把 `plist-templates/autostart.plist.tmpl` 填好路径写到 `~/Library/LaunchAgents/com.claudebotlife.autostart.plist` 并 `launchctl bootstrap` 挂上，以后每次登录自动跑 `restart-bots.sh`。重复跑 `install.sh` 不会挂两份。若你是在 SSH 里跑的（没有图形会话），加载会失败但 plist 已写好，脚本会打出手动加载命令，图形登录后跑一次即可。**Linux 没有 launchd，这步自动跳过**，想自启请自己挂 `cron`（`@reboot`）或 systemd user service 跑 `restart-bots.sh`。
+
+`install.sh` 的第 ⑤ 步一并挂上 `moments-web`（朋友圈网页 + 管理台 `:8765`）。`plist-templates/` 里剩下的 `self-initiate`（主动消息）、`memory-compactor`（记忆压缩）、`cleanup`、`daily-wildcard` 是**可选**的后台服务，要自己 `sed` 填占位（`{REPO_DIR}`/`{PROJECT_DIR}`/`{BOT_ID}`/`{CHAT_ID}`）写进 `~/Library/LaunchAgents/` 再 `launchctl bootstrap gui/$UID <plist>` 挂上。
+
+## 朋友圈网页（`:8765`，可选）
+
+启动 moments-web 服务后，浏览器开 `http://localhost:8765` 能：刷各 bot 的朋友圈、点赞/评论（bot 会异步读到并回应）、**画风设置**、**切生图引擎**、填 **NovelAI key**。
+
+- **怎么起**：Mac 跑过 `install.sh` 就已经登录自启了；Windows 走 `register-tasks.ps1` 登录自启。手动起：`python3 -m moments.web`。
+- ⚠️ **画风页和 NovelAI key 设置依赖你已装 `novelai-skill`**（`cp -r skills/novelai-skill ~/.claude/skills/`）——没装的话这两个页面是空的（不报错，只是没内容）。朋友圈刷帖/点赞/评论不依赖 skill，正常可用。
+- **画风预设能调的参数**：正/负面前缀之外，还能选 **模型**（V5 Full / V5 Curated / V4.5 Full）、**steps**（1–50）、**cfg_scale**（1–10）、**sampler**、**ucPreset**（负面预设强度 0–3）。每项留空 = 跟随全局默认，不用逐个填。填错会当场告诉你哪不对（比如「steps 必须是 1–50 的整数」），不会静默存进去。
+- **点「生成示例图」**：卡片上会盖一层"生成中"遮罩，同一个预设不能重复点（后台也挡着，另开一个窗口点也是 409）。示例图固定 1024 见方，方便横向比画风。
+- 朋友圈里要有帖子，得后台的 `self-initiate` / `jiwen` / 生图任务在跑（即上面那些可选服务挂上）。
+
+## 管理台（`:8765/hub`，换模型来源用）
+
+网页版的「换 provider / 填 key / 切回官方订阅 / 重启 bot」。装过 `install.sh` 才有（Windows 见部署段的 ⑥）。
+
+四个页面：**模型来源**（`/hub/provider`，换 provider、填 key）、**bot 状态**（`/hub/bots`，看在跑没、重启）、**系统参数**（`/hub/params`，网页改 `configs/_global.yml` 里的数值参数，带高级模式直接改原文、以及改前自动备份和一键回滚）、**添加 bot**（`/hub/addbot`，填个 token 就建好新 bot 并拉起来，详见「加更多机器人」）。
+
+- **口令写在 `~/.claude-tgbot/hub.env`**：`install.sh` 会生成一条随机 `HUB_ACCESS_PASSWORD` 写进去。这个文件是**门户自己去读的配置文件**（600 权限，不进 git），不是给 shell `source` 的——所以你改完它只要重启 moments-web 就生效，不用去动 plist / 计划任务。同一个文件里还放着 cliproxy 的端口和 key。
+- **上游 key 存在哪**：`~/.claude-tgbot/cliproxy/config.yaml`（明文，600）。目录本身是 700 兜底——**把这个目录拷给别人排障、或让备份工具带走之前，先把里面的 key 删掉**。
+- **想再加一道内锁**：文件里加一行 `HUB_ADMIN_PASSWORD=<另一个口令>`，`/hub` 之下就要两把口令都对（家人只给第一把，只能看不能改）。
+- 🔴 **公网暴露前先确认门是开的**：把 `:8765` 挂到 cloudflare tunnel / frp 这类隧道上之前，先无痕窗口开一次 `你的域名/hub` —— 必须跳到登录页。直接进得去就是没读到口令，**这时管理台对全互联网开放**：任何人都能改 key、把 bot 的对话引到自己的端点、一键重启你所有 bot。
+- 启动时若没读到口令，`moments-web` 的日志里会有一条 `WARN: 未设 HUB_ACCESS_PASSWORD`。
+- **挂在隧道/反代后面**：再在 `hub.env` 加一行 `HUB_TRUST_PROXY=1`。隧道到本机这一段是明文 http，不开这个开关的话门户以为自己在 http 上，签出去的登录 cookie 不会带 `Secure` 标记（可能被降级到明文链路上带走）。**只有确认外面真有一层 https 隧道/反代时才开**——直连访问时开着它，等于让任何人伪造一个请求头就说自己是 https。
+
+## 查看后台对话（所有平台）
+
+worker 是后台进程，没有能 attach 的窗口——看 `channels/<bot>/logs/` 下的日志：
+
+- **`chat.log`** —— 人话对话流（谁说了什么、调了什么工具）。这就是"实时看消息"，等价旧的 `tmux attach`：
+  - Mac/Linux：`bash scripts/watch-bot.sh chenlulu`（或 `tail -f ~/.claude/channels/chenlulu/logs/chat.log`）
+  - Windows：`powershell -File windows\watch-bot.ps1 chenlulu`
+- **`stream.jsonl`** —— 原始事件流，出 bug 时看这个（含报错、每轮耗时/成本）。
+
+> **Windows 日志中文乱码？** 日志文件本身是 UTF-8、没坏（也不影响 AI 回复）——乱码只是 PowerShell 5.1 默认按 GBK 读文件。`watch-bot.ps1` 已内置 `chcp 65001` + `-Encoding UTF8` 修好了。若你直接 `Get-Content` 看，请加 `-Encoding UTF8`；想让 emoji（👤🤖⚙）也正常显示，用 **Windows Terminal** 而不是老式 cmd 窗口。
+- **翻历史 / 手动介入**：先停掉该 bot（重启脚本，或 `/status` 查到 pid 后结束进程），再 `claude --resume <会话uuid>` 打开同一会话手动聊；退出后 worker 会在下条消息自动复活。⚠️ 同一会话两端不能同时开。
+
+---
+
+## 清空记忆（`/clear` 和 `/clearall`）
+
+在聊天里发斜杠命令，dispatcher 会转给 worker（`/compact`、`/model` 等 Claude Code 原生命令都能用）。清记忆的两条：
+
+| 命令 | 在哪发 | 干什么 |
+|---|---|---|
+| `/clear` | 私聊或群里 @bot | 清当前会话上下文（Claude Code 原生行为） |
+| `/clearall` | 群里 @bot | **真清**：备份并移走会话文件，下次说话开一个全新会话 |
+
+> 早期版本的 `/clearall` 只杀 worker，下次启动又 `--resume` 回同一个会话——记忆其实没清掉。现在会把会话文件改名成 `<uuid>.jsonl.deleted-<时间戳>` 留底再走人。
+
+**两条都会先存一份"最近聊了什么"**：清空之前，dispatcher 会把最近的对话压成 5 行以内的摘要，写进这个 bot 的自动记忆（`~/.claude/projects/<slug>/memory/recent_conversation.md`），新会话一开局就知道你们上次聊到哪，不至于失忆式地重新认识你。
+
+- 摘要用一次独立的 `claude -p` 生成，只发对话文本、不带任何凭证；入库前会把 token、chat_id 一类内容替换成 `[redacted]`。
+- 摘要失败（模型没起来、超时、没登录）会退回"最近几轮各截一句"的机械摘要，再不行就写一行占位——**摘要出任何问题都不会挡住清空本身**。
+- 回执里带「最近聊到哪我记小本本上了」就是摘要写成功了；没这句就是走了降级。
+- 清理期间重复发命令会被挡回一句「上一次清理还没走完，稍等」。
+
+## 装完自检 + 常见报错速查
+
+**先自检环境**（不碰 Telegram，最快确认整条链路 OK）：
+```bash
+cd dispatcher && bun test-e2e.ts     # Windows: cd dispatcher; bun test-e2e.ts
+```
+打出 **`5 过 / 0 挂`** = 这台机器能跑。有红叉照下表查。
+
+| 症状 | 原因 / 解法 |
+|------|-------------|
+| `bun: command not found` / `claude: command not found` | 装完没刷新 PATH → **重开一个终端窗口**再试。Windows 上 claude 若还找不到，设环境变量 `CLAUDE_BIN` 指向 `claude.cmd` 全路径。 |
+| `pip install` 卡在 `chinese_calendar` 或 `Pillow` | 这俩是可选（只管节假日判定/生图）。装不上就先跳过，不影响私聊：`pip install feedparser PyYAML lunardate requests flask` 单独装必需的即可。 |
+| dispatcher 起来了，但**给 bot 发消息没反应** | ① `access.json` 的 `allowFrom` 是不是填了**你自己的**数字 user_id（不是用户名）② `.env` 的 `TELEGRAM_BOT_TOKEN` 对不对 ③ 看 `channels/<bot>/logs/chat.log`（新架构）或 `tmux attach`（旧架构）有没有收到消息。 |
+| bot 收到了但**不回复 / 报错** | 多半是 Claude provider 没配好 → 终端跑一次 `claude` 确认能对话；或看 `logs/stream.jsonl` 里的报错。 |
+| **导演/情绪/主动消息不工作** | `configs/_global.yml` 的 DeepSeek `api_key` 没填或填错。 |
+| 端口被占 `EADDRINUSE` / `address in use` | 已有一个 dispatcher 在跑同端口 → 先停掉（`restart-bots.sh` / `windows\restart-bots.ps1`）再起。 |
+| Windows 日志乱码 | 见上方「查看后台对话」——用 `watch-bot.ps1`，或 `Get-Content -Encoding UTF8`，emoji 用 Windows Terminal。 |
+| 本机接口报 **401 / 403 / 415** | 见下方「本机接口口令」一节。 |
+
+### 本机接口口令（`.api-token`）
+
+dispatcher 只监听 `127.0.0.1`，且**所有接口默认要口令**（仅 `/health` 免口令）：
+
+- 启动时生成 32 字节随机口令写到 `channels/<bot>/.api-token`（权限 `0600`，一次成型）。**文件缺失或权限不符 → dispatcher 拒绝启动**（fail-closed，绝不降级为无鉴权跑）。
+- 口令经请求头携带，三选一即可：`X-Api-Token`、`X-Api-Key`、`Authorization: Bearer <口令>`。
+- 调用方（worker 插件、`director.py`、`voicecall/server.py`、`moments/web.py`、`scripts/self_initiate.py`、面板探活）都自动从该文件读口令并带上，无需手动配置。
+- **401**：该 bot 的 `.api-token` 读不到（dispatcher 没起过、或 channel 目录不对）→ 启动 dispatcher 后重试；日志里会有 `api_token_missing` 一行。
+- **403**：请求带了跨源 `Origin`（浏览器网页跨站发起）。本机脚本/工具不带 `Origin`，一般是网页脚本在打。
+- **415**：写接口（POST/PUT）的 `Content-Type` 不是 `application/json`。
+- 口令是每 bot 一份的本机凭证：**不要提交进 git、不要写进日志或文档**；**别把 `channels/` 放进会被同步的目录**。本批防的是其他 OS 用户、浏览器网页与同机其他进程的误用；同一账户下已被诱导执行的进程仍能读到它，用户态防不住。
+
+> **让 AI 帮你部署时**：直接把本 README 甩给它，让它照着一步步来。到「填 key」那几步（DeepSeek key / Telegram token / user_id）AI 会停下来问你要——这些只有你能提供，按上方「每把钥匙具体怎么弄」拿到后给它即可。
+
+## 切换模型来源（Provider）
+
+系统有**两处互相独立的模型来源**，分开配、别搞混：
+
+| 用途 | 用谁 | 配在哪 |
+|------|------|--------|
+| 角色说话（worker） | `claude` CLI | `~/.claude/settings.json` 的 `env` |
+| 后台情绪/关系数值裁判 + 群聊导演 | DeepSeek（独立） | `configs/_global.yml` 的 `jiwen.delta_llm` |
+
+换角色说话用的模型/中转，只改 `~/.claude/settings.json`。三种配法任选一种（**推荐 C：点一下就切，程序自动跟随**）：
+
+- **A. 官方订阅（最省事）**：`claude` 登录一次 Claude 账号即可；`settings.json` 的 `env` **不要**写 `ANTHROPIC_BASE_URL`。worker 自动读系统凭证并续期。
+- **B. 第三方中转 / API key（手动）**：编辑 `~/.claude/settings.json`：
+  ```json
+  {
+    "env": {
+      "ANTHROPIC_BASE_URL": "https://你的中转站/api",
+      "ANTHROPIC_AUTH_TOKEN": "sk-你的中转key",
+      "ANTHROPIC_MODEL": "claude-sonnet-4-5"
+    }
+  }
+  ```
+- **C. [cc-switch](https://github.com/farion1231/cc-switch)（✅ 推荐 · 图形界面，不想手改 JSON 就用它）**：加几个 provider，点一下切换，它替你写 `settings.json`。切完程序自动跟随（见下）。
+  > ⚠️ 别同时用多个「写 settings.json」的工具（cc-switch / 手改会互相覆盖），选一个。
+
+**切完不用手动重启**：dispatcher 一直盯着 `settings.json`，provider 字段一变（防抖约 1.2 秒）就自动把 worker 换成新 provider 重生——记忆不丢（`--resume` 续上原会话），消息也不丢：排队等着的重启后自动补投，**正在回复中的那条会自动重新排队、用新 provider 重跑一遍**，你不用重发。Telegram 连接也不断（dispatcher 本体不重启）。
+唯一的小代价：万一它其实已经回过话、只差最后一步收尾时被换掉（不到一秒的窗口），你会看到同一轮回两次。
+
+- 只有这几个字段变了才重生：`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` / 顶层 `model`。改 hooks、改别的偏好一律不动。
+- 配置文件想放别处：设环境变量 `CLAUDE_SETTINGS_PATH` 指到你那份（不设就是 `~/.claude/settings.json`）。
+- **兜底**：万一没跟上（网络盘/容器里文件监听可能失效，正常最慢 10 秒会被轮询捡到），手动 `bash restart-bots.sh`（Windows：`windows\restart-bots.ps1`）照样有效。
+
+另外要能用还需：① `configs/_global.yml` 的 DeepSeek key 已配好；② 中转站支持 Claude 的 **Messages API** 格式（多数 claude 中转支持，纯 OpenAI 格式的不行）。
+
+### 用 DeepSeek 当说话模型（便宜，中文顺）
+
+DeepSeek 官方就提供 Anthropic 格式的兼容端点，不用中转站，直接填进 `~/.claude/settings.json`：
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "你的 DeepSeek key",
+    "ANTHROPIC_MODEL": "deepseek-chat"
+  }
+}
+```
+
+用 cc-switch 的话就照这三行加一个 provider，以后和 Claude 之间点一下互切。
+
+> ⚠️ **别和后台那把 DeepSeek key 搞混**：这里填的是**角色说话**用的；`configs/_global.yml` 里 `jiwen.delta_llm.api_key` 是**后台情绪 / 关系数值 / 群聊导演**用的，两处互相独立、各配各的。
+> 但 **同一把 DeepSeek key 两处都能用**——不用申请两把，同一个 `sk-` 复制粘贴过去即可。
+
+---
+
+## 关系数值怎么工作（治"随叫随到"）
+
+每个 bot 一份 `channels/<bot>/relationship.json`，四个数值 0–100：**好感 / 信任 / NSFW / 精力**。
+
+- **信任** 决定关系阶段（陌生 → 客气 → 多聊 → 暧昧 → 亲密），门槛没到不会跳级。
+- **NSFW** 没起来时 bot 不主动，需要被撩、有情境；夜里有随机小高峰。
+- **精力** 随作息+当日活动+随机波动：晚上高、后半夜 3–6 点低谷；低了会**温柔婉拒并给补偿**，不是冷脸拒。
+- 数值由 `jiwen/tick.py` 后台读对话涨跌，每个 bot 各算各的，不会时刻相同。
+
+陈露露出厂是陌生人（好感 5 / 信任 5 / NSFW 0），需要慢慢处。
+
+---
+
+## 聊天时自动发生的三件事（默认就开着）
+
+这三样不用配、开箱就有，都是为了让对话别那么像"提问 → 应答"。
+
+### ① 你连发几条，她当一段话读
+
+以前你「在吗」「刚下班」「累死了」三条连发，她看到第一条就开始想怎么回，另外两条只能等下一轮——回出来的话自然驴唇不对马嘴。
+
+现在她空闲时收到第一条会**先等 5 秒**：这 5 秒里你再发就一起攒着；你停手满 5 秒（或者你一直发、从第一条起满 12 秒）才把这一波当成一段话交给她。图片、语音、群里换人说话不会被并进去，各算各的。
+
+**嫌它慢就关掉**：`channels/<bot>/access.json` 里加 `"burstWindowMs": 0`，立刻回到「来一条投一条」。想改等待时长就填毫秒数（还有 `burstMaxMs` 管那个 12 秒封顶）。
+
+### ② 她回完话你不吭声，她会追问，也会记仇
+
+回你之后你一直没回音，她会在 **7 分钟 / 25 分钟 / 90 分钟**（各带随机浮动）三个点各看一次要不要开口，看的是她那会儿在干嘛：
+
+- **闲着** → 最多追问两句；第三次不发消息了，只把「这次被晾了」写进记忆；
+- **在上课/上班**（作息表里标了 `interruptible: false` 的时段）→ 一句都不发，只记下被晾了多久。等这段忙完，你下一条消息她会带着迟到反应回你（"刚下课才看到"）；
+- **在睡觉** → 顺延，不追也不记账。
+
+你只要回一句，这一轮立刻取消，什么都不会发。每天最多三次，群聊不算被晾。
+
+**不想被追就关掉**：`access.json` 里加 `"hangEnabled": false`。只想让某些时段安静，就在 `configs/<bot>.yml` 的作息条目上加 `interruptible: false`（`configs/_example.yml` 里有示范）。
+
+### ③ 她知道自己此刻在干嘛
+
+以前作息和寒暑假只进「她主动找你」那条链路，你主动来聊时她心里是空的——你一句「骗鬼呢你哪来的暑假」就能把她说服，她转头就改口。
+
+现在你每条私聊正文前都会多一行 `（你此刻：提前返校期 · 在学校备课）`，来源就是 `configs/<bot>.yml` 的作息表和校历，跟主动消息同一套判定。这行是给她看的客观事实，被质疑她可以坚持。
+
+没配 `recurring_activities` 的 bot（比如出厂的陈露露）只会说「自由时间/睡觉中」——想让这行有内容，照下面「让 bot 活起来 ①」把作息表配上。
+
+---
+
+## 让 bot 活起来（主动私聊 / 朋友圈 / 群聊）
+
+**默认状态：示例陈露露只会「被动回复」——你不发，她不主动。** 这是**故意的**，不是坏了：她的设定是「刚在网上认识的陌生人」，一上来就深夜私聊你、主动发朋友圈反而不符人设。她的 `configs/chenlulu.yml` 里 `moments.enabled: false`，也没配作息/爱好。
+
+想让 bot 有「自己的生活」（像真人一样随时段作息、随机主动找你、发朋友圈），按需开这三样：
+
+### ① 主动私聊（因自己的生活想起你，随机来消息）
+给这个 bot 的 `configs/<bot>.yml` 补上「生活作息」——直接照 `configs/_example.yml`（小明模板）里这几段抄：
+- `sleep_hours`（睡觉时段，这些时段不会发消息）
+- `recurring_activities`（每天在干嘛的时间表：上班/午休/自由时间…）
+- `personal_hobbies`（爱好，free 时段随机触发）
+- `interest_keywords` + `rss_feeds`（可选，让 ta 聊到关心的新闻）
+
+配好后，`self_initiate.py` 后台任务（Windows 的 `register-tasks.ps1` 已挂、Mac 挂 `self-initiate` plist）会每隔一段**随机时间（30 分钟～24 小时）**判断要不要主动找你——不是定时打卡，是像活人一样不可预测。
+
+### ② 随机发朋友圈
+在上面基础上：`configs/<bot>.yml` 里把 `moments.enabled` 改成 `true` → 起 `moments-web`（朋友圈网页 `:8765`）→ 挂上 `jiwen`（情绪引擎）任务。之后 bot 会按心情/情境随机发圈，你能在 `:8765` 看、点赞、评论，ta 会异步读到并回应。
+
+### ④ 寒暑假（老师 / 学生这类角色才需要）
+
+不配这块也能跑，配了才有。**问题是这样的**：程序原本只认法定节假日（元旦春节国庆那些），不知道寒暑假。所以一个老师角色到了七八月，作息表照样把她排在「上课/办公」，她就会在暑假里天天跟你说自己在学校批作业。
+
+在 `configs/<bot>.yml` 里加一块：
+
+```yaml
+school_calendar:
+  summer_start: "07-01"     # 暑假起止，按你角色所在地的校历填
+  summer_end: "08-31"
+  early_return: "08-26"     # 可选：提前返校（老师备课 / 学生自习）
+  winter_days: 15           # 寒假 = 春节前后各 15 天，闭区间共 31 天
+```
+
+**寒假不用填日期**，程序按农历春节自动算——春节每年公历日期能差半个月，写死必错。
+
+然后在 `recurring_activities` 下面多写两档作息：
+
+- `break` —— 放假期间在干嘛（寒暑假共用，所以描述别写「天热开空调」这种，寒假会念错）
+- `early_return` —— 提前返校期间（可选，不写就退回平时作息）
+
+`configs/_example.yml` 里有注释掉的完整示例，取消注释就能用。
+
+配好之后，模型收到的提示词里会多一行 `学期状态：暑假`，它就不会再自己编了。
+
+### ⑤ 年龄别写死（生日字段）
+
+人设里写「27 岁」，一年后还是 27 岁——写死的年龄会随时间变假。改成在 `configs/<bot>.yml` 里填生日，程序每天自己算：
+
+```yaml
+birthday: "1999-03-15"     # YYYY-MM-DD，要加引号，不然 YAML 会当日期对象
+schooling:                 # 可选，只有在读的角色才写
+  stage: 大学               # 目前认「高中」和「大学」
+  enrollment_year: 2024    # 入学年份；7 月 1 日翻学年、6 月 30 日毕业
+```
+
+算出来的结果会以「【当前身份】27 岁 · 大二在读」的形式前置到人设摘要，主动消息的提示词里也带一行。**未满 18 岁是硬门禁**：年龄不会进任何对外文本，也绝不会拼进生图提示词（`face_traits`），只在日志里留一行提醒。不填 `birthday` 就是老样子，什么都不注入。
+
+### ③ 群聊里自己聊
+需要**至少 2 个 bot**（单个陈露露没群友可聊）。建好多个 bot（见下方「加更多机器人」）+ 把它们拉进同一个 Telegram 群 + 配 `director.py`（群聊导演，决定每轮谁开口）。之后 bot 之间会像真人闺蜜群一样你一句我一句地聊，你只是群里一员。
+
+> **最省事**：想直接要个「一上来就有丰富生活、会主动私聊发圈」的 bot，别改陈露露——照 `configs/_example.yml`（小明模板，作息/爱好/RSS 都配好了）建一个新 bot 更快。
+>
+> 🧪 **诚实提醒**：这三个「主动行为」在跨平台新架构下代码齐全、逻辑通，但**尚未在真机端到端完整验证**（已验证的是「你发消息 bot 回」这条被动链路）。建议先开①主动私聊在你的机器上试通，再开②③。有问题欢迎反馈。
+
+## 加更多机器人
+
+bot 名单、端口、记忆命名空间全部由 `configs/*.yml` 派生（`bots_registry.py` 是唯一读取入口），**加 bot 不用改任何源码或启动脚本**。两条路，挑一条：
+
+**A. 网页加（省事）**：管理台 `http://localhost:8765/hub/addbot`，填 @BotFather 给的 token + bot 名 + 挑个人设模板，提交后它会建好 `configs/<新bot>.yml` 和 `~/.claude/channels/<新bot>/`、注册常驻、把 bot 拉起来。
+
+**B. 手动加（想逐项自己控）**：
+
+1. `cp configs/_example.yml configs/<新bot>.yml`，改里面的人设摘要，**并加一行 `namespace_uuid:`**（记忆命名空间，随便生成一个：`python3 -c "import uuid;print(uuid.uuid4())"`）。这行不加，worker 起来会报 `no UUIDv5 namespace`。
+2. `cp -r channels/chenlulu ~/.claude/channels/<新bot>`，改 `CLAUDE.md`(人设)、`access.json`、`.env`（填这个 bot 自己的 token），删掉 `relationship.json`（让它按新关系重新起）。
+3. 重启：`bash restart-bots.sh`（Windows：`powershell -File windows\restart-bots.ps1`）。
+
+> 端口不用管：yml 里不写 `dispatcher_port` 时，注册表会自动挑一个不跟现有 bot 撞的号；想钉死就显式写上。
+>
+> 多 bot 群聊由 `director.py` 调度（可选，单 bot 用不到）。
+>
+> - 多个 bot 的人设里有要保持一致的共用段落（如语音回复规则、群内互动规则），用 `persona-sync/` 一条命令幂等同步进每份人设，标记外内容不动；先 `--dry-run` 预览，细节见 `persona-sync/README.md`。
+> - **停用某个 bot**（管理台开关，或 `configs/<bot>.yml` 写 `enabled: false`）后，macOS 的 self-initiate plist 和 Windows 计划任务 `claude-tgbot-self-initiate-<bot>` 仍会按时触发，但脚本读到停用就立即退出：不发消息、不拉起 bot。想彻底卸掉：macOS 用 `launchctl bootout gui/$UID/<label>`，Windows 用 `Unregister-ScheduledTask claude-tgbot-self-initiate-<bot>`。
+> - 模板 bot 的 `.claude/settings.json` 挂了"上下文压缩后补群聊近况"的钩子。mac/Linux：命令用的是 `python3` 和 `$CLAUDEBOTLIFE_REPO`，PATH 里要能找到 `python3`。Windows：这两样都不成立（python.org 安装器没有 `python3.exe`，`$VAR` 只有 POSIX shell 会展开），要跑一次 `python scripts\install_compact_hook.py <bot 目录>`，它会把命令改写成解释器与脚本的绝对路径（含空格的路径自动加引号）。**安装器只改写已经存在的 `.claude/settings.json`，不会新建**：走 B 路 `cp -r channels/chenlulu` 建的 bot 自带这个文件，跑一次即可；走 A 路管理台新建的 bot 目录没有它，安装器会打印 `no settings.json, skip` 并以退出码 2 结束，这类 bot 在两个平台都没有这个钩子。想要就先从模板拷一份再说：mac/Linux `cp -r channels/chenlulu/.claude ~/.claude/channels/<新bot>/`（拷完即可用）；Windows `Copy-Item -Recurse channels\chenlulu\.claude $env:USERPROFILE\.claude\channels\<新bot>\` 之后再跑安装器。
+> - 改过 `DIRECTOR_GT_DIR`（群聊记录目录）的，给 worker 也配同名环境变量，否则钩子读不到群聊记录。
+> - 情绪打分已内置"亲密时回得短不算冷落"；某个角色要更细的口径，在它 yml 的 `jiwen.delta_hints` 里写专属准则。
+
+---
+
+## 目录速览
+
+```
+dispatcher/     dispatcher.ts / worker-manager.ts / worker-plugin.ts —— Telegram 收发 + worker 托管
+windows/        Windows 部署脚本（start / restart / register-tasks / watch-bot）
+scripts/        watch-bot.sh(看实时对话) / self_initiate.py(主动消息) + 朋友圈生图等运维脚本
+jiwen/          情绪引擎 + DeepSeek 关系数值裁判 + 5 分钟 tick
+relationship.py 四维关系数值（作息精力 / NSFW 波动 / 分寸提示）
+director.py     多 bot 群聊导演（可选）
+moments/        朋友圈网页（Flask，可选）
+generators/     情境 / 心情 / 世界事件生成器
+configs/        _global.yml + 每个 bot 一个 yml（模板见 _example.yml）
+channels/chenlulu/  示例人设（CLAUDE.md 人设 + access.json + 出厂关系种子）
+channels/_persona_template/  填空人设模板（做自己的角色照它填）
+skills/novelai-skill/  NovelAI 生图 skill（可选，复制到 ~/.claude/skills/ 启用）
+skills/comfyui-skill/  本机 ComfyUI 生图 skill（可选，与 novelai-skill 二选一）
+voice-bridge/   语音服务（可选）：本地 STT 转文字 + Fish Audio 合成语音。装它 bot 才能听懂/回复语音消息，voicecall/ 打电话模块也靠它；装法见 voice-bridge/README.md
+persona-sync/   多 bot 共用规则段的同步工具（可选）
+```
+
+---
+
+## 安全
+
+`.env`、`configs/_global.yml`（含 DeepSeek key）、运行时的 inbox/记忆/日志都在 `.gitignore` 里，不会被提交。fork 或改动后请自查，别把 key / token 传上仓库。

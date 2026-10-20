@@ -1,0 +1,7 @@
+# 电话模块 Python 依赖。装：pip install -r requirements.txt
+fastapi
+uvicorn
+httpx
+pyyaml
+python-multipart
+pywebpush   # 仅"来电推送"需要；不用推送可不装

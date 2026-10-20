@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.claudebotlife-memory-compactor</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{PYTHON_BIN}</string>
+        <string>{PROJECT_DIR}/memory/memory_compactor.py</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>AbandonProcessGroup</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/claudebotlife-memory-compactor.stdout</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/claudebotlife-memory-compactor.stderr</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

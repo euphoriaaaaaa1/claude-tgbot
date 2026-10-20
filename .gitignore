@@ -1,0 +1,65 @@
+# ── 密钥/凭证：绝不入库 ──
+.env
+*.env
+!*.env.example
+# configs/_global.yml 含 DeepSeek key，只提交 _global.example.yml（gitignore 不支持行内注释，注释须独占一行）
+# 通配符还罩住 hub 参数页产生的备份副本 .bak.*/.pre-restore.*，它们是全文副本、同样含明文 key
+configs/_global.yml*
+**/token*
+**/*secret*
+# H-15 本机接口口令（dispatcher 运行时生成，绝不入库）
+**/.api-token
+
+# ── 运行时状态/数据 ──
+.jiwen-state/
+.director-mode/
+.self-initiate-state/
+**/inbox/
+**/chats/
+group_transcripts/
+*.jsonl
+data/
+resource/
+
+# ── Python / 系统 ──
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+*.bak
+*.bak-*
+*.tmp
+
+# ── 各 bot 运行时会长出的私有内容 ──
+channels/*/memory/*.md
+
+# JS 依赖
+node_modules/
+
+# ── 电话模块（voicecall/）私密文件：绝不进仓库 ──
+voicecall/.env
+voicecall/*.pem
+voicecall/vapid_public.b64
+voicecall/push_state.json
+voicecall/call_aliases.json
+voicecall/call_history.json
+voicecall/.pytest_cache/
+# 内部开发产物：测试套件与流程文档不进公开库（部分文件为字符串比对内联了红线字面量）
+voicecall/tests/
+voicecall/.devflow/
+.devflow/
+
+# ── voice-bridge 模块：模型缓存（约 1 GB）、虚拟环境与运行日志绝不入库 ──
+voice-bridge/models/
+voice-bridge/logs/
+
+state.db
+state.db-shm
+state.db-wal
+# install.sh 从 *.example.sh 复制出来的本机脚本（用户可改），不进 git
+restart-bots.sh
+stop-bots.sh
+
+# 项目开发账本：只在本地用，不公开（2026-09-30 用户裁定）
+PROJECT.md

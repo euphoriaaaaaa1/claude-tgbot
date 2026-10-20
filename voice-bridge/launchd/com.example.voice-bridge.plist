@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  voice-bridge HTTP 服务（server_http.py）的 launchd 常驻/自启配置（可选，仅 macOS）。
+  平时用 ./start.sh 手动起就够了；想让服务开机就常驻、不用每次手动，再用这个。
+
+  用法（先把文件里所有 /ABSOLUTE/PATH/TO/voice-bridge 换成你的真实绝对路径）：
+    cp com.example.voice-bridge.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.example.voice-bridge.plist
+  卸载：
+    launchctl unload ~/Library/LaunchAgents/com.example.voice-bridge.plist
+
+  注意：
+  - launchd 不读你的 shell 配置。FISH_AUDIO_API_KEY（TTS 必需）以及需要代理时的
+    HTTPS_PROXY，都要写进下面的 EnvironmentVariables（按注释格式取消注释填上）。
+  - 用了本 plist 就不要再用 ./start.sh start，两条路都写 logs/http_server.pid，会互抢。
+  - Linux 上没有 launchd，用 systemd user service，见 README「开机自启」一节。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.voice-bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/ABSOLUTE/PATH/TO/voice-bridge/.venv/bin/python</string>
+    <string>/ABSOLUTE/PATH/TO/voice-bridge/server_http.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/ABSOLUTE/PATH/TO/voice-bridge</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/ABSOLUTE/PATH/TO/voice-bridge/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/ABSOLUTE/PATH/TO/voice-bridge/logs/launchd.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- 想用哪个就取消注释填上；不需要代理的话 HTTPS_PROXY/HTTP_PROXY 整行删掉 -->
+    <!-- <key>FISH_AUDIO_API_KEY</key><string>你的key</string> -->
+    <!-- <key>FISH_AUDIO_MODEL</key><string>s2.1-pro</string> -->
+    <!-- <key>HTTPS_PROXY</key><string>http://127.0.0.1:你的代理端口</string> -->
+    <!-- <key>HTTP_PROXY</key><string>http://127.0.0.1:你的代理端口</string> -->
+    <!-- <key>NO_PROXY</key><string>127.0.0.1,localhost</string> -->
+  </dict>
+</dict>
+</plist>

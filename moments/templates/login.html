@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>登录</title>
+<style>
+:root {
+  --bg:#ededed; --card:#fff; --ink:#181818; --ink-soft:#555; --ink-faint:#888;
+  --hairline:rgba(0,0,0,.06); --hairline-strong:rgba(0,0,0,.12);
+  --wxgreen:#07c160; --danger:#fa5151;
+  --font-body:'Noto Sans SC',-apple-system,system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#000; --card:#1c1c1e; --ink:#f0f0f0; --ink-soft:#c0c0c0; --ink-faint:#8a8a8a;
+          --hairline:rgba(255,255,255,.08); --hairline-strong:rgba(255,255,255,.16); }
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
+       line-height:1.6; font-size:15px; min-height:100vh;
+       display:flex; align-items:center; justify-content:center; padding:24px; }
+.card { background:var(--card); border-radius:12px; padding:28px 24px;
+        width:100%; max-width:360px; border:1px solid var(--hairline); }
+h1 { font-size:18px; font-weight:600; margin-bottom:4px; }
+.sub { color:var(--ink-faint); font-size:13px; margin-bottom:20px; }
+label { display:block; font-size:13px; color:var(--ink-soft); margin:14px 0 6px; }
+input { width:100%; padding:10px 12px; font-size:15px; font-family:var(--font-body);
+        color:var(--ink); background:transparent;
+        border:1px solid var(--hairline-strong); border-radius:8px; }
+.hint { color:var(--ink-faint); font-size:12px; margin-top:6px; }
+.err { color:var(--danger); font-size:13px; margin-top:14px; }
+.btn { width:100%; margin-top:20px; border:none; border-radius:8px; padding:11px;
+       font-size:15px; font-family:var(--font-body); cursor:pointer;
+       background:var(--wxgreen); color:#fff; }
+.btn:hover { opacity:.85; }
+</style>
+</head>
+<body>
+<form class="card" method="post" action="/login">
+  <h1>管理台登录</h1>
+  <div class="sub">这台机器上的朋友圈与模型来源配置</div>
+
+  <label for="password">访问口令</label>
+  <input id="password" name="password" type="password" autocomplete="current-password" autofocus>
+
+  {% if need_admin %}
+  <label for="admin_password">管理口令</label>
+  <input id="admin_password" name="admin_password" type="password" autocomplete="off">
+  <div class="hint">可留空，只看朋友圈时不需要</div>
+  {% endif %}
+
+  {% if error %}<div class="err">口令不对，再试一次</div>{% endif %}
+
+  <button class="btn" type="submit">进入</button>
+</form>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "_说明": [
+    "persona-sync 配置。路径三种写法都支持：相对本文件所在目录（例：snippets/voice-reply.md、../channels/chenlulu/CLAUDE.md）、~ 开头（展开为家目录）、绝对路径。",
+    "targets：要同步的 persona 文件（每个 bot 一条）。下面这条是占位符，改成你自己的路径。",
+    "snippets：共用规则段清单。source 是源文件，start/end 是它外层那对 HTML 注释标记的名字。不需要的整条删掉（比如单 bot 用户通常用不到 group-autochat）。",
+    "JSON 不支持注释，说明都写在本字段里（加载时忽略 _ 开头的键）。",
+    "第一次先跑 --dry-run 看会改什么，确认无误再真跑。"
+  ],
+  "targets": [
+    "~/.claude/channels/<你的bot>/CLAUDE.md"
+  ],
+  "snippets": [
+    {
+      "source": "snippets/voice-reply.md",
+      "start": "VOICE-REPLY-START",
+      "end": "VOICE-REPLY-END"
+    },
+    {
+      "source": "snippets/group-autochat.md",
+      "start": "GROUP-AUTOCHAT-START",
+      "end": "GROUP-AUTOCHAT-END"
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+# ════════════════════════════════════════════════════════════
+# 全局配置示例。复制为 configs/_global.yml 后填自己的值。
+# 🔴 _global.yml 已在 .gitignore 里，请勿把填好 key 的版本提交上库。
+# ════════════════════════════════════════════════════════════
+
+# 你在朋友圈/主动消息里对外显示的名字与签名（可留通用值）
+user_display_name: 我
+user_bio: 这里是我的世界
+
+max_calls_per_5h: 100          # 每 5 小时 worker 调用上限（防跑飞烧配额）
+silence_threshold_minutes: 30  # 静默多久算"很久没聊"
+
+moments:
+  enabled: true
+  daily_post_limit_per_bot: 5
+  silence_threshold_minutes: 30
+  web_port: 8765               # 朋友圈网页端口（局域网手机也能开）
+  image_generation:
+    enabled: true
+    provider: novelai          # novelai | comfyui
+    provider_moment: novelai
+    provider_telegram: novelai
+    comfyui:                   # 仅当 provider=comfyui 时用；改成你本机的路径
+      url: http://127.0.0.1:8188
+      workflow: ~/ComfyUI/workflow-example/txt2img_api.json
+      workflow_img2img: ~/ComfyUI/workflow-example/img2img_api.json
+      output_dir: ~/ComfyUI/output
+      prompt_placeholder: '%prompt%'
+      negative_placeholder: '%negative_prompt%'
+    # 生图公共正/负向前缀（按你的审美改，非必填）
+    positive_prefix: best quality, masterpiece, very aesthetic, detailed, photorealistic, cinematic lighting
+    negative_prefix: low quality, worst quality, bad anatomy, blurry, watermark, text, extra fingers
+    image_when:                # 哪些情境会触发配图
+    - mood_extreme
+    - sporadic_positive
+    - special_date
+    - hobby_visual
+    - selfie_keyword
+    - private_intimate
+
+jiwen:                         # 情绪/关系数值引擎（第二层 DeepSeek 裁判）
+  enabled: true
+  tick_interval_min: 5
+  state_dir: ~/.claude/dispatcher/.jiwen-state
+  # 可选：显式列出要 tick 的 bot；留空则自动扫 ~/.claude/channels 下所有带 access.json 的目录
+  # bots: [chenlulu]
+  delta_llm:                   # 🔴 独立于主模型：直接调 DeepSeek，不读 settings.json
+    base_url: https://api.deepseek.com/anthropic
+    api_key: "YOUR_DEEPSEEK_API_KEY"   # ← 填你自己的 DeepSeek key
+    model: deepseek-v4-flash
+    proxy: ''                  # 需要代理时填 http://127.0.0.1:7897
+    timeout: 30
+  rates:                       # 情绪漂移速率（默认值即可，进阶再调）
+    connection_per_min: 0.0007
+    pride_decay_per_min: 0.003
+    valence_decay_per_min: 0.005
+    arousal_decay_per_min: 0.01
+    accel_threshold_min: 5.0
+    connection_accel: 1.0
+    valence_severe_low: -0.5
+    valence_severe_multiplier: 0.3
+    valence_mild_low: -0.2
+    valence_mild_multiplier: 1.5
+    valence_lock_threshold: 0.5
+    valence_lock_factor: 0.3
+    arousal_connection_rise_threshold: 0.5
+    arousal_connection_rise_rate: 0.002
+    pride_defend_threshold: 0.4
+    pride_defend_target: 0.6
+    pride_defend_rate: 0.003
+    pride_arousal_conflict_rate: 0.001
+    pride_erosion_rate: 0.002
+    immersion_decay_per_min: 0.01
+    activity_connection_relief: 0.0005
+    immersion_map:
+      reading: 0.6
+      cooking: 0.5
+      search: 0.4
+      browse: 0.35
+      observe: 0.15
+      selfcare: 0.5
+  thresholds:                  # 情绪触发主动消息的门槛
+    notice: 0.2
+    consider: 0.35
+    forced: 0.5
+    pride_block: 0.5
+    valence_activity: -0.6
+    arousal_agitation: 0.7
+    immersion_block: 0.3
