@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -250,6 +251,81 @@ def test_create提交产物且令牌只在env(home, monkeypatch, caplog, capsys)
     out_text = capsys.readouterr()
     assert TELEGRAM_TOKEN not in out_text.out and TELEGRAM_TOKEN not in out_text.err
     assert TELEGRAM_TOKEN not in caplog.text
+
+
+def _free_closed_port():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
+
+
+def _steps(out):
+    return {item["step"]: item for item in out.get("steps") or []}
+
+
+def test_create_dispatcher未启动时新建成功且跳过首次拉起(home, monkeypatch):
+    """沙箱/未注册自启服务时 dispatcher 端口不应答：新建不能因此超时撤回。"""
+    make_templates(home)
+    monkeypatch.setattr(claude_create, "allocate_port", lambda ctx: _free_closed_port())
+    monkeypatch.setattr(claude_create, "_install_schedule", lambda *a, **k: "ok")
+    monkeypatch.setattr(claude_create, "_uninstall_schedule", lambda *a, **k: None)
+    monkeypatch.setattr(claude_create, "_ensure_dispatcher", lambda *a, **k: None)
+    monkeypatch.setattr(claude_create, "START_PROBE_WAIT", 0.0)
+    monkeypatch.setattr(claude_create, "START_RETRY_WAIT", 0.0)
+    monkeypatch.setattr(claude_create, "START_KICK_WAIT", 0.0)
+    out = ClaudeLocalAdapter().create(_spec(), SecretToken(TELEGRAM_TOKEN))
+    steps = _steps(out)
+    assert out["enabled"] is True and out["running"] is False
+    assert steps["start"]["status"] == "done"
+    assert steps["first_spawn"]["status"] == "skipped"
+    assert steps["first_spawn"]["message"] == claude_create.FIRST_SPAWN_SKIPPED
+    assert out["warnings"] == [claude_create.FIRST_SPAWN_SKIPPED]
+    assert (home["channels"] / "newbot").is_dir()
+    assert (home["configs"] / "newbot.yml").is_file()
+
+
+def test_create_dispatcher在线但ensure失败仍回滚(home, monkeypatch):
+    make_templates(home)
+    with FakeDispatcher(bot_id="newbot", phase="running", allow_missing=True) as fake:
+        monkeypatch.setattr(claude_create, "allocate_port", lambda ctx: fake.port)
+        monkeypatch.setattr(claude_create, "_install_schedule", lambda *a, **k: "ok")
+        monkeypatch.setattr(claude_create, "_uninstall_schedule", lambda *a, **k: None)
+
+        def _ensure_fails(*a, **k):
+            raise claude_proc.DispatcherError("error", "dispatcher 没能拉起 worker")
+
+        monkeypatch.setattr(claude_proc, "ensure_worker", _ensure_fails)
+        with pytest.raises(base.LifecycleError) as ei:
+            ClaudeLocalAdapter().create(_spec(), SecretToken(TELEGRAM_TOKEN))
+    assert ei.value.state == "rolled_back"
+    assert not (home["channels"] / "newbot").exists()
+    assert not (home["configs"] / "newbot.yml").exists()
+
+
+def test_create_dispatcher在线但worker没起来仍回滚(home, monkeypatch):
+    make_templates(home)
+    with FakeDispatcher(bot_id="newbot", phase="stopped", spawn=False, allow_missing=True) as fake:
+        monkeypatch.setattr(claude_create, "allocate_port", lambda ctx: fake.port)
+        monkeypatch.setattr(claude_create, "_install_schedule", lambda *a, **k: "ok")
+        monkeypatch.setattr(claude_create, "_uninstall_schedule", lambda *a, **k: None)
+        monkeypatch.setattr(claude_create, "FIRST_SPAWN_WAIT", 0.0)
+        with pytest.raises(base.LifecycleError) as ei:
+            ClaudeLocalAdapter().create(_spec(), SecretToken(TELEGRAM_TOKEN))
+    assert ei.value.state == "rolled_back"
+
+
+def test_create_dispatcher在线正常拉起路径不变(home, monkeypatch):
+    make_templates(home)
+    with FakeDispatcher(bot_id="newbot", phase="stopped", allow_missing=True) as fake:
+        monkeypatch.setattr(claude_create, "allocate_port", lambda ctx: fake.port)
+        monkeypatch.setattr(claude_create, "_install_schedule", lambda *a, **k: "ok")
+        monkeypatch.setattr(claude_create, "_uninstall_schedule", lambda *a, **k: None)
+        out = ClaudeLocalAdapter().create(_spec(), SecretToken(TELEGRAM_TOKEN))
+    assert _steps(out)["first_spawn"]["status"] == "done"
+    assert out["running"] is True
+    assert out["warnings"] == []
 
 
 def test_create省略features也写全关文件(home, monkeypatch):

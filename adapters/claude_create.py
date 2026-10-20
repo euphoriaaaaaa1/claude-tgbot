@@ -15,6 +15,7 @@ import secrets
 import shutil
 import socket
 import tempfile
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -31,6 +32,10 @@ from .guard import SecretToken
 PORT_FIRST, PORT_LAST = 17806, 17849
 CREATE_LIMIT = 55.0            # 秒：整条新建封顶（3.4.2 A）
 FIRST_SPAWN_WAIT = 20.0        # 秒：首次拉起自检窗口
+START_PROBE_WAIT = 3.0         # 秒：新建时先短等 dispatcher 端口应答
+START_RETRY_WAIT = 5.0         # 秒：唤起自启服务后再短等
+START_KICK_WAIT = 2.0          # 秒：唤起自启服务本身的等待上限（端口判断整体 ≤ 10 秒）
+FIRST_SPAWN_SKIPPED = "dispatcher 未启动，首次拉起将在服务启动后自动完成"
 PROBE_TIMEOUT = 0.2
 TRASH_SUFFIX = "新建撤回"
 TEMPLATE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -528,7 +533,7 @@ def _uninstall_schedule(bot_id) -> None:
 
 def _ensure_dispatcher(ctx, timeout: float) -> None:
     """新 bot 的 dispatcher 还没起：让开机自启服务重跑一遍（它会按注册表拉起全部启用的 bot）。
-    自启服务没装或平台不支持时不在这里报错：随后等端口应答，等不到再按超时失败。"""
+    自启服务没装或平台不支持时不在这里报错：随后等端口应答，等不到按“端口不在线”处理。"""
     name = "dispatchers" if os.name == "nt" else "autostart"
     try:
         spec = platform_services.service_spec(name, repo=_repo_root())
@@ -537,15 +542,50 @@ def _ensure_dispatcher(ctx, timeout: float) -> None:
         pass
 
 
-def _start(bot_id, ctx, timeout: float) -> None:
-    """等 dispatcher 在这个 bot 的端口上应答；没有就唤起自启服务。"""
+def _kick_dispatcher(ctx, wait: float) -> None:
+    """唤起自启服务，但最多等 ``wait`` 秒：平台命令卡住也不能吃掉新建的端口判断预算。
+    超时后让它在后台线程里自己结束（daemon，不阻塞进程退出）。"""
+    worker = threading.Thread(target=_ensure_dispatcher, args=(ctx, wait), daemon=True)
+    worker.start()
+    worker.join(max(0.0, wait))
+
+
+def _dispatcher_online(bot_id) -> bool:
+    """dispatcher 端口此刻是否应答。``polling`` 会把“不可达”和“worker 停了”都报成 False，
+    这里要区分：端口不应答才算“没启动”。"""
+    try:
+        claude_proc.status(bot_id)
+        return True
+    except claude_proc.DispatcherError:
+        return False
+
+
+def _wait_dispatcher(bot_id, deadline: float) -> bool:
+    while True:
+        if _dispatcher_online(bot_id):
+            return True
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return False
+        time.sleep(min(0.2, left))
+
+
+def _start(bot_id, ctx, timeout: float) -> bool:
+    """等 dispatcher 端口应答；没有就唤起自启服务再短等。
+
+    端口始终不在线时返回 False（新建不因此失败，首次拉起留到服务启动后）；调用方据此跳过
+    ``first_spawn``。端口在线但 worker 拉不起来仍是真故障，由 ``first_spawn`` 照常报错。
+    整体判断封顶约 10 秒，不耗尽 ``CREATE_LIMIT``。
+    """
     if timeout <= 0:
         raise AdapterError("unavailable", 503, MESSAGES["timeout"])
-    if claude_proc.polling(bot_id):
-        return
-    _ensure_dispatcher(ctx, timeout)
-    if not claude_proc.wait_polling(bot_id, None, True, time.monotonic() + timeout):
-        raise AdapterError("unavailable", 503, MESSAGES["timeout"])
+    now = time.monotonic()
+    if _wait_dispatcher(bot_id, now + min(START_PROBE_WAIT, timeout)):
+        return True
+    _kick_dispatcher(ctx, min(START_KICK_WAIT, max(0.0, timeout - (time.monotonic() - now))))
+    if _wait_dispatcher(bot_id, time.monotonic() + min(START_RETRY_WAIT, timeout)):
+        return True
+    return False
 
 
 def first_spawn(bot_id, chat_id, port, ctx, deadline: float) -> None:
@@ -688,6 +728,7 @@ def rollback(bot_id, ctx, *, enabled: bool, port, plist, channel: str, yml: str,
 def create(bot_id, spec, token, *, op_id, ctx) -> dict:
     """新建一只 claude 侧 bot（3.4.2 A）。成功返回 3.4.1 的形状；失败由适配器撤回并按 state 抛 LifecycleError。"""
     steps = []
+    warnings = []
     started = time.monotonic()
     deadline = started + CREATE_LIMIT
     purpose = "new"
@@ -738,13 +779,18 @@ def create(bot_id, spec, token, *, op_id, ctx) -> dict:
         _step(steps, "install_schedule", "done")
         if enabled:
             _step(steps, "start", "running")
-            _start(bot_id, ctx, deadline - time.monotonic())
-            _step(steps, "start", "done")
-            if time.monotonic() >= deadline:
-                raise AdapterError("unavailable", 503, MESSAGES["timeout"])
-            _step(steps, "first_spawn", "running")
-            first_spawn(bot_id, clean["chat_id"], port, ctx, deadline)
-            _step(steps, "first_spawn", "done")
+            if _start(bot_id, ctx, deadline - time.monotonic()):
+                _step(steps, "start", "done")
+                if time.monotonic() >= deadline:
+                    raise AdapterError("unavailable", 503, MESSAGES["timeout"])
+                _step(steps, "first_spawn", "running")
+                first_spawn(bot_id, clean["chat_id"], port, ctx, deadline)
+                _step(steps, "first_spawn", "done")
+            else:
+                # dispatcher 此刻不在线不算新建失败：启动项已装好，服务起来后会自行拉起
+                _step(steps, "start", "done", "dispatcher 未启动，等待服务启动")
+                _step(steps, "first_spawn", "skipped", FIRST_SPAWN_SKIPPED)
+                warnings.append(FIRST_SPAWN_SKIPPED)
         else:
             _step(steps, "start", "skipped", "新建时保持停用")
             _step(steps, "first_spawn", "skipped", "新建时保持停用")
@@ -762,7 +808,8 @@ def create(bot_id, spec, token, *, op_id, ctx) -> dict:
             with contextlib.suppress(OSError, shutil.Error):
                 shutil.rmtree(root)
         return {"bot_id": bot_id, "person": bot_id, "username": clean["telegram_username"],
-                "enabled": enabled, "running": running, "message": "", "steps": steps}
+                "enabled": enabled, "running": running, "message": "", "steps": steps,
+                "warnings": warnings}
     except Exception as exc:
         reason = getattr(exc, "message", None) or MESSAGES["unavailable"]
         code = getattr(exc, "code", None)
@@ -804,6 +851,7 @@ def resolve(op, *, ctx) -> dict:
     committed = os.path.isdir(channel) and os.path.isfile(yml)
     if committed:
         steps = []
+        warnings = []
         meta = _read_json(os.path.join(staging, "staging.json")) if staging else None
         meta = meta or {}
         enabled = meta.get("enabled") is True if isinstance(meta.get("enabled"), bool) else True
@@ -822,13 +870,17 @@ def resolve(op, *, ctx) -> dict:
                 _install_schedule(bot_id, chat_id, ctx)
             if enabled and port is not None:
                 if not claude_proc.polling(bot_id, port):
-                    _start(bot_id, ctx, 40)
-                    first_spawn(bot_id, chat_id, port, ctx, time.monotonic() + 20)
+                    if _start(bot_id, ctx, 40):
+                        first_spawn(bot_id, chat_id, port, ctx, time.monotonic() + 20)
+                    else:
+                        # dispatcher 还没起来：保持 committed，等自启服务拉起后再续
+                        warnings.append(FIRST_SPAWN_SKIPPED)
             if staging:
                 with contextlib.suppress(OSError, shutil.Error):
                     shutil.rmtree(staging)
             return {"state": "committed", "bot_id": bot_id, "enabled": enabled,
-                    "running": bool(enabled and port and claude_proc.polling(bot_id, port))}
+                    "running": bool(enabled and port and claude_proc.polling(bot_id, port)),
+                    "warnings": warnings}
         except Exception as exc:
             problems = rollback(bot_id, ctx, enabled=enabled, port=port, plist=None,
                                 channel=channel, yml=yml, staging=staging, steps=steps)
