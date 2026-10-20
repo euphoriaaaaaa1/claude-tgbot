@@ -7,7 +7,26 @@
 set -e
 cd "$(dirname "$0")/.."
 
-BOT="${BOT:-chenlulu}"
+CHANNELS_ROOT="${CLAUDEBOT_CHANNELS_ROOT:-${HUB_CHANNELS_DIR:-$HOME/.claude/channels}}"
+BOT="${BOT:-}"
+if [ -z "$BOT" ]; then
+  registry="$(PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" python3 -m bots_registry --format=sh 2>/dev/null)" || registry=""
+  BOT="$(printf '%s\n' "$registry" | sed -n '1p' | cut -f1)"
+fi
+if [ -z "$BOT" ]; then
+  # 还没建 configs/<bot>.yml 的引导阶段：退回第一个已有通道目录
+  for d in "$CHANNELS_ROOT"/*/; do
+    [ -d "$d" ] || continue
+    name="$(basename "$d")"
+    case "$name" in media|group_transcripts) continue ;; esac
+    BOT="$name"
+    break
+  done
+fi
+if [ -z "$BOT" ]; then
+  echo "没有可用 bot：先在 configs/ 新建 <bot>.yml（不要写 enabled: false），再重跑。" >&2
+  exit 2
+fi
 FS="python3 scripts/setup_keys.py"
 check_only=0; [ "${1:-}" = "--check" ] && check_only=1
 interactive=1; { [ "$check_only" = 1 ] || [ ! -t 0 ]; } && interactive=0

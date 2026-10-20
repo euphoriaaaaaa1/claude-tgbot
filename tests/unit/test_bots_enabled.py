@@ -303,22 +303,21 @@ def test_不留临时文件(client, cfgdir):
 
 # ------------------------------------------------------------ 重启脚本得杀得掉停用的 bot
 
-def test_重启脚本先停全部tg会话再按注册表拉起():
+def test_重启脚本先停全部dispatcher再按注册表拉起():
     """停用的 bot 已经不在注册表里，循环轮不到它 —— 只在循环内逐个 kill 等于没停。
 
     源码级断言（同 tests/acceptance/hub2/test_source_contracts.py 的口径）：
     真跑一遍会把机主正在用的 bot 全停掉。
     """
     txt = (REPO_ROOT / "restart-bots.example.sh").read_text(encoding="utf-8")
-    sweep = txt.find("tmux kill-session")
+    sweep = txt.find("stop_all_dispatchers")
     loop = txt.find("while IFS=")
     read_registry = txt.find("bots_registry --format=sh")
-    assert sweep != -1, "重启脚本不停旧会话，停用的 bot 会一直活着"
-    assert "tg-[a-z0-9_]" in txt, "没有按 tg-* 前缀扫会话，漏掉的正是已从注册表消失的那些"
+    assert sweep != -1, "重启脚本不停旧 dispatcher，停用的 bot 会一直活着"
+    assert "tmux kill-session" not in txt and "launchctl " not in txt, \
+        "重启脚本不应再依赖 tmux/launchd（跨平台进程模型）"
     assert read_registry < sweep < loop, \
-        "停旧会话必须排在『读注册表成功之后、拉起之前』（读不出名单时不该白停一遍）"
-    assert txt.count("tmux kill-session") == 1, \
-        "循环里还留着逐个 kill —— 与统一停重复，删掉那句"
+        "停旧进程必须排在『读注册表成功之后、拉起之前』（读不出名单时不该白停一遍）"
 
 
 # ------------------------------------------------------------ 页面

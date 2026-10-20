@@ -30,9 +30,7 @@ command -v bun     >/dev/null || { todo "缺 Bun → 照 bun.sh 官网首页给�
 command -v claude  >/dev/null || { todo "缺 Claude Code CLI → npm install -g @anthropic-ai/claude-code，装完跑一次 claude 登录"; missing=1; }
 [ "$missing" = 1 ] && { echo; echo "先装齐上面缺的，再重新跑 bash install.sh"; exit 1; }
 ok "python3 / bun / claude 都在"
-# tmux 不阻断安装，但 restart-bots.sh 是靠它常驻 dispatcher 的：没有它一个 bot 都起不来
-command -v tmux >/dev/null || {
-  todo "缺 tmux（restart-bots.sh 用它常驻每个 bot 的 dispatcher，没它起不来）→ brew install tmux（Linux：apt install tmux）"; left=1; }
+# dispatcher 由 restart-bots.sh 用 nohup 后台拉起，不依赖 tmux/launchd。
 
 if [ "$DRY_RUN" = 1 ]; then
   say "DRY_RUN=1：只检查依赖并打印计划，不写盘、不装依赖、不注册服务"

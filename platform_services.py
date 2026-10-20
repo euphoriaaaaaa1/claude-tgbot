@@ -597,10 +597,24 @@ class SystemdBackend(ServiceBackend):
     def render_service(self, spec: ServiceSpec) -> str:
         spec.validate()
         lines = ["[Unit]", "Description=%s" % (spec.description or spec.name), ""]
-        lines += ["[Service]", "Type=%s" % ("oneshot" if spec.has_schedule() else "simple")]
+        if spec.has_schedule():
+            service_type = "oneshot"
+            remain_after_exit = False
+        elif spec.run_at_load and not spec.keep_alive:
+            # 启动器脚本（restart-bots.sh）拉起后台 dispatcher 后自己退出。
+            # 必须 oneshot + RemainAfterExit：否则 systemd 认为服务已停止，默认
+            # KillMode=control-group 会把刚拉起的 dispatcher 全部杀掉。
+            service_type = "oneshot"
+            remain_after_exit = True
+        else:
+            service_type = "simple"
+            remain_after_exit = False
+        lines += ["[Service]", "Type=%s" % service_type]
         lines.append(
             "ExecStart=" + " ".join(_systemd_quote(a) for a in spec.command)
         )
+        if remain_after_exit:
+            lines.append("RemainAfterExit=yes")
         if spec.working_dir:
             lines.append("WorkingDirectory=" + spec.working_dir)
         for key, value in spec.env:
@@ -987,7 +1001,7 @@ def service_spec(
             command=("/bin/bash", str(repo_path / "restart-bots.sh")),
             description="claude-tgbot 登录自启（restart-bots.sh）",
             working_dir=str(repo_path),
-            env=base_env + (("TMUX_TMPDIR", "/tmp"),),
+            env=base_env,
             run_at_load=True,
             log_dir=log_dir,
             platforms=("Darwin", "Linux"),
