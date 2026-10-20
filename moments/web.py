@@ -20,10 +20,12 @@ from werkzeug.exceptions import HTTPException
 from moments import panel_auth
 from moments.console_routes import console_bp
 from moments.features_routes import features_bp
+from moments.hub_forward import hub_forward_bp
 from moments.lifecycle_routes import lifecycle_bp
 from moments.params_routes import params_bp
 from moments.provider_routes import provider_bp
 from moments.styles_routes import styles_bp
+from moments.voice_preview_routes import voice_preview_bp
 
 # 公众版只有供应商模式；cookie 名按 INTERFACE §2.1 固定为 cb_provider。
 COOKIE_NAME = panel_auth.COOKIE_NAME
@@ -42,6 +44,10 @@ app.register_blueprint(provider_bp)
 app.register_blueprint(styles_bp)
 # 系统参数页与接口（INTERFACE §2.8）：_global.yml 的行级读写与备份。
 app.register_blueprint(params_bp)
+# dsh 页面/接口转发（INTERFACE §2.14）：只放行 /hub/<path>，登录门对 /hub/api/* 额外带 Hub-Gate。
+app.register_blueprint(hub_forward_bp)
+# 语音试听（INTERFACE §2.12）：只做请求校验与语音桥转发，令牌只在服务端使用。
+app.register_blueprint(voice_preview_bp)
 from provider_config import SeamsNotConfigured as _SeamsNotConfigured  # noqa: E402
 from provider_config import SafetyGateTripped as _SafetyGateTripped  # noqa: E402
 
@@ -278,7 +284,8 @@ def _reachable_gate():
     if (endpoint in _SESSION_ENDPOINTS or endpoint in _STYLES_ENDPOINTS
             or endpoint.startswith("console.") or endpoint.startswith("lifecycle.")
             or endpoint.startswith("features.") or endpoint.startswith("provider.")
-            or endpoint.startswith("params.")):
+            or endpoint.startswith("params.") or endpoint.startswith("hub_forward.")
+            or endpoint.startswith("voice_preview.")):
         return None
     abort(404)
 
