@@ -23,6 +23,8 @@ def cfgdir(tmp_path, monkeypatch):
     d = tmp_path / "configs"
     d.mkdir()
     monkeypatch.setenv("HUB_CONFIGS_DIR", str(d))
+    # 旧 .disabled 标记也走临时目录，否则会读到机主 ~/.claude/dispatcher/.disabled
+    monkeypatch.setenv("DIRECTOR_DISABLED_DIR", str(tmp_path / ".disabled"))
     monkeypatch.setattr(config_loader, "CONFIGS_DIR", str(d))
     for k in list(os.environ):
         if k.startswith("DISPATCHER_PORT_"):
