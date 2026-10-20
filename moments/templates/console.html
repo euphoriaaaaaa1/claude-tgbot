@@ -99,6 +99,13 @@ textarea { min-height:110px; resize:vertical; line-height:1.6; }
 .blk-msg[data-kind="warn"] { color:var(--warn); }
 .blk-msg[data-kind="err"] { color:var(--danger); }
 .ov-line { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.feat-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 0;
+  border-top:1px solid var(--hairline); }
+.feat-row:first-child { border-top:none; }
+.feat-name { font-weight:600; min-width:120px; }
+.feat-lines { flex:1; min-width:160px; }
+.feat-lines .hint { display:block; }
+.feat-lines .hint[data-kind="err"] { color:var(--danger); }
 .op-banner-title { font-weight:600; margin-bottom:8px; }
 .op-item { display:flex; align-items:flex-start; gap:10px; flex-wrap:wrap; padding:6px 0;
   border-top:1px solid var(--hairline); }
@@ -188,6 +195,12 @@ dialog::backdrop { background:rgba(0,0,0,.45); }
       <div class="ov-line"><div class="card-line" id="ovProvider"></div></div>
       <div class="hint card-pending" id="ovPending" hidden></div>
     </section>
+
+    <section class="panel blk" id="blkFeatures" data-block="features" hidden>
+      <h2>功能</h2>
+      <div class="hint blk-msg" id="featuresMsg" role="status" hidden></div>
+      <div id="featureRows"></div>
+    </section>
   </main>
 
   <details class="panel recent-ops" data-role="recent-ops" id="recentOps"><summary>最近操作</summary><div class="hint" id="recentOpsMsg" hidden></div><div id="recentOpsList"></div></details>
@@ -242,6 +255,18 @@ dialog::backdrop { background:rgba(0,0,0,.45); }
         <div class="field"><label for="createVoiceLang">语音语言（可选）</label><input id="createVoiceLang" type="text" autocomplete="off" maxlength="20"></div>
       </div>
       <label class="hint"><input type="checkbox" id="createEnabled" checked> 建好就启动</label>
+      <div class="field"><label>功能（默认全不勾，只开文字聊天；建好后也能在功能块打开）</label>
+        <div class="voice-row" id="createFeatures" data-role="create-features">
+          <label class="hint"><input type="checkbox" data-role="create-feature" value="voice"> 发语音</label>
+          <label class="hint"><input type="checkbox" data-role="create-feature" value="image"> 生图</label>
+          <label class="hint"><input type="checkbox" data-role="create-feature" value="stickers"> 表情包</label>
+          <label class="hint"><input type="checkbox" data-role="create-feature" value="moments"> 朋友圈</label>
+          <label class="hint"><input type="checkbox" data-role="create-feature" value="proactive"> 主动找你聊</label>
+          <label class="hint"><input type="checkbox" data-role="create-feature" value="life"> 生活作息</label>
+          <label class="hint"><input type="checkbox" data-role="create-feature" value="relationship"> 关系进展</label>
+          <label class="hint"><input type="checkbox" data-role="create-feature" value="groups"> 群聊</label>
+        </div>
+      </div>
       <div class="hint dlg-msg" id="createDialogMsg" role="status"></div>
     </div>
     <div class="dlg-foot"><span class="dlg-spacer"></span><button type="button" class="btn btn-ghost" id="createDialogCancel">取消</button><button type="button" class="btn btn-primary" id="createDialogOk">新建</button></div>
@@ -589,6 +614,9 @@ var LifecycleUX = (function () {
     if (Object.keys(vout).length) out.voice = vout;
     if (typeof f.enabled === 'boolean') out.enabled = f.enabled;
     if (typeof f.confirm_other_side_unknown === 'boolean') out.confirm_other_side_unknown = f.confirm_other_side_unknown;
+    const feats = {}, rawFeats = obj(f.features);
+    for (const key of Object.keys(rawFeats)) if (rawFeats[key] === true) feats[key] = true;
+    out.features = feats;   // 始终提交：空对象 = 八项全关
     return out;
   }
   function createVoiceErrors(voice) {
@@ -665,6 +693,7 @@ const LCDLG = {backend: null, bot: null};
 const BSW = {last: null};
 const CF = {form: null, pending: null};
 const N = {on: false, loaded: '', saving: false};
+const FEAT = {on: false, loaded: '', saving: false, resp: null, notice: null, error: ''};
 
 const archiveDialog = document.getElementById('archiveDialog');
 const deleteDialog = document.getElementById('deleteDialog');
@@ -864,9 +893,10 @@ function renderDetail() {
   document.getElementById('blkHead').hidden = !has;
   document.getElementById('blkOverview').hidden = !has;
   document.title = has ? '管理台 · ' + ConsoleUX.displayName(bot) : '管理台';
-  if (!has) { GEN += 1; return; }
+  if (!has) { GEN += 1; document.getElementById('blkFeatures').hidden = true; return; }
   renderHead(backend, bot);
   renderOverview(backend, bot);
+  renderFeaturesArea();
   const key = SEL.backend + '/' + SEL.botId;
   if (key !== renderDetail._key) {
     renderDetail._key = key;
@@ -912,6 +942,122 @@ function renderOverview(backend, bot) {
   const pending = document.getElementById('ovPending');
   pending.textContent = ConsoleUX.pendingText(bot.pending);
   pending.hidden = !pending.textContent;
+}
+
+// ── 功能开关（T08；INTERFACE §2.6）：带开关的块只来自 GET /features 返回的 keys ──
+function featuresOn(backend, bot) {
+  return ConsoleUX.backendOk(backend) && !ConsoleUX.isDuplicate(bot)
+    && ConsoleUX.hasCap(backend, 'bot.features');
+}
+function renderFeaturesArea() {
+  const backend = selBackend(), bot = selBot();
+  const on = !!(backend && bot && featuresOn(backend, bot));
+  document.getElementById('blkFeatures').hidden = !on;
+  if (!on) { FEAT.on = false; FEAT.resp = null; FEAT.loaded = ''; FEAT.error = ''; return; }
+  const key = SEL.backend + '/' + SEL.botId;
+  if (!FEAT.on || FEAT.loaded !== key) {
+    FEAT.on = true; FEAT.loaded = key; FEAT.resp = null; FEAT.notice = null; FEAT.error = '';
+    loadFeatures(GEN);
+  }
+  renderFeatures();
+}
+async function loadFeatures(gen) {
+  const bot = selBot();
+  if (!bot) return;
+  const r = await getJson(botUrl(bot.backend, bot.bot_id, 'features'));
+  if (gen !== GEN) return;
+  const b = obj(r.body);
+  if (r.ok && b.ok === true) { FEAT.resp = b; FEAT.error = ''; }
+  else { FEAT.resp = null; FEAT.error = ConsoleUX.failureText(r); }
+  renderFeatures();
+}
+function renderFeatures() {
+  if (!FEAT.on) return;
+  const box = document.getElementById('featureRows');
+  const msg = document.getElementById('featuresMsg');
+  box.replaceChildren();
+  const body = FEAT.resp;
+  if (!body) {
+    msg.textContent = FEAT.error || '正在读取功能开关…';
+    msg.hidden = false;
+    msg.setAttribute('data-kind', FEAT.error ? 'err' : '');
+    return;
+  }
+  const feats = obj(body.features), reqs = obj(body.requirements);
+  for (const raw of list(body.keys)) {
+    const item = obj(raw), key = txt(item.key), label = txt(item.label) || key;
+    if (!key) continue;
+    const on = feats[key] === true;
+    const row = document.createElement('div');
+    row.className = 'feat-row';
+    row.setAttribute('data-role', 'feature-head');
+    row.setAttribute('data-feature', key);
+    const name = document.createElement('div');
+    name.className = 'feat-name';
+    name.setAttribute('data-role', 'feature-label');
+    name.textContent = label;
+    const tag = document.createElement('span');
+    tag.className = 'tag' + (on ? ' ok' : '');
+    tag.setAttribute('data-role', 'feature-state');
+    tag.textContent = on ? '开着' : '关着';
+    const lines = document.createElement('div');
+    lines.className = 'feat-lines';
+    const req = obj(reqs[key]);
+    for (const m of list(req.missing)) {
+      const p = document.createElement('div');
+      p.className = 'hint';
+      p.setAttribute('data-kind', 'err');
+      p.textContent = txt(obj(m).message);
+      lines.appendChild(p);
+    }
+    for (const n of list(req.notes)) {
+      const p = document.createElement('div');
+      p.className = 'hint';
+      p.textContent = txt(n);
+      lines.appendChild(p);
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn ' + (on ? 'btn-ghost' : 'btn-primary');
+    btn.setAttribute('data-role', 'feature-toggle');
+    btn.textContent = on ? '关闭' : '打开';
+    btn.disabled = FEAT.saving || BUSY;
+    row.append(name, tag, lines, btn);
+    box.appendChild(row);
+  }
+  const lines = [];
+  if (FEAT.notice && FEAT.notice.text) lines.push(FEAT.notice.text);
+  for (const w of list(body.warnings)) if (txt(w)) lines.push(txt(w));
+  if (body.skills_synced === false) lines.push('技能显示设置没同步，下次重启前会自动重试');
+  msg.textContent = lines.join('\n');
+  msg.hidden = !lines.length;
+  msg.setAttribute('data-kind', FEAT.notice && FEAT.notice.kind ? FEAT.notice.kind
+    : (lines.length ? 'warn' : ''));
+}
+async function toggleFeature(key) {
+  const bot = selBot(), body = FEAT.resp;
+  if (!bot || !body || FEAT.saving || !key) return;
+  const on = obj(body.features)[key] === true;
+  FEAT.saving = true;
+  FEAT.notice = null;
+  renderFeatures();
+  const payload = {features: {}};
+  payload.features[key] = !on;
+  const r = await runOp(botUrl(bot.backend, bot.bot_id, 'features'), payload);
+  FEAT.saving = false;
+  const b = obj(r.body);
+  if (r.ok && b.ok === true) {
+    const features = obj(body.features);
+    features[key] = !on;
+    FEAT.resp = Object.assign({}, body, {features: features,
+      warnings: list(b.warnings), skills_synced: b.skills_synced});
+    FEAT.notice = {text: txt(b.message) || '已保存', kind: 'ok'};
+  } else {
+    const fields = obj(b.fields);
+    const extra = Object.keys(fields).map((k) => txt(fields[k])).filter(Boolean).join('；');
+    FEAT.notice = {text: ConsoleUX.failureText(r) + (extra ? '（' + extra + '）' : ''), kind: 'err'};
+  }
+  renderFeatures();
 }
 
 async function loadName(gen) {
@@ -1291,6 +1437,7 @@ function openCreateDialog() {
     'createVoiceId', 'createTextLang', 'createVoiceLang']) document.getElementById(id).value = '';
   document.getElementById('createChatId').value = txt((CF.form.defaults || {}).chat_id);
   document.getElementById('createEnabled').checked = true;
+  for (const box of document.querySelectorAll('[data-role="create-feature"]')) box.checked = false;
   document.getElementById('createTokenMsg').textContent = '';
   document.getElementById('createIdRule').textContent = txt(CF.form.id_rule);
   setCreateMsg('', '');
@@ -1316,6 +1463,13 @@ async function checkCreateToken() {
   }
   msg.textContent = ConsoleUX.failureText(r) + createFieldsText(r);
 }
+function createFeatureValues() {
+  const out = {};
+  for (const box of document.querySelectorAll('[data-role="create-feature"]')) {
+    if (box.checked) out[txt(box.value)] = true;
+  }
+  return out;
+}
 function createFormValues() {
   return {
     backend: document.getElementById('createBackend').value,
@@ -1329,6 +1483,7 @@ function createFormValues() {
       tts_model: document.getElementById('createTtsModel').value,
       text_language: document.getElementById('createTextLang').value,
       voice_language: document.getElementById('createVoiceLang').value},
+    features: createFeatureValues(),
     enabled: document.getElementById('createEnabled').checked,
   };
 }
@@ -1426,6 +1581,11 @@ for (const id of ['createDialogCancel', 'createDialogClose']) {
 }
 document.getElementById('displayNameSave').addEventListener('click', saveName);
 document.getElementById('toggleEnabled').addEventListener('click', toggleEnabled);
+document.getElementById('featureRows').addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  const row = btn && btn.closest('[data-feature]');
+  if (row && !btn.disabled) toggleFeature(row.getAttribute('data-feature'));
+});
 document.getElementById('archiveBot').addEventListener('click', openArchiveDialog);
 document.getElementById('deleteBot').addEventListener('click', openDeleteDialog);
 document.getElementById('archiveDialogOk').addEventListener('click', confirmArchive);
