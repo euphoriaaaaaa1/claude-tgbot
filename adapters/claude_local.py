@@ -455,6 +455,8 @@ class ClaudeLocalAdapter(BackendAdapter):
             me = _read_json(os.path.join(bot_dir, TELEGRAM_ME_NAME))
         except (FileNotFoundError, AdapterError):
             me = {}
+        if not isinstance(me, dict):
+            me = {}
         joined = set()
         if not include_joined:
             try:

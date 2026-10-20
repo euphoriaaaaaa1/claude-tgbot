@@ -691,7 +691,7 @@ def create(bot_id, spec, token, *, op_id, ctx) -> dict:
     started = time.monotonic()
     deadline = started + CREATE_LIMIT
     purpose = "new"
-    channel = _channel_dir(bot_id, ctx)
+    channel = None
     plist = None
     staging = None
     enabled = bool(spec.get("enabled", True))
@@ -703,6 +703,7 @@ def create(bot_id, spec, token, *, op_id, ctx) -> dict:
         bot_id = clean["bot_id"]
         enabled = clean["enabled"]
         clean = dict(clean, op_id=op_id)
+        channel = _channel_dir(bot_id, ctx)
         precheck(bot_id, purpose, ctx)   # 3.4.2 A 第 2 步：已存在先于信任检查
         _step(steps, "check_trust", "running")
         if not _check_trust(channel, ctx):

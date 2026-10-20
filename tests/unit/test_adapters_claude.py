@@ -276,6 +276,14 @@ def test_create失败整单回滚且不残留令牌(home, monkeypatch, caplog, c
     assert TELEGRAM_TOKEN not in caplog.text
 
 
+def test_create非法编号422(home):
+    bad = _spec("Bad/../id")
+    with pytest.raises(base.AdapterError) as ei:
+        ClaudeLocalAdapter().create(bad, SecretToken(TELEGRAM_TOKEN))
+    assert ei.value.http_status == 422
+    assert not list(home["channels"].iterdir())
+
+
 # ── 人设、功能开关、群设置 ──────────────────────────────────────────────────
 
 def test_persona版本冲突与写入(home):
