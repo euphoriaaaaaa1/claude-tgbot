@@ -26,6 +26,7 @@ resource/
 # ── Python / 系统 ──
 __pycache__/
 *.pyc
+.pytest_cache/
 .venv/
 venv/
 .DS_Store
