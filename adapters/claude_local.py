@@ -10,7 +10,7 @@
 - 供应商：只转调 ``provider_config`` 的写函数（T09 尚未移植时按 ``backend_unconfigured`` 拒绝）。
 - 人设/语音/功能开关/群设置：直接读本机频道目录文件，用 ``platform_lock`` 加跨进程锁。
 
-能力矩阵如实报缺：``bot.life_settings`` 依赖尚未移植的 ``life_settings`` 模块，报 false；
+能力矩阵如实报缺：``bot.life_settings`` 由 T16 移植的 ``life_settings`` 提供，报 true；
 其余实现的方法报 true。
 """
 import contextlib
@@ -60,7 +60,7 @@ _PERSONA_LOCKS = {}
 _PERSONA_LOCKS_GUARD = threading.Lock()
 
 CAPABILITIES = dict(CLAUDE_CAPABILITIES)
-CAPABILITIES["bot.life_settings"] = False   # life_settings 模块随 T16 移植，届时改 true
+CAPABILITIES["bot.life_settings"] = True   # T16：life_settings 已移植到仓库根
 
 
 # ── 路径与配置 ───────────────────────────────────────────────────────────────

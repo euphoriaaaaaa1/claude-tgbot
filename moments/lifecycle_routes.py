@@ -6,8 +6,8 @@
 ``adapters`` 包、Flask 与标准库；登录门、跨站校验、供应商模式可达面都在 ``moments/web.py`` 对本蓝图生效。
 两个蓝图互不导入。
 
-生活设定预置清单（``GET /api/console/life_presets``）依赖尚未移植的 ``life_settings``，按 PLAN 归 T16；
-T07 的页面不读它，所以本蓝图暂不注册该路由。
+生活设定预置清单（``GET /api/console/life_presets``）在 T16 补上；它只读 ``configs/life_presets.json``，
+不碰适配器，失败也按约定恒回 200（status=missing/invalid 放在响应体里）。
 """
 import logging
 import re
@@ -23,6 +23,8 @@ from adapters.lifecycle_flow import (INTERNAL_MESSAGE, Reject, TelegramCheckFail
                                      start_switch, use_telegram_get_me)
 from moments import telegram_check
 from moments.request_body import BodyError, json_object
+
+import life_presets
 
 lifecycle_bp = Blueprint("lifecycle", __name__)
 _log = logging.getLogger(__name__)
@@ -158,6 +160,15 @@ def api_create_form():
     except Exception as e:
         _log.error("console 读新建表单失败：%s", type(e).__name__)
         return _fail("internal", 500, INTERNAL_MESSAGE)
+
+
+# ── 生活设定预置清单（INTERFACE §2.5）：不分底层、只读、每次现读文件；除登录门外恒回 200 ──
+
+@lifecycle_bp.route("/api/console/life_presets", methods=["GET"])
+def api_life_presets():
+    out = {"ok": True}
+    out.update(life_presets.load())   # load() 自己兜住一切读取与校验错误，不抛
+    return jsonify(out)
 
 
 # ── 新建（INTERFACE §2.4）：受理检查全过回 202，后台任务执行 ─────────────────────

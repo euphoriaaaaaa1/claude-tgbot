@@ -129,7 +129,7 @@ def test_能力矩阵与协议键一致():
     assert meta["capabilities"]["bot.create"] is True
     assert meta["capabilities"]["bot.archive"] is True
     assert meta["capabilities"]["bot.features"] is True
-    assert meta["capabilities"]["bot.life_settings"] is False   # 依赖模块尚未移植
+    assert meta["capabilities"]["bot.life_settings"] is True   # T16 已移植 life_settings
     assert tuple(meta["effort_levels"]) == base.EFFORT_LEVELS
 
 
