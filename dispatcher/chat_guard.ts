@@ -8,6 +8,9 @@ import { resolve, isAbsolute } from 'path'
 
 export const CROSS_GROUP_IDLE_MS = 10 * 60_000
 export const USER_REQUEST_WINDOW_MS = 10 * 60_000
+// 到期提醒交给 bot 之后，同样窗口内允许回该聊天（A1-15）
+export const PROMISE_DUE_WINDOW_MS = CROSS_GROUP_IDLE_MS
+export const PROMISE_DUE_PREFIX = '[promise-due]'
 // 回滚开关（PLAN §1.6）：上线后发现模型乱声明 → 改 false 退回纯拦截，不回退代码
 export const USER_REQUEST_ENABLED = true
 const FUTURE_SKEW_MS = 60_000
@@ -21,7 +24,7 @@ export type InboundState = {
 export type CrossChatResult = {
   block: boolean
   idleMin: number | null
-  bypass: 'user_request' | null
+  bypass: 'user_request' | 'party' | 'promise_due' | null
   userRequestDenied: 'expired' | 'no_group_word' | 'already_used' | null
 }
 
@@ -41,6 +44,26 @@ export function humanTsOf(meta: unknown, tsMs: number): number | null {
 
 export function isDirectorInbound(meta: unknown): boolean {
   return isObj(meta) && (meta.from_username === 'director' || meta.sender_username === 'director')
+}
+
+/** 用户正文里的系统标记转全角；worker 只信投递件 meta 追加的标记（party-camera）。 */
+export function escapeUserMarkers(text: unknown): string {
+  if (typeof text !== 'string') return ''
+  return text
+    .replaceAll('[party-ambiguous]', '［party-ambiguous］')
+    .replaceAll('[auto-photo]', '［auto-photo］')
+    .replaceAll('[party]', '［party］')
+}
+
+/** 到期提醒件（promise_runtime 注入）：正文以 [promise-due] 开头。 */
+export function isPromiseDueInbox(meta: unknown): boolean {
+  return isObj(meta) && typeof meta.text === 'string' && meta.text.startsWith(PROMISE_DUE_PREFIX)
+}
+
+/** 到期提醒交给 bot 的时刻表（按 chat）：只记到期提醒件；返回新对象，不改入参。 */
+export function notePromiseDueDelivered(table: Record<string, number>, chatId: string, meta: unknown, tsMs: number): Record<string, number> {
+  if (!chatId || !finite(tsMs) || !isPromiseDueInbox(meta)) return table
+  return { ...table, [chatId]: tsMs }
 }
 
 /** dispatcher 写 inbox meta 的唯一真人打标点：真人非合成 → human_ts；正文（去前导 @mention）含"群" → mentions_group */
@@ -100,6 +123,16 @@ export function dstActiveMs(state: unknown, dst: string): number | undefined {
 }
 
 export function crossChatDecision(srcChatId: unknown, dstChatId: unknown, dstActive: unknown, nowMs: number, opts?: unknown): CrossChatResult {
+  const r = crossChatCore(srcChatId, dstChatId, dstActive, nowMs, opts)
+  const due = isObj(opts) ? opts.dstPromiseDueMs : undefined
+  // 无下界：与 user_request 一致，时钟回拨视为刚交给 bot
+  if (r.block && finite(due) && nowMs - due <= PROMISE_DUE_WINDOW_MS) {
+    return { block: false, idleMin: r.idleMin, bypass: 'promise_due', userRequestDenied: null }
+  }
+  return r
+}
+
+function crossChatCore(srcChatId: unknown, dstChatId: unknown, dstActive: unknown, nowMs: number, opts?: unknown): CrossChatResult {
   const o = isObj(opts) ? opts : {}
   const dst = typeof dstChatId === 'string' ? dstChatId : ''
   const src = typeof srcChatId === 'string' ? srcChatId : ''
@@ -112,6 +145,11 @@ export function crossChatDecision(srcChatId: unknown, dstChatId: unknown, dstAct
   const dstGroupish = dst !== '' && (!dstNumeric || dst.startsWith('-'))
   const block = /^\d+$/.test(src) && dstGroupish && src !== dst
     && (active == null || nowMs - active > CROSS_GROUP_IDLE_MS)
+  // 聚会改投（INTERFACE 2.7）：本条入站带 party_chat_id、目标正是该群 → 旁路优先于普通跨聊天拦截。
+  // partyRedirect 只由插件从投递件 sidecar 传入，模型无法用正文伪造。
+  if (typeof o.partyRedirect === 'string' && o.partyRedirect !== '' && o.partyRedirect === dst) {
+    return { block: false, idleMin, bypass: 'party', userRequestDenied: null }
+  }
   if (!USER_REQUEST_ENABLED || o.userRequested !== true) return { block, idleMin, bypass: null, userRequestDenied: null }
 
   const h = o.srcHumanMs
