@@ -44,7 +44,8 @@ def _safe_path(path: str):
     """归一化并校验转发路径；不合法返回 None。
 
     拒绝：控制字符、反斜杠、`..` 段、`//`、非 `/` 开头（归一化后）。
-    百分号编码先解一次再校验，防 `%2e%2e` 绕过。
+    百分号编码只解一次；解完仍含 `%` 视为多重编码，直接拒绝（`%25252e%252e`
+    这类会剩下 `%`，后端再解一次就是 `..`）。
     """
     if not isinstance(path, str):
         return None
@@ -53,6 +54,8 @@ def _safe_path(path: str):
     if "\\" in path or "//" in path:
         return None
     decoded = urllib.parse.unquote(path)
+    if "%" in decoded:
+        return None
     if decoded != path:
         if any(ord(c) < 0x20 or ord(c) == 0x7f for c in decoded) or "\\" in decoded or "//" in decoded:
             return None

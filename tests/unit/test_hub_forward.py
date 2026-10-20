@@ -25,6 +25,8 @@ def test_safe_path_正常路径(raw, expect):
 @pytest.mark.parametrize("raw", [
     "", "/", "../x", "/hub/../x", "a/../../x", "//evil", "a//b",
     "%2e%2e/x", "a/%2e%2e/b", "a\\b", "a\nb", "a\x00b", "a\x7fb",
+    # 多重百分号编码：只解一次后仍含 %，直接拒绝
+    "%25252e%25252e/x", "%252e%252e/x", "a/%252e%252e/b", "a%252fb",
 ])
 def test_safe_path_拒绝穿越与控制字符(raw):
     assert hub_forward._safe_path(raw) is None
