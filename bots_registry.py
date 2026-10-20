@@ -13,12 +13,18 @@ CLI 契约（INTERFACE §6，契约即测试点）::
 **没有任何可用 bot 时退出码 1** 是刻意的：启动脚本据此报错并非零退出，
 而不是把空名单当"本来就没有 bot"静默成功 —— 那会让所有 bot 悄悄起不来。
 
-**停用标记**：``configs/<bot>.yml`` 顶层 ``enabled: false``。本表不吐它，
-于是所有消费方（重启脚本 / Windows 启动与注册 / 门户名单）都不认它 ——
-"停了不被任何路径拉回来"就是这一处判定负责的，不另设第二张开关表。
+**停用标记**：写侧只有 ``configs/<bot>.yml`` 顶层 ``enabled: false``。读取时还兼容旧版
+``~/.claude/dispatcher/.disabled/<bot>`` 标记 —— **只读**，本模块绝不创建/删除/改写它；
+两种标记任一成立即视为停用。本表不吐停用 bot，于是所有消费方（重启脚本 / Windows
+启动与注册 / 门户名单）都不认它 —— "停了不被任何路径拉回来"就是这一处判定负责的，
+不另设第二张开关表。
+
+**令牌**：``<channelDir>/.env`` 的 ``TELEGRAM_BOT_TOKEN`` 与 ``<channelDir>/.api-token``
+的读法也只在本模块实现一份。任何函数都只返回令牌值或 ``None``，绝不打印/记录它。
 """
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -40,21 +46,89 @@ LEGACY_NAMESPACES = {"chenlulu": "550e8400-e29b-41d4-a716-446655440001"}
 # Authorization: Bearer）。读不到 → 记一行明确日志（含 api_token_missing），暴露问题，
 # 绝不静默成功。
 API_TOKEN_FILENAME = ".api-token"
+TELEGRAM_TOKEN_KEY = "TELEGRAM_BOT_TOKEN"
+LEGACY_DISABLED_DIR = "~/.claude/dispatcher/.disabled"   # 旧停用标记，只读兼容
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{5,32}$")
+
+
+def disabled_dir():
+    """旧停用标记目录。``DIRECTOR_DISABLED_DIR`` 是既有接缝（CBL bot_stop.py 同名）。"""
+    return os.path.expanduser(os.environ.get("DIRECTOR_DISABLED_DIR") or LEGACY_DISABLED_DIR)
+
+
+def safe_bot_id(bot_id):
+    """bot id 会拼进文件路径：拒绝空/点/路径分隔符/NUL，防 ``../`` 越界。
+
+    中文 bot id 合法（既有旧标记里出现过），所以不限制字符集，只拒绝路径语义。
+    """
+    return (isinstance(bot_id, str) and bot_id not in ("", ".", "..")
+            and "/" not in bot_id and "\\" not in bot_id and "\x00" not in bot_id)
 
 
 def default_channel_dir(bot_id):
-    """bot 的通道目录，与 worker 插件同一套约定：``~/.claude/channels/<bot>``。"""
+    """bot 的通道目录，与 worker 插件同一套约定：``~/.claude/channels/<bot>``。
+
+    不安全 bot id → ``None``（调用方据此拒绝读令牌，不拼路径）。
+    """
+    if not safe_bot_id(bot_id):
+        return None
     return os.path.expanduser(os.path.join("~", ".claude", "channels", bot_id))
 
 
+def legacy_disabled(bot_id):
+    """旧版 ``.disabled/<bot>`` 标记是否命中。**只读**；不可读按未停用（fail-open）。"""
+    if not safe_bot_id(bot_id):
+        return False
+    try:
+        os.stat(os.path.join(disabled_dir(), bot_id))
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def read_dispatcher_token(bot_id, channel_dir=None):
-    """读 ``<channelDir>/.api-token``；文件缺失/为空 → ``None``。绝不返回值到日志。"""
+    """读 ``<channelDir>/.api-token``；缺失/为空/路径越界 → ``None``。绝不返回值到日志。"""
     d = os.path.expanduser(channel_dir) if channel_dir else default_channel_dir(bot_id)
+    if not d:
+        return None
     try:
         with open(os.path.join(d, API_TOKEN_FILENAME), "r", encoding="utf-8") as f:
             return f.read().strip() or None
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
+
+
+def read_telegram_token(bot_id, channel_dir=None):
+    """读 ``<channelDir>/.env`` 的 ``TELEGRAM_BOT_TOKEN``；缺失/为空/越界 → ``None``。
+
+    解析口径对齐 shell ``source``：忽略空行与 ``#`` 注释、允许 ``export`` 前缀、
+    去掉成对引号；同名键以后出现的为准。**绝不打印令牌**。
+    """
+    d = os.path.expanduser(channel_dir) if channel_dir else default_channel_dir(bot_id)
+    if not d:
+        return None
+    try:
+        with open(os.path.join(d, ".env"), "r", encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+    value = None
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if s.startswith("export "):
+            s = s[len("export "):].lstrip()
+        if "=" not in s:
+            continue
+        key, raw = s.split("=", 1)
+        if key.strip() != TELEGRAM_TOKEN_KEY:
+            continue
+        raw = raw.strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
+            raw = raw[1:-1]
+        value = raw or None
+    return value
 
 
 def dispatcher_auth_headers(bot_id, channel_dir=None):
@@ -111,14 +185,17 @@ def _scan(warn=None):
     return rows
 
 
-def is_enabled(cfg):
+def is_enabled(cfg, bot_id=None):
     """顶层 ``enabled`` 的判定：**没写字段 = 启用**（存量 bot 一个都不许被顺手停掉）。
 
     只有显式写了假值（``false`` / ``no`` / ``0`` / 空串）才算停用 —— 手写 ``enabled: 0``
     的人要的就是停，按 ``is False`` 判会把它当启用，正是"看着改了其实没生效"那类坑。
+    给出 ``bot_id`` 时叠加旧版 ``.disabled/<bot>`` 只读标记；不传则只看 yml（旧调用口径）。
     """
     v = cfg.get("enabled")
-    return v is None or bool(v)
+    if v is not None and not bool(v):
+        return False
+    return not (bot_id is not None and legacy_disabled(bot_id))
 
 
 def _resolve_ports(rows):
@@ -164,8 +241,8 @@ def _namespace(bot_id, cfg):
 def bots(warn=None, include_disabled=False):
     """可用 bot，按 id 排序。CLI 与全部 Python 消费方共用这一个出口。
 
-    ``enabled: false`` 的 bot **默认不出现在这里** —— 这张表就是"该起哪些 bot"的名单，
-    重启脚本、Windows 启动/注册脚本全按它拉起，不吐出去就等于停用生效。
+    ``enabled: false`` / 旧 ``.disabled`` 标记的 bot **默认不出现在这里** —— 这张表就是
+    "该起哪些 bot"的名单，重启脚本、Windows 启动/注册脚本全按它拉起，不吐出去就等于停用生效。
     ``include_disabled=True`` 给"通讯录"类用途（端口/命名空间查询、管理台列表）用。
 
     过滤放在这里而不是 ``_scan``：端口按**全表**解析，停用的 bot 仍占着自己的号，
@@ -176,7 +253,7 @@ def bots(warn=None, include_disabled=False):
     fixed, derived = _resolve_ports(rows)
     out = []
     for bot_id, cfg in rows:
-        if not include_disabled and not is_enabled(cfg):
+        if not include_disabled and not is_enabled(cfg, bot_id):
             continue
         port = fixed.get(bot_id) or derived.get(bot_id)
         if port is None:                       # 端口耗尽的极端情况：宁可不列
@@ -202,8 +279,11 @@ def ports():
 
 
 def disabled_ids():
-    """被 ``enabled: false`` 停用的 bot id 集合。管理台按它给行打"已停用"徽标。"""
-    return {bot_id for bot_id, cfg in _scan() if not is_enabled(cfg)}
+    """被 ``enabled: false`` 或旧 ``.disabled/<bot>`` 标记停用的 bot id 集合。
+
+    管理台按它给行打"已停用"徽标。旧标记只读，本函数绝不创建/删除它。
+    """
+    return {bot_id for bot_id, cfg in _scan() if not is_enabled(cfg, bot_id)}
 
 
 _safe_warned = False
@@ -238,6 +318,66 @@ def namespace_for(bot_id):
         if b["id"] == bot_id:
             return b["namespace_uuid"]
     return LEGACY_NAMESPACES.get(bot_id)
+
+
+def namespace(bot_id):
+    """CBL ``bot_registry.namespace()`` 的兼容名；语义同 ``namespace_for``。"""
+    return namespace_for(bot_id)
+
+
+def username(bot_id):
+    """``telegram_username``（不带 @）；没有或不合规 → None。
+
+    CBL ``bot_registry.username()`` 的兼容面：v2 只保留一个注册表模块，
+    尚未移植的 adapters 代码按这个名字调用。
+    """
+    if not safe_bot_id(bot_id):
+        return None
+    for bid, cfg in _scan():
+        if bid != bot_id:
+            continue
+        v = cfg.get("telegram_username")
+        if isinstance(v, str) and _USERNAME_RE.fullmatch(v.strip()):
+            return v.strip()
+        return None
+    return None
+
+
+def entries():
+    """CBL ``bot_registry.entries()`` 的兼容面：启用 bot 的字段表，按 id 排序。
+
+    字段沿用 CBL 的 ``bot_id/id/dispatcher_port/bot_channel_path/namespace_uuid/
+    telegram_username/launcher``；``dispatcher_port`` 是字符串（CBL 原口径）。
+    未在 yml 里出现的可选字段记 None，``launcher`` 只认 ``registry``。
+    v2 的新代码请直接用 ``bots()`` / ``ports()``，这里只服务尚未移植的 CBL 调用点。
+    """
+    cfg_by_id = {bot_id: cfg for bot_id, cfg in _scan()}
+    out = []
+    for item in bots():
+        cfg = cfg_by_id.get(item["id"], {})
+        channel_path = cfg.get("bot_channel_path")
+        out.append({
+            "bot_id": item["id"],
+            "id": item["id"],
+            "dispatcher_port": str(item["port"]),
+            "bot_channel_path": (channel_path if isinstance(channel_path, str)
+                                 and "\n" not in channel_path and "\x00" not in channel_path
+                                 else None),
+            "namespace_uuid": item["namespace_uuid"],
+            "telegram_username": username(item["id"]),
+            "launcher": "registry",
+        })
+    return out
+
+
+def reload():
+    """CBL ``bot_registry.reload()`` 的兼容面。
+
+    v1 的 ``bot_registry`` 维护一张原地刷新的 ``BOT_PORTS``；v2 的 ``ports()`` 每次现读，
+    没有缓存，因此这里只需返回当前端口表。**尚未移植的 provider_config 不要缓存返回值**，
+    直接每次调用 ``ports()`` —— 缓存快照会在加/删 bot 后漂移。
+    """
+    return ports()
 
 
 _USAGE = "用法：python3 -m bots_registry [--format=sh|json]\n"
