@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
-import { resolveAllowedFile } from './file_allowlist'
+import { channelsMediaRoot, resolveAllowedFile } from './file_allowlist'
 
 const dirs: string[] = []
 function mkDir(): string {
@@ -78,5 +78,37 @@ describe('resolveAllowedFile', () => {
     writeFileSync(f, 'x')
     expect(resolveAllowedFile('~/media/b.png', [join(home, 'other'), '~/media'], home))
       .toEqual({ ok: true, path: realpathSync(f) })
+  })
+
+  test('channels/media 整棵子树可发（download_attachment 落盘处）', () => {
+    const home = mkDir()
+    const mediaRoot = join(home, '.claude', 'channels', 'media')
+    const f = join(mediaRoot, 'mybot', 'telegram', 'x.jpg')
+    mkdirSync(join(mediaRoot, 'mybot', 'telegram'), { recursive: true })
+    writeFileSync(f, 'x')
+    expect(resolveAllowedFile(f, [mediaRoot], home))
+      .toEqual({ ok: true, path: realpathSync(f) })
+  })
+
+  test('channels/media 根之外的 ../ 与 .env 被拒', () => {
+    const home = mkDir()
+    const mediaRoot = join(home, '.claude', 'channels', 'media')
+    mkdirSync(mediaRoot, { recursive: true })
+    const escaped = join(mediaRoot, '..', '..', '.env')
+    writeFileSync(escaped, 'SECRET=x')
+    expect(resolveAllowedFile(escaped, [mediaRoot], home).ok).toBe(false)
+    const sibling = join(home, '.claude', 'channels', 'other', 'x.png')
+    mkdirSync(join(home, '.claude', 'channels', 'other'), { recursive: true })
+    writeFileSync(sibling, 'x')
+    expect(resolveAllowedFile(sibling, [mediaRoot], home))
+      .toEqual({ ok: false, reason: 'outside_roots' })
+  })
+
+  test('channelsMediaRoot 支持 CLAUDEBOT_CHANNELS_ROOT 接缝', () => {
+    const root = mkDir()
+    expect(channelsMediaRoot({ CLAUDEBOT_CHANNELS_ROOT: root }, '/h')).toBe(join(root, 'media'))
+    expect(channelsMediaRoot({}, '/h')).toBe(join('/h', '.claude', 'channels', 'media'))
+    expect(channelsMediaRoot({ CLAUDEBOT_CHANNELS_ROOT: '  ' }, '/h'))
+      .toBe(join('/h', '.claude', 'channels', 'media'))
   })
 })

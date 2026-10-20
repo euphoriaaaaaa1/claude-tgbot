@@ -19,6 +19,18 @@ export type FileDecision = { ok: true; path: string } | { ok: false; reason: str
 
 const SENSITIVE_SEGMENTS = new Set(['configs', 'secrets'])
 
+/**
+ * Telegram 附件下载目录的根：`<channels>/media`。
+ * 下载落在 `.../media/<bot>/telegram`，它是频道目录的兄弟目录，所以要按频道根算。
+ */
+export function channelsMediaRoot(
+  env: Readonly<Record<string, string | undefined>>,
+  home: string,
+): string {
+  const root = env.CLAUDEBOT_CHANNELS_ROOT
+  return join(root && root.trim() ? root : join(home, '.claude', 'channels'), 'media')
+}
+
 function expandHome(p: string, home: string): string {
   if (p === '~') return home
   if (p.startsWith('~/')) return join(home, p.slice(2))

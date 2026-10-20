@@ -33,7 +33,7 @@ import { makePauseCheck } from './pause_gate'
 import { sanitizePromiseIds } from './promise_plan'
 import { readProviderFpStatus } from './provider_fp'
 import { telegramApiBase, planFileDrops } from './feature_gate'
-import { resolveAllowedFile } from './file_allowlist'
+import { channelsMediaRoot, resolveAllowedFile } from './file_allowlist'
 import { senderAllowed } from './inbound_access'
 import { voiceBridgeAuthHeaders } from './voice_bridge_auth'
 import { readFeatures, featureOn, type FeatureFlags } from './features'
@@ -211,6 +211,8 @@ function allowedFileRoots(): string[] {
     stickerImageRoot(),
     join(CHANNEL_DIR, 'inbox'),
     join(CHANNEL_DIR, 'media'),
+    // download_attachment 落在 <channels>/media/<bot>/telegram，是频道根的兄弟目录。
+    channelsMediaRoot(process.env, homedir()),
   ]
   const moments = process.env.MOMENTS_MEDIA_ROOT
   if (moments) roots.push(moments)
