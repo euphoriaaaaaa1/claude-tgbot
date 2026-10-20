@@ -783,6 +783,14 @@ let clearInProgress = false
 // 会 --resume 那份旧会话，清了等于没清。
 let clearDeferredSpawn = ''
 
+/** 清理收尾：放开 clearInProgress；期间被压着没拉 worker 的，这里补拉一次。 */
+function releaseClear(): void {
+  clearInProgress = false
+  const chat = clearDeferredSpawn
+  clearDeferredSpawn = ''
+  if (chat) ensureWorkerRunning(chat)
+}
+
 function readTailFile(path: string, maxBytes: number): string {
   let fd = -1
   try {
@@ -1008,6 +1016,33 @@ async function slashBridgeIfApplicable(ctx: Context, text: string): Promise<bool
   const msgId = ctx.message?.message_id
   const replyOpt = msgId != null ? { reply_parameters: { message_id: msgId } } : {}
 
+  // ─── /stopbot | /startbot：dispatcher 层直接执行，不下发 AI ───
+  // 双保险鉴权：仅私聊 + allowFrom 白名单；拒绝时静默吞掉，不给探测者回执。
+  const ctl = parseBotCtl(trimmed)
+  if (ctl) {
+    const sender = String(ctx.from?.id ?? '')
+    const acc0 = loadAccess()
+    if (ctx.chat?.type !== 'private' || !acc0.allowFrom.includes(sender)) {
+      process.stderr.write(`dispatcher[${BOT_NAME}]: botctl 拒绝 chat=${chatId} from=${sender}\n`)
+      return true
+    }
+    if ('usage' in ctl) {
+      await bot.api.sendMessage(chatId, ctl.usage, replyOpt).catch(() => {})
+      return true
+    }
+    const script = join(homedir(), '.claude', 'dispatcher',
+      ctl.cmd === 'stopbot' ? 'stop-bot.sh' : 'start-bot.sh')
+    // 先回执再执行：stop 自己 / start 的全栈重启都会把本 dispatcher 杀掉，之后没机会回执。
+    const note = ctl.cmd === 'stopbot'
+      ? `正在停用 ${ctl.target}（看门狗与重启脚本都不会再拉它；恢复发 /startbot ${ctl.target}）`
+      : `正在启用 ${ctl.target}（全栈重启，各 bot 断线几秒）`
+    await bot.api.sendMessage(chatId, note, replyOpt).catch(() => {})
+    process.stderr.write(`dispatcher[${BOT_NAME}]: botctl ${ctl.cmd} ${ctl.target} by ${sender}\n`)
+    const child = spawn('bash', [script, ctl.target], { detached: true, stdio: 'ignore' })
+    child.unref()
+    return true
+  }
+
   // /clear、/clearall 等清空类命令已在 handleInbound 步骤 1a 统一鉴权处理
   // （H-13：仅"私聊 + 主人 + 后缀为本 bot"放行，群/非主人一律拒绝），此处不再重复。
 
@@ -1220,7 +1255,7 @@ async function handleInbound(
         await receipt(`[清空没成功: ${String(e).slice(0, 200)}]`)
       } finally {
         mgr.endClear()                     // H-12：含异常路径必须释放门禁，绝不永久持门
-        clearInProgress = false
+        releaseClear()                     // 清理期间压下的 inbound 在这里补拉 worker
       }
     })()
     return
