@@ -1677,7 +1677,7 @@ function guardApi(req: Request, apiToken: string, boundPort: number): Response |
 
 // ─── HTTP server for workers ─────────────────────────────────────────
 // 已知 POST 端点集合：非 POST 方法只在这些路径上判 405；未列出路径放行落入兜底 404。
-const KNOWN_POST_PATHS = new Set(['/promise', '/send', '/react', '/download', '/add_group_alias', '/peer_inbound', '/party', '/photo_round'])
+const KNOWN_POST_PATHS = new Set(['/promise', '/send', '/react', '/download', '/add_group_alias', '/peer_inbound', '/party', '/photo_round', '/inject'])
 
 // ─── party-camera API（/party、/photo_round）──────────────────────────
 const PARTY_ERROR_MESSAGE: Record<string, string> = {
@@ -1832,7 +1832,14 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
       if (url.pathname === '/party') return await handlePartyRequest(req)
       if (url.pathname === '/photo_round') return await handlePhotoRoundRequest(req)
 
-      const body = await req.json() as any
+      let body: any
+      try { body = await req.json() } catch (e) {
+        // /send 的坏 JSON 契约是 400；其余端点沿用既有 500 行为。
+        if (url.pathname === '/send') {
+          return Response.json({ ok: false, error: 'bad_request', detail: 'body', message_ids: [], parts: [] }, { status: 400 })
+        }
+        throw e
+      }
 
       if (url.pathname === '/send') {
         // 入口校验：请求体不是普通对象 / chat_id 不合法 → 400 bad_request
@@ -2041,7 +2048,8 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
         // 不回流→没有新消息触发下一轮）＋被选中 bot 看不到别人说了啥（像失忆）。
         // 抢答风险：导演模式下 gate 会 drop 掉 synthetic peer 消息（不路由给 worker），所以 peer
         // 推送只喂 transcript、不会引发 bot 互相回复，安全。
-        if (String(chatId).startsWith('-') && PEERS.length > 0 && peerText.trim().length > 0) {
+        // 一段都没发出去的话在群里不存在，不推给其他 bot。
+        if (sentIds.length > 0 && String(chatId).startsWith('-') && PEERS.length > 0 && peerText.trim().length > 0) {
           const payload = {
             source_bot: BOT_NAME,
             source_username: botUsername,
@@ -2051,7 +2059,7 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
             text: peerText,
             message_ids: sentIds,
             reply_to: replyTo,
-            files,
+            files: files.filter((_, i) => !fileDrops.dropped.has(i)),   // 功能关着没发的文件不算群里出现过
           }
           for (const peer of PEERS) {
             const ptok = peerApiToken(peer)
@@ -2137,15 +2145,30 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
       if (url.pathname === '/peer_inbound') {
         const b = body
         const chatIdStr = String(b.chat_id ?? '')
+        // 没有消息编号的互推件（对方一段都没发出去）直接丢弃：内存去重与群记录抢占都靠它。
+        const sourceMsgId = Number(b.source_message_id)
+        const firstListedId = Array.isArray(b.message_ids) && b.message_ids.length > 0 ? Number(b.message_ids[0]) : NaN
+        const peerMsgId = Number.isFinite(sourceMsgId) && sourceMsgId > 0
+          ? sourceMsgId
+          : (Number.isFinite(firstListedId) && firstListedId > 0 ? firstListedId : null)
+        if (peerMsgId == null) {
+          process.stderr.write(`dispatcher[${BOT_NAME}]: peer_inbound_dropped from=${String(b.source_bot ?? '-').replace(/\s+/g, '_').slice(0, 40)} chat=${chatIdStr} reason=no_message_id\n`)
+          return Response.json({ ok: false, error: 'no_message_id' }, { status: 400 })
+        }
         const syntheticCtx = {
-          chat: { id: Number(b.chat_id), type: b.chat_type ?? 'supergroup' },
+          chat: {
+            id: Number(b.chat_id),
+            type: typeof b.chat_type === 'string' && b.chat_type !== ''
+              ? b.chat_type
+              : (Number(b.chat_id) > 0 ? 'private' : 'supergroup'),
+          },
           from: {
             id: Number(b.source_user_id ?? 0),
             is_bot: true,
             username: typeof b.source_username === 'string' ? b.source_username : undefined,
           },
           message: {
-            message_id: Array.isArray(b.message_ids) && b.message_ids.length > 0 ? Number(b.message_ids[0]) : undefined,
+            message_id: peerMsgId,
             text: String(b.text ?? ''),
             date: Math.floor(Date.now() / 1000),
             reply_to_message: b.reply_to != null ? { message_id: Number(b.reply_to) } : undefined,
@@ -2155,7 +2178,8 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
         const firstImage = Array.isArray(b.files)
           ? b.files.find((f: any) => typeof f === 'string' && /\.(png|jpe?g|webp|gif)$/i.test(f))
           : undefined
-        process.stderr.write(`dispatcher[${BOT_NAME}]: peer_inbound from=${b.source_bot} chat=${chatIdStr} text=${JSON.stringify(String(b.text ?? '').slice(0, 60))}\n`)
+        // 日志脱敏：只记来源/聊天号/消息号，不落用户正文
+        process.stderr.write(`dispatcher[${BOT_NAME}]: peer_inbound from=${b.source_bot} chat=${chatIdStr} msgId=${peerMsgId}\n`)
         await handleInbound(syntheticCtx, String(b.text ?? ''), firstImage, undefined, undefined, { synthetic: true })
         return Response.json({ ok: true })
       }
