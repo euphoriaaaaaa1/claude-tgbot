@@ -93,8 +93,18 @@ _kill_tree() {
   kill -s "$sig" "$pid" 2>/dev/null || true
 }
 
+# pid 是否确实是本仓库的 dispatcher（防重启后 pid 复用误杀无关进程）。
+_pid_is_dispatcher() {
+  local cmd
+  cmd="$("$PS_CMD" -o command= -p "$1" 2>/dev/null || true)"
+  case "$cmd" in
+    *"$REPO_DIR/dispatcher/dispatcher.ts"*) return 0 ;;
+  esac
+  return 1
+}
+
 # 本仓库 dispatcher 的 PID：
-#   a) start 脚本写下的 <RUN_DIR>/<bot>.pid
+#   a) start 脚本写下的 <RUN_DIR>/<bot>.pid（校验命令行后再信）
 #   b) 命令行里带本仓库 dispatcher.ts 的 bun 进程（覆盖手工启动/旧 pid 丢失）
 # 输出每行一个 PID，可能重复，调用方用 sort -u 去重。
 dispatcher_pids() {
@@ -106,7 +116,9 @@ dispatcher_pids() {
       case "$pid" in
         ''|*[!0-9]*) continue ;;
       esac
-      kill -0 "$pid" 2>/dev/null && printf '%s\n' "$pid"
+      if kill -0 "$pid" 2>/dev/null && _pid_is_dispatcher "$pid"; then
+        printf '%s\n' "$pid"
+      fi
     done
   fi
   "$PS_CMD" -eo pid=,command= 2>/dev/null | while read -r pid cmd; do

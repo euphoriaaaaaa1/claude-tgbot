@@ -77,7 +77,8 @@ def _fake_bun(tmp_path):
         "  printf 'BOT_NAMESPACE=%s\\n' \"$BOT_NAMESPACE\"\n"
         "  printf 'CHANNEL_DIR=%s\\n' \"$CHANNEL_DIR\"\n"
         "} >> \"$FAKE_BUN_LOG\"\n"
-        "exec sleep 30\n",
+        # 不 exec：让进程命令行保留 .../bun .../dispatcher.ts，stop 的 pid 校验才认
+        "sleep 30\n",
         encoding="utf-8",
     )
     p.chmod(0o755)
