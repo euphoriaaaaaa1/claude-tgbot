@@ -28,6 +28,11 @@ test('ts 取末条', () => {
   expect(merged(three).ts).toBe(3000)
 })
 
+test('合并件带全部入站 message_id（party 绑定/拍照幂等用）', () => {
+  expect(merged(three).merged_message_ids).toEqual(['11', '12', '13'])
+  expect(merged([three[0]]).merged_message_ids).toBeUndefined()
+})
+
 test('返回值是字符串且为合法 JSON', () => {
   const s = mergeInboxJsons(three)
   expect(typeof s).toBe('string')

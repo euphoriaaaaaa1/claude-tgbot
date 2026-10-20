@@ -107,5 +107,9 @@ export function mergeInboxJsons(rawJsons: string[]): string {
   const first = objs[0]!
   const last = objs[objs.length - 1]!
   const text = objs.map(o => (typeof o.text === 'string' ? o.text : '')).join('\n')
-  return JSON.stringify({ ...first, text, ts: 'ts' in last ? last.ts : first.ts })
+  // 合并件保留全部入站 message_id：party 工具要按"全部发送者都是 owner"绑定，拍照幂等键也用它。
+  const ids = objs.map(o => o.message_id).filter(v => v != null).map(String)
+  const out: Record<string, unknown> = { ...first, text, ts: 'ts' in last ? last.ts : first.ts }
+  if (ids.length > 1) out.merged_message_ids = ids
+  return JSON.stringify(out)
 }
