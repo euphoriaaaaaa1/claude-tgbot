@@ -849,6 +849,46 @@ function wipeSessionJsonl(): boolean {
   }
 }
 
+// ─── 承诺兑现（说过的话到点必须兑现）────────────────────────────────────
+// bot 说"20 分钟后找你"→ 模型调 promise_set → 落 .promises.json（本进程是唯一写者）→
+// 60s tick 到点注入 [promise-due]。判睡且无近期入站 → 转欠账，由下一次投递捎上认账。
+// 决策在 promise_plan.ts，编排在 promise_runtime.ts，这里只接三根线。
+const PROMISE_TICK_MS = 60_000
+const PROMISE_TICK_OFFSET_MS = 30_000    // 与 hang tick 错开半分钟，两个 probe 不撞在同一秒
+
+/** 到期时 worker 不在 → 异步拉活（worker-manager 是唯一权威，不引入 tmux/launchctl）。 */
+function promiseEnsureWorker(chatId: string): void {
+  if (clearInProgress) { clearDeferredSpawn = chatId; return }
+  const mgr = getManager()
+  if (mgr.isAlive()) return                       // worker 在线，inbox 里的件它自己会 drain
+  process.stderr.write(`dispatcher[${BOT_NAME}]: promise_spawn_worker chat=${chatId}\n`)
+  void mgr.ensure().catch(e => {
+    process.stderr.write(`dispatcher[${BOT_NAME}]: promise_spawn_failed reason=${e instanceof Error ? e.name : 'unknown'}\n`)
+  })
+}
+
+const promiseBotDisabled = makeBotDisabledCheck(BOT_NAME)
+const promiseLog = (line: string) => { process.stderr.write(`dispatcher[${BOT_NAME}]: ${line}\n`) }
+const promise = createPromiseRuntime({
+  channelDir: CHANNEL_DIR,
+  inject: (chatId, key, meta) => writeInbox(chatId, key, meta),
+  retract: makeInboxRetract(CHANNEL_DIR),
+  ...makeSessionScanner(CHANNEL_DIR, BOT_NAME),
+  probeAsleep: makeAsleepProbe(BOT_NAME, undefined, undefined, promiseLog),
+  ensureWorker: promiseEnsureWorker,
+  // pause 时连 DM 都不回，承诺更不该发 → 顺延；bot 停用开关同一道闸
+  isPaused: () => isPaused() ?? promiseBotDisabled(),
+  isStopped: makeStopCheck(BOT_NAME),
+  log: promiseLog,
+})
+// 承诺功能的任何失败都不得把 dispatcher 拖崩或停掉真人消息处理。
+const promiseTick = () => {
+  promise.tick().catch(e =>
+    process.stderr.write(`dispatcher[${BOT_NAME}]: promise_tick_failed reason=${e instanceof Error ? e.name : 'unknown'}\n`))
+}
+promiseTick()                                      // 启动即补一轮：重启期间错过的到期立刻补上
+setTimeout(() => setInterval(promiseTick, PROMISE_TICK_MS), PROMISE_TICK_OFFSET_MS)
+
 // ─── 清空类命令鉴权（H-13）──────────────────────────────────────────────
 // bot 用户名：@ 后缀必须与它一致，否则按未授权处理（不得"忽略后缀继续执行"）
 function botUsernameOf(ctx: Context): string {
@@ -1687,6 +1727,20 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
       }
       if (url.pathname === '/status') {
         return Response.json({ ok: true, ...getManager().status() })
+      }
+
+      // 承诺登记/取消/查询：worker 侧 MCP tool 的底层通道。坏 JSON 的契约是 400，
+      // 必须在通用 req.json() 之前接住，否则会变成 500。
+      if (url.pathname === '/promise') {
+        let promiseBody: unknown
+        try { promiseBody = await req.json() } catch { return new Response('bad json', { status: 400 }) }
+        try {
+          const r = await promise.handle(promiseBody)
+          return Response.json(r.body, { status: r.status })
+        } catch (e) {
+          process.stderr.write(`dispatcher[${BOT_NAME}]: promise_handle_failed reason=${e instanceof Error ? e.name : 'unknown'}\n`)
+          return Response.json({ ok: false, error: 'store_failed' }, { status: 500 })
+        }
       }
 
       // party-camera：坏 JSON/超长的 400/413 契约要赶在通用 req.json() 之前接住。
