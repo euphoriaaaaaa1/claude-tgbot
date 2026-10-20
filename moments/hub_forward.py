@@ -10,9 +10,12 @@
 """
 import http.client
 import os
+import posixpath
 import urllib.parse
 
 from flask import Blueprint, Response, request
+
+from adapters.guard import NotLoopbackError, loopback_address
 
 hub_forward_bp = Blueprint("hub_forward", __name__)
 
@@ -23,13 +26,44 @@ DEFAULT_TOKEN_FILE = "~/.config/claude-dsh-console/adapter.token"
 
 
 def _target() -> tuple[str, int, str]:
-    """返回 (host, port, 路径前缀)；未配置/非法抛 ValueError。"""
+    """返回 (host, port, 路径前缀)；未配置/非法/非回环抛 ValueError。"""
     raw = os.environ.get("CONSOLE_DSH_ADAPTER_URL") or ""
     parts = urllib.parse.urlsplit(raw)
     if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise ValueError("unconfigured")
+        raise ValueError("backend_unconfigured")
+    try:
+        # 目标必须是本机回环：这个转发会带上适配器令牌。
+        host = loopback_address(parts.hostname)
+    except NotLoopbackError:
+        raise ValueError("backend_unconfigured") from None
     port = parts.port or (443 if parts.scheme == "https" else 80)
-    return parts.hostname, port, parts.path.rstrip("/")
+    return host, port, parts.path.rstrip("/")
+
+
+def _safe_path(path: str):
+    """归一化并校验转发路径；不合法返回 None。
+
+    拒绝：控制字符、反斜杠、`..` 段、`//`、非 `/` 开头（归一化后）。
+    百分号编码先解一次再校验，防 `%2e%2e` 绕过。
+    """
+    if not isinstance(path, str):
+        return None
+    if any(ord(c) < 0x20 or ord(c) == 0x7f for c in path):
+        return None
+    if "\\" in path or "//" in path:
+        return None
+    decoded = urllib.parse.unquote(path)
+    if decoded != path:
+        if any(ord(c) < 0x20 or ord(c) == 0x7f for c in decoded) or "\\" in decoded or "//" in decoded:
+            return None
+        if ".." in decoded.split("/"):
+            return None
+    if ".." in path.split("/"):
+        return None
+    norm = posixpath.normpath("/" + path.lstrip("/"))
+    if not norm.startswith("/") or norm == "/":
+        return None
+    return norm
 
 
 def _token() -> str:
@@ -51,13 +85,17 @@ def hub_proxy(path: str):
     try:
         host, port, prefix = _target()
     except ValueError:
-        return _fail(503, "dsh_unconfigured")
+        return _fail(503, "backend_unconfigured")
+
+    clean = _safe_path(path)
+    if clean is None:
+        return _fail(404, "not_found")
 
     body = request.get_data(cache=False)
     if len(body) > MAX_BODY:
         return _fail(413, "too_large")
 
-    target = prefix + API_PREFIX + "/" + path
+    target = prefix + API_PREFIX + clean
     if request.query_string:
         target += "?" + request.query_string.decode("utf-8", "replace")
     headers = {"Accept": request.headers.get("Accept", "*/*")}
