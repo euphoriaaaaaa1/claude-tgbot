@@ -5,6 +5,8 @@
 # configs/_global.yml 含 DeepSeek key，只提交 _global.example.yml（gitignore 不支持行内注释，注释须独占一行）
 # 通配符还罩住 hub 参数页产生的备份副本 .bak.*/.pre-restore.*，它们是全文副本、同样含明文 key
 configs/_global.yml*
+# configs/providers.json 含上游明文 key，只提交 providers.example.json；通配符同时罩住安装/编辑产生的副本
+configs/providers.json*
 **/token*
 **/*secret*
 # H-15 本机接口口令（dispatcher 运行时生成，绝不入库）
