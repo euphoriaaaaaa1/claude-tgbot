@@ -13,17 +13,14 @@ todo() { printf '  \033[1;33m⚠️  %s\033[0m\n' "$*"; }
 # 还差几项要人手补。从 ① 起就可能被置 1，结尾据它决定报不报"全部就绪"。
 left=0
 
-# 渲染好的 plist 装进 ~/Library/LaunchAgents 并加载。
-# 返回 0=已加载 / 1=写好了但没加载上（典型：SSH 里没有图形会话）/ 2=格式校验没过（已丢弃）
-load_agent() {
-  _label="$1"; _tmp="$2"; _dest="$HOME/Library/LaunchAgents/$_label.plist"
-  plutil -lint "$_tmp" >/dev/null 2>&1 || { rm -f "$_tmp"; return 2; }
-  mkdir -p "$HOME/Library/LaunchAgents"
-  mv -f "$_tmp" "$_dest"
-  launchctl bootout "gui/$UID/$_label" >/dev/null 2>&1 || true
-  launchctl bootstrap "gui/$UID" "$_dest" >/dev/null 2>&1 || return 1
-  return 0
-}
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+DRY_RUN="${DRY_RUN:-0}"
+
+# install.sh 只覆盖 macOS / Linux；Windows 走 windows\register-tasks.ps1。
+case "$(uname -s)" in
+  Darwin|Linux) ;;
+  *) echo "错误：install.sh 只支持 macOS/Linux。Windows 请用 powershell -File windows\\register-tasks.ps1" >&2; exit 2 ;;
+esac
 
 # ── ① 前置依赖检查 ─────────────────────────────────────────
 say "① 检查前置依赖"
@@ -36,6 +33,16 @@ ok "python3 / bun / claude 都在"
 # tmux 不阻断安装，但 restart-bots.sh 是靠它常驻 dispatcher 的：没有它一个 bot 都起不来
 command -v tmux >/dev/null || {
   todo "缺 tmux（restart-bots.sh 用它常驻每个 bot 的 dispatcher，没它起不来）→ brew install tmux（Linux：apt install tmux）"; left=1; }
+
+if [ "$DRY_RUN" = 1 ]; then
+  say "DRY_RUN=1：只检查依赖并打印计划，不写盘、不装依赖、不注册服务"
+  echo "  ② $PYTHON_BIN -m pip install -r requirements.txt；cd dispatcher && bun install"
+  echo "  ③ 铺 configs/_global.yml、restart-bots.sh（仅缺失时复制）"
+  echo "  ④ 密钥体检（不写入；实际运行时可当场粘贴）"
+  echo "  ⑤ $PYTHON_BIN platform_services.py register autostart --repo $PWD"
+  echo "  只预览服务命令：$PYTHON_BIN platform_services.py register autostart --repo $PWD --dry-run"
+  exit 0
+fi
 
 # ── ② 装依赖 ──────────────────────────────────────────────
 say "② 安装 Python + JS 依赖"
@@ -77,35 +84,26 @@ if [ "$(python3 scripts/setup_keys.py status | python3 -c 'import json,sys; d=js
 fi
 
 # ── ⑤ 注册开机自启 ────────────────────────────────────────
-# 幂等：每次都重新渲染 plist、先 bootout 再 bootstrap，重复跑结果一致。
-# 任何一步失败只 warn 不中断安装（比如 SSH 里没有图形会话，bootstrap 会拒）。
+# 统一走 platform_services.py：macOS=launchd、Linux=systemd --user。
+# 幂等：注册前先卸后装；任何一步失败只 warn 不中断安装（比如 SSH 里没有图形会话）。
 say "⑤ 注册开机自启"
-AUTOSTART_LABEL="com.claudebotlife.autostart"
-AUTOSTART_PLIST="$HOME/Library/LaunchAgents/$AUTOSTART_LABEL.plist"
 autostart_on=0
-if [ "$(uname -s)" != "Darwin" ]; then
-  todo "非 macOS：没有 launchd，想开机自启请自己挂 cron（@reboot bash $PWD/restart-bots.sh）或 systemd user service"
+# 老版 install.sh / README 用过两个历史标签；先卸掉，免得开机起两次。
+# platform_services 里对这两个标签做了精确白名单，不碰别家服务。
+for LEGACY_AUTOSTART_LABEL in com.claudebotlife.autostart com.example.claudebotlife.autostart; do
+  if [ -f "$HOME/Library/LaunchAgents/$LEGACY_AUTOSTART_LABEL.plist" ]; then
+    todo "检测到旧版自启标签 $LEGACY_AUTOSTART_LABEL，先卸载"
+    "$PYTHON_BIN" platform_services.py unregister --raw-label "$LEGACY_AUTOSTART_LABEL" >/dev/null 2>&1 || true
+  fi
+done
+if "$PYTHON_BIN" platform_services.py register autostart --repo "$PWD"; then
+  ok "开机自启已注册（$(uname -s)，platform_services）"
+  autostart_on=1
 else
-  tmp_plist="$(mktemp "${TMPDIR:-/tmp}/claudebotlife-autostart.XXXXXX")"
-  # launchd 不展开 ~，模板里的 ~/.bun/bin 必须换成真实家目录，否则非 homebrew 装的 bun 找不到
-  sed -e "s#{REPO_DIR}#$PWD#g" -e "s#~/.bun/bin#$HOME/.bun/bin#g" \
-      plist-templates/autostart.plist.tmpl > "$tmp_plist"
-  rc=0; load_agent "$AUTOSTART_LABEL" "$tmp_plist" || rc=$?
-  if [ "$rc" = 0 ]; then
-    ok "开机自启已注册（${AUTOSTART_LABEL}）"
-    autostart_on=1
-  elif [ "$rc" = 1 ]; then
-    todo "plist 已写好但没加载上（常见于 SSH，没有图形会话）。图形登录后手动跑：launchctl bootstrap gui/\$UID $AUTOSTART_PLIST"
-  else
-    todo "自启 plist 渲染后格式校验没过，已跳过（不影响手动 bash restart-bots.sh）"
-  fi
-  # 老版 README 手动挂过的自启，标签不同不会被上面覆盖 → 会起两次，提醒删掉
-  old_plist="$HOME/Library/LaunchAgents/com.example.claudebotlife-autostart.plist"
-  if [ -f "$old_plist" ]; then
-    todo "检测到旧版自启，删掉免得开机起两次：launchctl bootout gui/\$UID/com.example.claudebotlife-autostart; rm $old_plist"
-  fi
-
+  rc=$?
+  todo "开机自启注册失败（退出码 $rc）。手动重跑：$PYTHON_BIN platform_services.py register autostart --repo \"$PWD\""
 fi
+
 
 echo
 if [ "$left" = 0 ]; then
@@ -119,5 +117,5 @@ else
 fi
 if [ "$autostart_on" = 1 ]; then
   echo "以后开机自动起 bot，不想要就卸掉："
-  echo "  launchctl bootout gui/\$UID/$AUTOSTART_LABEL; rm $AUTOSTART_PLIST"
+  echo "  $PYTHON_BIN platform_services.py unregister autostart"
 fi

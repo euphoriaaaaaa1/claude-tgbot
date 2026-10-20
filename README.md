@@ -141,11 +141,10 @@ git clone https://github.com/euphoriaaaaaa1/claude-tgbot.git ~/claudebotlife && 
 
 脚本第 ④ 步会逐项告诉你**去哪拿、填哪**，并让你当场粘贴写进文件（bot token / 你的 user_id / DeepSeek key；漏填的随时 `bash scripts/setup_keys.sh` 补），然后跑 `bash restart-bots.sh` 就上线了。管理台在 `http://127.0.0.1:8765/hub`，登录口令用 `cat ~/.claude-tgbot/hub.env` 查看。脚本可重复运行（复查用），不会覆盖你填过的配置。**不想在终端里填**：装完开 `http://127.0.0.1:8765/hub/setup`，同样这三项，网页里填一样生效（写的是同一批文件）。
 
-`install.sh` 还会顺手把**开机自启**注册好（launchd，以后每次登录自动起 bot），不用再手动填 plist。不想要就卸掉：
+`install.sh` 还会顺手把**开机自启**注册好（macOS 用 launchd，Linux 用 systemd --user；以后每次登录自动起 bot），不用再手动填 plist。不想要就卸掉：
 
 ```bash
-launchctl bootout gui/$UID/com.claudebotlife.autostart
-rm ~/Library/LaunchAgents/com.claudebotlife.autostart.plist
+python3 platform_services.py unregister autostart
 ```
 
 <details>
@@ -185,10 +184,8 @@ cd ~/claudebotlife       # 回到仓库目录
 cp restart-bots.example.sh restart-bots.sh
 bash restart-bots.sh     # 起后台收发进程；之后在 Telegram 给你的 bot 发消息就有回应了
 
-# ⑦ 开机自启（install.sh 自动做的就是这两条；仅 macOS，Linux 用 cron/systemd）
-sed "s#{REPO_DIR}#$HOME/claudebotlife#g; s#~/.bun/bin#$HOME/.bun/bin#g" \
-  plist-templates/autostart.plist.tmpl > ~/Library/LaunchAgents/com.claudebotlife.autostart.plist
-launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.claudebotlife.autostart.plist
+# ⑦ 开机自启（install.sh 自动做的就是这一条；macOS/Linux 统一走 platform_services）
+python3 platform_services.py register autostart --repo "$PWD"
 
 # ⑧（可选）开启情绪/关系数值引擎，每 5 分钟算一次
 python3 jiwen/tick.py    # 想长期自动跑，就挂到 launchd / cron 定时任务
@@ -266,11 +263,11 @@ powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 | **启动 / 重启全部 bot** | `bash restart-bots.sh` | `powershell -File windows\restart-bots.ps1` |
 | **停止全部 bot** | `cp stop-bots.example.sh stop-bots.sh && bash stop-bots.sh` | `powershell -File windows\stop-bots.ps1` |
 | **开机自启** | `bash install.sh` 已自动注册，无需额外操作 | `windows\register-tasks.ps1`（已含 dispatcher 登录自启，一步到位） |
-| **不想要开机自启** | `launchctl bootout gui/$UID/com.claudebotlife.autostart`<br>`rm ~/Library/LaunchAgents/com.claudebotlife.autostart.plist` | `powershell -File windows\unregister-tasks.ps1`（连同其它后台任务一起卸） |
+| **不想要开机自启** | `python3 platform_services.py unregister autostart` | `powershell -File windows\unregister-tasks.ps1`（连同其它后台任务一起卸） |
 
-**Mac 开机自启的细节**：`install.sh` 第 ⑤ 步会把 `plist-templates/autostart.plist.tmpl` 填好路径写到 `~/Library/LaunchAgents/com.claudebotlife.autostart.plist` 并 `launchctl bootstrap` 挂上，以后每次登录自动跑 `restart-bots.sh`。重复跑 `install.sh` 不会挂两份。若你是在 SSH 里跑的（没有图形会话），加载会失败但 plist 已写好，脚本会打出手动加载命令，图形登录后跑一次即可。**Linux 没有 launchd，这步自动跳过**，想自启请自己挂 `cron`（`@reboot`）或 systemd user service 跑 `restart-bots.sh`。
+**macOS/Linux 开机自启的细节**：`install.sh` 第 ⑤ 步调用 `platform_services.py register autostart`。macOS 写 `~/Library/LaunchAgents/com.example.claudebotlife-autostart.plist` 并 `launchctl bootstrap`；Linux 写 `~/.config/systemd/user/claudebotlife-autostart.service` 并 `systemctl --user enable --now`。重复跑 `install.sh` 幂等（先卸后装）。若你是在 SSH 里跑的（macOS 没有图形会话），注册会失败并打出手动命令。
 
-`install.sh` 的第 ⑤ 步一并挂上 `moments-web`（朋友圈网页 + 管理台 `:8765`）。`plist-templates/` 里剩下的 `self-initiate`（主动消息）、`memory-compactor`（记忆压缩）、`cleanup`、`daily-wildcard` 是**可选**的后台服务，要自己 `sed` 填占位（`{REPO_DIR}`/`{PROJECT_DIR}`/`{BOT_ID}`/`{CHAT_ID}`）写进 `~/Library/LaunchAgents/` 再 `launchctl bootstrap gui/$UID <plist>` 挂上。
+其余可选后台服务（`provider-web`（8767）、`provider-proxy`（8770）、`relations-tick`、`self-initiate-<bot>`、`memory-compactor`、`cleanup`、`daily-wildcard`、`jiwen-tick`）也由同一入口注册，例如 `python3 platform_services.py register provider-web --repo "$PWD"`。`plist-templates/` 只保留给想手动查看或自定义的人。
 
 ## 朋友圈网页（`:8765`，可选）
 
