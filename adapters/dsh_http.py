@@ -25,7 +25,7 @@ import urllib.parse
 
 from .base import (AdapterError, AdapterUnavailable, BackendAdapter, BAD_ARCHIVE_ID, BAD_SHELL_META, BOT_ID_MESSAGE,
                    CONFIRM_RULE, ENABLED_TYPE_MESSAGE, NOTIFY_STATUSES, LifecycleError, SecretToken,
-                   check_features_body, check_group_body, check_notify, display_name_error, polling_of,
+                   check_features_body, check_group_body, check_notify, check_voice_body, display_name_error, polling_of,
                    shell_meta_ok, valid_archive_id, valid_bot_id)
 from .guard import NotLoopbackError, assert_loopback, loopback_address, scrub
 
@@ -185,6 +185,9 @@ class DshHttpAdapter(BackendAdapter):
                 data.pop("ok", None)
             return data
         code = data.get("code")
+        if not (isinstance(code, str) and code) and status == 409 and data.get("error") == "stale":
+            # 人设版本冲突：dsh 契约只约定 409，回体用 {"error":"stale"}。
+            raise AdapterError("stale", 409, "人设已被他人修改，请刷新后重试")
         if isinstance(code, str) and code:
             message = data.get("message")
             message = message if isinstance(message, str) else ""
@@ -326,9 +329,10 @@ class DshHttpAdapter(BackendAdapter):
         return _voice_shape(self._request("GET", self._bot_path(bot_id, "/voice")))
 
     def set_voice(self, bot_id: str, body: dict) -> dict:
-        if not isinstance(body, dict):
-            raise AdapterError("invalid", 422, "请求体必须是键值表")
-        return _voice_shape(self._request("PUT", self._bot_path(bot_id, "/voice"), body=dict(body)))
+        # 与 claude 侧同一套字段校验（INTERFACE §0.3/§2.4）：非法模型、未知键、
+        # 非法语言在壳内就 422，不再把坏值转给 dsh。
+        clean = check_voice_body(body)
+        return _voice_shape(self._request("PUT", self._bot_path(bot_id, "/voice"), body=clean))
 
     # ── 功能开关：只做映射，壳已查过能力键 ─────────────────────────────────
     def get_features(self, bot_id: str) -> dict:
@@ -566,7 +570,9 @@ class DshHttpAdapter(BackendAdapter):
         data = self._request("POST", self._bot_path(bot_id, "/delete"), body={"confirm": confirm},
                              timeout=LIFECYCLE_TIMEOUT, multi_step=True)
         trash, trash_path = data.get("trash"), data.get("trash_path")
-        if not all(v is None or isinstance(v, str) for v in (trash, trash_path)):
+        # trash 在 claude 侧是路径字符串，dsh 契约只要求说明“是否进了废纸篓”，
+        # 因此布尔也合法；两种都原样透传给管理台。
+        if not all(v is None or isinstance(v, (str, bool)) for v in (trash, trash_path)):
             raise AdapterUnavailable("error", "底层回的形状不对")
         return {"message": _message_of(data), "trash": trash, "trash_path": trash_path,
                 "steps": _steps_of(data.get("steps"))}

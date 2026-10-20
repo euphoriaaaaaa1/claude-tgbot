@@ -29,9 +29,10 @@ import life_presets
 lifecycle_bp = Blueprint("lifecycle", __name__)
 _log = logging.getLogger(__name__)
 
-# 新建要随 body 带人设全文（≤256 KiB），其余生命周期请求体上限 64 KiB（INTERFACE §0.3）。
+# 新建/切换/归档/删除请求体上限 64 KiB（INTERFACE §0.3）；人设全文的 256 KiB
+# 上限由适配器在 JSON 解析后单独校验，不能据此放宽请求体。
 MAX_LIFECYCLE_BODY = 64 * 1024
-MAX_CREATE_BODY = 320 * 1024
+MAX_CREATE_BODY = MAX_LIFECYCLE_BODY
 _LIMIT_RE = re.compile(r"[0-9]{1,2}")
 
 
@@ -232,7 +233,8 @@ def api_list_ops():
 @lifecycle_bp.route("/api/console/ops/<op_id>", methods=["GET"])
 def api_get_op(op_id):
     try:
-        _check_op_id(op_id)
+        # 只读查询不因编号格式拒绝：格式不对与查无此编号一样按 op_not_found 404，
+        # 避免把“不存在的操作”暴露成 422（INTERFACE §2.4 的 404 op_not_found）。
         op = ops.get_op(op_id)
         if op is None:
             raise Reject(ops.OpNotFound.code, ops.OpNotFound.http_status, ops.NOT_FOUND_MESSAGE)

@@ -363,8 +363,9 @@ def test_操作列表与单条错误(client, monkeypatch):
     r = client.get("/api/console/ops")
     assert r.status_code == 200 and r.get_json()["ops"] == []
 
+    # 格式不合法的编号与查无此编号对只读查询没有区别：一律 404 op_not_found。
     r = client.get("/api/console/ops/bad-id")
-    assert r.status_code == 422 and r.get_json()["code"] == "invalid"
+    assert r.status_code == 404 and r.get_json()["code"] == "op_not_found"
     r = client.get("/api/console/ops/" + OP_ID)
     assert r.status_code == 404 and r.get_json()["code"] == "op_not_found"
 

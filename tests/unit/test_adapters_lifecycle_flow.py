@@ -250,9 +250,10 @@ def test_create_invalid_token_is_rejected(reg):
 
 def test_create_existing_bot_fails(reg):
     reg["claude"] = FakeAdapter("claude", bots=[bot()])
-    op = wait_op(lifecycle_flow.start_create(body(), "rk"))
-    assert op["state"] == "failed"
-    assert op["code"] == "exists"
+    # INTERFACE §2.4：编号已被占用在受理期就 409，不再生成注定失败的任务。
+    with pytest.raises(lifecycle_flow.Reject) as exc:
+        lifecycle_flow.start_create(body(), "rk")
+    assert exc.value.code == "exists" and exc.value.http_status == 409
 
 
 def test_create_adapter_rollback_is_reported(reg):

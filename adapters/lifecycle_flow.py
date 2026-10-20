@@ -579,8 +579,8 @@ def _deleted(task, out: dict) -> None:
     steps = out.get("steps") if isinstance(out.get("steps"), list) else []
     task.data["deleted"] = True
     task.result.update(message=DELETE_DONE,
-                       trash=out.get("trash") if isinstance(out.get("trash"), str) else None,
-                       trash_path=out.get("trash_path") if isinstance(out.get("trash_path"), str) else None,
+                       trash=out.get("trash") if isinstance(out.get("trash"), (str, bool)) else None,
+                       trash_path=out.get("trash_path") if isinstance(out.get("trash_path"), (str, bool)) else None,
                        steps=steps)
     task.save()
 
@@ -866,6 +866,7 @@ def start_create(body: dict, rate_key: str) -> str:
     if caps.get("bot.create") is not True:
         raise Reject("unsupported", 501, UNSUPPORTED_MESSAGE)
     spec, token, confirm = validate_create_body(ad, body)
+    _precheck_create_exists(backend, spec["bot_id"], confirm)
     try:
         lock = ops.acquire(ops.new_op_id("create"), persons=(spec["bot_id"],))
     except ops.LifecycleBusy as e:
@@ -878,6 +879,37 @@ def start_create(body: dict, rate_key: str) -> str:
     except BaseException:
         lock.release()
         raise
+
+
+def _precheck_create_exists(backend: str, bot_id: str, confirm: bool) -> None:
+    """受理期查重（INTERFACE §2.4）：编号已被占用 → 409 exists，不再生成 op。
+
+    与后台 ``_create_check_unique`` 同一口径；两侧读不到时，目标侧按不可用报错，
+    另一侧在未确认时 409 other_side_unknown，确认后才交给后台继续。
+    """
+    for name in registry.enabled_backends():
+        try:
+            ad = registry.adapter(name)
+            bots = ad.bots()
+        except (AdapterUnavailable, AdapterError) as e:
+            if name == backend:
+                if isinstance(e, AdapterUnavailable):
+                    raise unavailable_to_reject(e)
+                raise Reject(e.code, e.http_status, e.message, getattr(e, "fields", None))
+            if not confirm:
+                raise Reject("other_side_unknown", 409, _side_unknown(name))
+            continue
+        except Exception:
+            if name == backend:
+                raise Reject("backend_down", 502, INTERNAL_MESSAGE)
+            if not confirm:
+                raise Reject("other_side_unknown", 409, _side_unknown(name))
+            continue
+        for item in bots if isinstance(bots, list) else ():
+            if isinstance(item, dict) and str(item.get("bot_id")) == bot_id:
+                raise Reject("exists", 409, "编号 %s 已被占用：%s 侧已有" % (bot_id, name))
+    if backend == "claude" and _claude_residue(bot_id):
+        raise Reject("exists", 409, "编号 %s 已被占用：claude 侧已有" % bot_id)
 
 
 def _side_unknown(name: str) -> str:
@@ -1151,6 +1183,10 @@ def start_switch(backend: str, bot_id: str, body: dict, rate_key: str) -> str:
     _ad, target_caps, _levels = _adapter_caps(to)
     if target_caps.get("bot.group_chat") is not True:
         raise Reject("unsupported", 501, "目标底层不提供群设置，没法把群带过去")
+    # 受理前先确认源侧真有这只 bot：未知 bot 是 404，不是一条注定失败的后台任务。
+    src_ad = call(lambda: registry.adapter(backend))
+    if _find_bot(src_ad, bot_id) is None:
+        raise Reject("unknown_bot", 404, UNKNOWN_BOT_MESSAGE)
     return _submit("switch", backend, bot_id=bot_id, target={"backend": to, "bot_id": bot_id},
                    token=token, rate_key=rate_key,
                    data={"token_source": "form" if token is not None else "handoff"})

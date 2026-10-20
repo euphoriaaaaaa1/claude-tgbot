@@ -6,6 +6,12 @@
 set -e
 cd "$(dirname "$0")"
 
+# 不接受位置参数（INTERFACE §1.1）：误传参数一律 2，避免把拼错的选项当成静默忽略。
+if [ $# -gt 0 ]; then
+  echo "用法：bash install.sh（不接受参数；用环境变量 DRY_RUN=1 等控制行为）" >&2
+  exit 2
+fi
+
 say()  { printf '\033[1;36m%s\033[0m\n' "$*"; }
 ok()   { printf '  \033[1;32m✅ %s\033[0m\n' "$*"; }
 todo() { printf '  \033[1;33m⚠️  %s\033[0m\n' "$*"; }

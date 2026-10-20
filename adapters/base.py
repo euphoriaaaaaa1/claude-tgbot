@@ -667,16 +667,18 @@ def check_voice_body(body) -> dict:
         raise AdapterError("invalid", 422, "请求体只能有 %s，且至少要有一个" % "、".join(VOICE_KEYS))
     voice_id = body.get("voice_id")
     if voice_id is not None and not (isinstance(voice_id, str) and VOICE_ID_RE.fullmatch(voice_id)):
-        raise AdapterError("invalid", 422, "语音编号只能用字母、数字、下划线、连字符，1 到 64 个字符")
+        msg = "语音编号只能用字母、数字、下划线、连字符，1 到 64 个字符"
+        raise AdapterError("invalid", 422, msg, {"voice_id": msg})
     model = body.get("tts_model")
     if model is not None and model not in TTS_MODELS:
-        raise AdapterError("invalid", 422, "语音模型只能是 %s 之一" % "、".join(TTS_MODELS))
+        msg = "语音模型只能是 %s 之一" % "、".join(TTS_MODELS)
+        raise AdapterError("invalid", 422, msg, {"tts_model": msg})
     out = dict(body)
     for key in LANGUAGE_KEYS:
         if out.get(key) is None:
             continue
         err = language_error(out[key])
         if err:
-            raise AdapterError("invalid", 422, err)
+            raise AdapterError("invalid", 422, err, {key: err})
         out[key] = out[key].strip()
     return out
