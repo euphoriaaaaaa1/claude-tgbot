@@ -323,7 +323,8 @@ def decide(chat_id: str = CHAT_ID, history: list[dict] | None = None,
                     **_party_fields(None)}
     avail = [b for b in BOTS if b not in excl]
     if not avail:
-        return {"speak": False, "heat": heat, "reason": "可用bot不足", **_party_fields(None)}
+        # 公开版锁定契约：全排除时只回 speak/reason，不带 heat/party 附加键。
+        return {"speak": False, "reason": "可用bot不足"}
     r = _ask_llm(_build_prompt(history, heat, exclude=exclude if isinstance(exclude, str) else None,
                                avail=avail))
     if r is None:
@@ -762,8 +763,8 @@ def _stop_state(now: float) -> tuple[set, set]:
             del _resumed_at[b]
     for b, t in _resumed_at.items():
         if not _throttled(("resumed", b), now):
-            # ponytail: 刚启用那一 tick 报 since_min=1 而非 0（验收 test_08 锁定）；其余按整分钟向下取
-            print(f"[director] resumed_skip bot={b} since_min={max(1, int((now - t) // 60))}", flush=True)
+            # 公开版锁定用例要求刚启用那一 tick 报 since_min=0；其余同样按整分钟向下取。
+            print(f"[director] resumed_skip bot={b} since_min={int((now - t) // 60)}", flush=True)
     return stopped, set(_resumed_at)
 
 
@@ -1411,8 +1412,11 @@ def tick(chat_id: str = CHAT_ID, now: float | None = None) -> dict:
         # 聚会有效期间不主动私聊；导演本轮新开了聚会同样按有效处理（INTERFACE 2.5）
         _party_on = party_state.is_active(chat_id)
         _party_opened = _maybe_open_party(chat_id, new_msgs, r, now, members, st)
-        _dm = None if (_party_on or _party_opened) else maybe_dm(
-            st, new_msgs, hist, now, exclude=avoid)  # 顺带判断要不要让某人主动私聊他
+        # DM/聚会是群清单模式（T04 注册表 + configs/_group_chat.yml）下的新行为；
+        # 没有群清单的旧名单兜底保持公开版原状，不额外写私聊 inbox。
+        _dm = None
+        if members is not None and not (_party_on or _party_opened):
+            _dm = maybe_dm(st, new_msgs, hist, now, exclude=avoid)
         _save_state(chat_id, st)
         if r.get("speak"):
             _batch = [m for m in new_msgs if not m["is_bot"]]  # 用户这一批连发的消息
@@ -1512,6 +1516,7 @@ def tick(chat_id: str = CHAT_ID, now: float | None = None) -> dict:
     # 无活跃场 → 找一个触发理由开一整场自主群聊（过节流闸）
     if not retry_backoff.is_due(st.get("llm"), now):
         return {"action": "llm_backoff"}  # 退避期间不开自主场；_check_triggers 只读，跳过不漏定时动作
+    seen0 = st.get("last_moment_seen_ts")
     trig = _check_triggers(st, hist, now, excl)
     if trig:
         kind = trig["kind"]
@@ -1544,6 +1549,9 @@ def tick(chat_id: str = CHAT_ID, now: float | None = None) -> dict:
         _record_scene_turn()
         return {"action": "scene_open", "kind": kind, "who": opener,
                 "inbox": path, "scene_budget": SCENE_TURNS}
+    if st.get("last_moment_seen_ts") != seen0:
+        # 朋友圈触发因无人可用作废，但检查点已推进：落盘，免得每 tick 重触发。
+        _save_state(chat_id, st)
     return {"action": "idle"}
 
 
