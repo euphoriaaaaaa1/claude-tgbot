@@ -19,6 +19,7 @@ from werkzeug.exceptions import HTTPException
 
 from moments import panel_auth
 from moments.console_routes import console_bp
+from moments.features_routes import features_bp
 from moments.lifecycle_routes import lifecycle_bp
 
 # 公众版只有供应商模式；cookie 名按 INTERFACE §2.1 固定为 cb_provider。
@@ -29,6 +30,8 @@ app = Flask(__name__,
 # 总览与生命周期（INTERFACE §2.2、§2.3、§2.4）：登录门、跨站校验与可达面闸门对本蓝图生效。
 app.register_blueprint(console_bp)
 app.register_blueprint(lifecycle_bp)
+# 功能开关（INTERFACE §2.6）：登录门、跨站校验与可达面闸门对本蓝图生效。
+app.register_blueprint(features_bp)
 
 
 # ── 安全响应头 ─────────────────────────────────────────────────────────────
@@ -235,7 +238,8 @@ def _reachable_gate():
     if endpoint is None:
         return None
     if (endpoint in _SESSION_ENDPOINTS or endpoint == "provider_page"
-            or endpoint.startswith("console.") or endpoint.startswith("lifecycle.")):
+            or endpoint.startswith("console.") or endpoint.startswith("lifecycle.")
+            or endpoint.startswith("features.")):
         return None
     abort(404)
 

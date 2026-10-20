@@ -31,6 +31,7 @@ import time
 import platform_lock
 import yaml
 
+import bot_features
 import bots_registry
 from . import claude_create, claude_files, claude_proc
 from .base import (AdapterError, AdapterUnavailable, BackendAdapter, BOT_ID_MESSAGE, CONFIRM_RULE,
@@ -44,16 +45,12 @@ _log = logging.getLogger(__name__)
 
 API_TOKEN_FILENAME = bots_registry.API_TOKEN_FILENAME
 ACCESS_NAME = "access.json"
-FEATURES_NAME = "features.json"
 GROUP_SEEN_NAME = "groups-seen.json"
 TELEGRAM_ME_NAME = ".telegram-me.json"
 PERSONA_NAME = "CLAUDE.md"
 PERSONA_BACKUP_DIR = ".persona-bak"
 BACKUP_KEEP = 2
 LOCK_WAIT = 3.0
-FEATURE_KEYS = ("voice", "image", "stickers", "moments", "proactive", "life", "relationship", "groups")
-FEATURE_LABELS = {"voice": "发语音", "image": "生图", "stickers": "表情包", "moments": "朋友圈",
-                  "proactive": "主动找你聊", "life": "生活作息", "relationship": "关系进展", "groups": "群聊"}
 GROUP_SEEN_MAX = 50
 GROUP_SEEN_WARNING = "刚发现的群的记录读不出，已当成空的"
 MOMENTS_OFF_MESSAGE = "这只 bot 的朋友圈功能关着"
@@ -359,7 +356,7 @@ class ClaudeLocalAdapter(BackendAdapter):
         if not bots_registry.is_enabled(cfg, bot_id):
             raise AdapterError("stopped", 409, "bot 已停用，没有执行")
         bot_dir = _channel_dir(bot_id)
-        if not _features_state(bot_dir)["features"]["moments"]:
+        if not bot_features.read(bot_dir)["features"]["moments"]:
             raise AdapterError("feature_off", 409, MOMENTS_OFF_MESSAGE)
         chat_id = str(cfg.get("chat_id") or "").strip()
         if not chat_id:
@@ -486,7 +483,7 @@ class ClaudeLocalAdapter(BackendAdapter):
 
     def group_chat_enabled(self, bot_id: str) -> bool:
         _require_bot(bot_id)
-        return _features_state(_channel_dir(bot_id))["features"]["groups"]
+        return bot_features.read(_channel_dir(bot_id))["features"]["groups"]
 
     # ── 人设、语音 ──────────────────────────────────────────────────────────
     def get_persona(self, bot_id: str) -> dict:
@@ -567,26 +564,41 @@ class ClaudeLocalAdapter(BackendAdapter):
             raise AdapterError("internal", 500, "access.json 不是对象")
         return data
 
-    # ── 功能开关 ────────────────────────────────────────────────────────────
+    # ── 功能开关（T08：读写都经 bot_features，单测见 tests/unit/test_bot_features.py） ──
     def get_features(self, bot_id: str) -> dict:
+        """八项开关、各项前提与存储异常；先按当前开关幂等对齐技能显示设置（GET 只对齐、不补放），
+        没对齐上不算失败：``skills_synced`` 为假、warnings 加一句，仍正常返回。"""
         bot_dir = _channel_dir(bot_id)
-        state = _features_state(bot_dir)
+        state = bot_features.read(bot_dir)
         if not state["readable"]:
-            raise AdapterError("internal", 500, "读不出这只 bot 的功能开关")
-        return {"keys": [{"key": k, "label": FEATURE_LABELS[k]} for k in FEATURE_KEYS],
-                "features": state["features"],
-                "requirements": {k: {"ready": True, "missing": [], "notes": []} for k in FEATURE_KEYS},
-                "skills_synced": True, "warnings": state["warnings"]}
+            raise AdapterError("internal", 500, bot_features.UNREADABLE_MESSAGE)
+        synced, sync_warnings = _sync_skill_visibility(bot_id)
+        reqs = _features_call(bot_features.requirements, bot_id, features=state["features"])
+        return {"keys": bot_features.public_keys(), "features": state["features"],
+                "requirements": reqs, "skills_synced": synced,
+                "warnings": state["warnings"] + sync_warnings}
 
     def set_features(self, bot_id: str, changes: dict) -> dict:
-        changes = check_features_body({"features": changes}, FEATURE_KEYS)
+        """锁内现读、只改给了的键、从关变开才查前提；保存后补放缺的技能并幂等对齐技能显示设置。
+        补放/对齐失败不回滚开关：``skills_synced`` 为假、warnings 加一句。"""
+        changes = check_features_body({"features": changes}, bot_features.KEYS)
         bot_dir = _channel_dir(bot_id)
-        result = _features_write(bot_dir, changes)
-        message = "已保存" if result["changed"] else "没有改动"
+        _features_call(bot_features.channel_dir, bot_id, for_write=True)
+        result = _features_call(bot_features.write, bot_id, bot_dir, changes)
+        warnings = list(result["warnings"])
+        placed, synced = [], True
+        try:
+            sync = bot_features.sync_skills(bot_id)
+            placed = sync["placed"]
+            warnings.extend(sync["warnings"])
+        except bot_features.FeaturesError as e:
+            _log.warning("技能补放/对齐失败 bot=%s：%s", _log_id(bot_id), e.code)
+            synced = False
+            warnings.append(bot_features.SYNC_PENDING_WARNING)
         return {"features": result["features"], "changed": result["changed"],
-                "applied": True, "queued": False, "message": message,
-                "skills_synced": True, "skills_placed": [],
-                "warnings": result["warnings"]}
+                "applied": True, "queued": False,
+                "message": "已保存" if result["changed"] else "没有改动",
+                "skills_synced": synced, "skills_placed": placed, "warnings": warnings}
 
     # ── 显示名 ──────────────────────────────────────────────────────────────
     def get_profile(self, bot_id: str) -> dict:
@@ -723,14 +735,20 @@ class ClaudeLocalAdapter(BackendAdapter):
         picked = list(picked)
         voice = spec.get("voice") if isinstance(spec.get("voice"), dict) else {}
         voice_id = voice.get("voice_id")
-        if isinstance(voice_id, str) and voice_id.strip() and "voice" not in picked:
-            picked.append("voice")
         try:
-            doc = _initial_features(picked, voice_id)
+            doc, _skipped = bot_features.initial_features(picked, voice_id)
         except ValueError as e:
             raise AdapterError("invalid", 422, str(e)) from None
-        return claude_create.create(spec.get("bot_id"), dict(spec, features=doc), token,
-                                    op_id=_op_id(spec.get("op_id"), "create"), ctx=_files_ctx())
+        # 新建一律带 features 文档：空数组（含 API 的空对象）落成八项全关；配了 voice_id 自动开 voice。
+        out = claude_create.create(spec.get("bot_id"), dict(spec, features=doc), token,
+                                   op_id=_op_id(spec.get("op_id"), "create"), ctx=_files_ctx())
+        # 新建后按勾选的开关补放技能；补放失败不影响新建结果（下次 PUT/worker 拉起前会再对齐）。
+        try:
+            bot_features.sync_skills(str(out.get("bot_id") or spec.get("bot_id") or ""))
+        except Exception as e:  # noqa: BLE001
+            _log.warning("新建后补技能失败 bot=%s：%s",
+                         _log_id(str(out.get("bot_id") or spec.get("bot_id") or "")), type(e).__name__)
+        return out
 
     def take_token(self, bot_id: str, op):
         return claude_files.take_token(bot_id, op, ctx=_files_ctx())
@@ -742,61 +760,31 @@ class ClaudeLocalAdapter(BackendAdapter):
         return claude_files.resolve(op, ctx=ctx)
 
 
-# ── 功能开关文件 ─────────────────────────────────────────────────────────────
+# ── 功能开关（T08） ─────────────────────────────────────────────────────────
+# bot_features.FeaturesError 的 code → HTTP 状态（INTERFACE §2.6 的错误表）
+_FEATURES_HTTP = {"unknown_bot": 404, "busy": 409, "requirement_missing": 422, "internal": 500}
 
-def _features_state(bot_dir: str) -> dict:
-    path = os.path.join(bot_dir, FEATURES_NAME)
+
+def _features_call(fn, *args, **kwargs):
+    """调 bot_features 的读写，把 FeaturesError 翻成 AdapterError；缺必需项时逐键的原因放进 fields。"""
     try:
-        with open(path, encoding="utf-8") as f:
-            doc = json.load(f)
-    except FileNotFoundError:
-        return {"features": dict.fromkeys(FEATURE_KEYS, True), "warnings": [], "readable": True}
-    except (OSError, UnicodeDecodeError, ValueError):
-        return {"features": dict.fromkeys(FEATURE_KEYS, False), "warnings": [], "readable": False}
-    if not isinstance(doc, dict):
-        return {"features": dict.fromkeys(FEATURE_KEYS, False), "warnings": [], "readable": False}
-    default = doc.get("default") is True
-    given = doc.get("features") if isinstance(doc.get("features"), dict) else {}
-    state, warnings = {}, []
-    for key in FEATURE_KEYS:
-        value = given.get(key, default)
-        if isinstance(value, bool):
-            state[key] = value
-        else:
-            state[key] = False
-            warnings.append("%s的开关值不是真假，已按关着处理" % key)
-    return {"features": state, "warnings": warnings, "readable": True}
+        return fn(*args, **kwargs)
+    except bot_features.FeaturesError as e:
+        raise AdapterError(e.code, _FEATURES_HTTP.get(e.code, 500), e.message,
+                           fields=getattr(e, "fields", None)) from None
 
 
-def _features_write(bot_dir: str, changes: dict) -> dict:
-    path = os.path.join(bot_dir, FEATURES_NAME)
-    with _file_lock(path + ".lock"):
-        state = _features_state(bot_dir)
-        if not state["readable"]:
-            raise AdapterError("internal", 500, "读不出这只 bot 的功能开关")
-        before = state["features"]
-        changed = [k for k in FEATURE_KEYS if k in changes and changes[k] != before[k]]
-        created = not os.path.exists(path)
-        if not changed and not created:
-            return {"features": before, "changed": [], "warnings": state["warnings"]}
-        features = dict(before)
-        features.update({k: changes[k] for k in changed})
-        doc = {"version": 1, "default": False, "features": features}
-        _backup(path)
-        _write_atomic(path, (json.dumps(doc, ensure_ascii=True, indent=2) + "\n").encode("ascii"),
-                      _file_mode(path))
-        return {"features": features, "changed": changed, "warnings": state["warnings"]}
-
-
-def _initial_features(picked, voice_id) -> dict:
-    features = dict.fromkeys(FEATURE_KEYS, False)
-    for key in picked:
-        if not isinstance(key, str) or key not in FEATURE_KEYS:
-            raise ValueError("没有这个功能：%r" % (key,))
-        if key == "voice" and not (isinstance(voice_id, str) and voice_id.strip()):
-            continue
-        features[key] = True
-    return {"version": 1, "default": False, "features": features}
+def _sync_skill_visibility(bot_id: str):
+    """按当前开关对齐技能显示设置；没对齐上不算失败。返回 ``(skills_synced, warnings)``。"""
+    try:
+        bot_features.sync_skill_visibility(bot_id)
+        return True, []
+    except bot_features.FeaturesError as e:
+        _log.warning("技能显示设置没同步 bot=%s：%s", _log_id(bot_id), e.code)
+        return False, [bot_features.SYNC_PENDING_WARNING]
+    except Exception as e:  # noqa: BLE001
+        _log.warning("技能显示设置没同步 bot=%s：%s", _log_id(bot_id), type(e).__name__)
+        return False, [bot_features.SYNC_PENDING_WARNING]
 
 
 # ── 人设锁 ───────────────────────────────────────────────────────────────────
