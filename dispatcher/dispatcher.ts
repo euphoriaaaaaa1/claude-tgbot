@@ -436,7 +436,7 @@ function directorModeOn(chatId: string): boolean {
 // 不再需要跨场景注入桥。相关开关/调用已移除（cross_scene.build_block 也已置空）。
 
 type GateResult = { action: 'deliver'; access: Access } | { action: 'drop' }
-function gate(ctx: Context): GateResult {
+export function gate(ctx: Context): GateResult {
   const access = loadAccess()
   if (access.dmPolicy === 'disabled') return { action: 'drop' }
   const from = ctx.from
@@ -456,12 +456,13 @@ function gate(ctx: Context): GateResult {
     if (directorModeOn(groupId)) return { action: 'drop' }
     const policy = access.groups[groupId]
     if (!policy) return { action: 'drop' }
-    const groupAllowFrom = policy.allowFrom ?? []
     // Bot senders matching otherBotUsernames bypass allowFrom (their ID needn't be whitelisted).
     const fromUsername = from.username ? `@${from.username}` : ''
     const isOtherBot = from.is_bot === true && fromUsername.length > 0 &&
       (policy.otherBotUsernames ?? []).some(u => u.toLowerCase() === fromUsername.toLowerCase())
-    if (!isOtherBot && groupAllowFrom.length > 0 && !groupAllowFrom.includes(senderId)) return { action: 'drop' }
+    // 群放行统一走 senderAllowed（H-14 纯函数）：群 allowFrom 非空只认它；为空回退
+    // 私聊 owner 名单；两者都空 → 拒绝。绝不把“空名单”当“所有人放行”。peer bot 仍豁免。
+    if (!isOtherBot && !senderAllowed(access, chatType, groupId, senderId)) return { action: 'drop' }
     const hasRouterCfg =
       (policy.selfAliases?.length ?? 0) > 0 ||
       (policy.otherBotUsernames?.length ?? 0) > 0 ||
@@ -1196,12 +1197,12 @@ async function handleInbound(
     // 不看 groups 开关，也不管后面这条消息会不会被路由。
     recordSeenGroupMessage({ id: ctx.chat!.id, title: ctx.chat!.title, type: ctx.chat!.type }, !prePolicy)
     if (!prePolicy) return
-    const preAllowFrom = prePolicy.allowFrom ?? []
     const preFromUsername = ctx.from?.username ? `@${ctx.from.username}` : ''
     const preIsOtherBot = ctx.from?.is_bot === true && preFromUsername.length > 0 &&
       (prePolicy.otherBotUsernames ?? []).some(u => u.toLowerCase() === preFromUsername.toLowerCase())
-    if (!preIsOtherBot && preAllowFrom.length > 0 &&
-        !preAllowFrom.includes(String(ctx.from?.id ?? ''))) return
+    // 与 gate 同一套判定：空 allowFrom 不再等于“所有人放行”，peer bot 仍豁免。
+    if (!preIsOtherBot &&
+        !senderAllowed(preAccess, chatType, groupChatId, String(ctx.from?.id ?? ''))) return
     // party-camera：过 allowlist 预筛后记录本群最后一条真人消息发送者与 owner 最近发言时刻。
     if (!isBotSender && !options?.synthetic) {
       const senderId = String(ctx.from?.id ?? '')
@@ -1890,9 +1891,10 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
         // 出口白名单：files 只认媒体目录内的真实文件。拒绝项按下标跳过（[[图N]] 映射不变），
         // 日志只记原因码，路径原文不进日志。
         let fileDroppedDenied = 0
+        const safeFilePaths = new Map<number, string>()
         files.forEach((f, i) => {
           const d = resolveAllowedFile(f, allowedFileRoots(), homedir())
-          if (d.ok) return
+          if (d.ok) { safeFilePaths.set(i, d.path); return }
           fileDrops.dropped.add(i)
           fileDroppedDenied++
           process.stderr.write(`dispatcher[${BOT_NAME}]: file_dropped reason=${d.reason}\n`)
@@ -1933,7 +1935,8 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
               : (it.text.trim() ? [it.text] : [])
             for (const p of paragraphs) for (const c of chunkText(p, limit, mode)) items.push({ kind: 'text', chunk: c })
           } else {
-            const f = files[it.index]
+            // 用校验返回的 realpath 发送，不用请求里的原始字符串：两者不一致时以校验结果为准。
+            const f = safeFilePaths.get(it.index)
             if (f && !fileDrops.dropped.has(it.index)) items.push({ kind: 'file', path: f })
           }
         }
@@ -2142,7 +2145,9 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
         const raw = readFileSync(ACCESS_FILE, 'utf8')
         const parsed = JSON.parse(raw)
         parsed.groups = parsed.groups ?? {}
-        parsed.groups[groupId] = parsed.groups[groupId] ?? { requireMention: false, allowFrom: [] }
+        // 新发现的群默认要求 @ 才回，避免建群即对所有人自动应答；allowFrom 仍为空，
+        // 配合 senderAllowed 的空名单语义（回退 owner，owner 也空则全拒）。
+        parsed.groups[groupId] = parsed.groups[groupId] ?? { requireMention: true, allowFrom: [] }
         const g = parsed.groups[groupId]
         const field = kind === 'self' ? 'selfAliases' : 'otherBotAliases'
         const arr: string[] = Array.isArray(g[field]) ? g[field] : []
