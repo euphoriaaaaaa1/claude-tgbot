@@ -1,5 +1,5 @@
-"""需求⑤（公开 voicecall/server.py、moments/web.py、moments/hub_addbot.py）：
-停用 bot 的生产者入口不 POST /ensure_worker、不写 inbox；set_enabled 幂等且不调 launchctl。
+"""需求⑤（公开 voicecall/server.py、moments/web.py）：
+停用 bot 的生产者入口不 POST /ensure_worker、不写 inbox。
 """
 import importlib
 import os
@@ -103,40 +103,3 @@ def test_moments_web_ensure_worker_启用bot_有POST_正向对照(iso, registry,
     d = _cfg(iso, "bot3", True, server.server_port)
     _mw(registry)._ensure_worker_alive("bot3", "100", d)
     assert any(p.rstrip("/").endswith("/ensure_worker") for p in _Rec.hits), _Rec.hits
-
-
-# ---------- hub_addbot.set_enabled ----------
-def _hub(registry):
-    import moments.hub_addbot as h
-    return importlib.reload(h)
-
-
-def _enabled_in_yml(iso, bot):
-    import yaml
-    with open(os.path.join(iso["cfg"], f"{bot}.yml"), encoding="utf-8") as f:
-        return yaml.safe_load(f).get("enabled")
-
-
-def test_set_enabled_False两次_幂等_响应相同_yml为false(iso, registry):
-    _cfg(iso, "bot2", True, 1)
-    h = _hub(registry)
-    r1 = h.set_enabled("bot2", False)
-    r2 = h.set_enabled("bot2", False)
-    assert r1 == r2 and _enabled_in_yml(iso, "bot2") is False
-    assert "bot2" in registry.disabled_ids_safe()
-
-
-def test_set_enabled_True_恢复_不调launchctl(iso, registry):
-    _cfg(iso, "bot2", False, 1)
-    h = _hub(registry)
-    h.set_enabled("bot2", True)
-    assert _enabled_in_yml(iso, "bot2") is True
-    assert "bot2" not in registry.disabled_ids_safe()
-    assert not os.path.exists(iso["calls"]), open(iso["calls"]).read() if os.path.exists(iso["calls"]) else ""
-
-
-def test_set_enabled_True两次_幂等_yml仍为true(iso, registry):
-    _cfg(iso, "bot2", False, 1)
-    h = _hub(registry)
-    assert h.set_enabled("bot2", True) == h.set_enabled("bot2", True)
-    assert _enabled_in_yml(iso, "bot2") is True

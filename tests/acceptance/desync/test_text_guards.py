@@ -10,8 +10,9 @@ def _read(p):
         return f.read()
 
 
-def test_chenlulu_CLAUDE_md_无Compact_Instructions标题():
-    t = _read(os.path.join(REPO, "channels", "chenlulu", "CLAUDE.md"))
+def test_persona模板_CLAUDE_md_无Compact_Instructions标题():
+    # 公开仓不携带真实 bot 目录，模板即发布形态的样本。
+    t = _read(os.path.join(REPO, "channels", "_persona_template", "CLAUDE.md"))
     assert "Compact Instructions" not in t and "摘要必须保留" not in t
 
 

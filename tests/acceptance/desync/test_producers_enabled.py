@@ -87,11 +87,12 @@ def test_voicecall_ensure_worker_停用bot_urlopen零次(iso, registry):
 
 
 # ---------- moments/web 启用侧 ----------
-def test_moments_web_ensure_worker_启用bot_POST一次_端口等于yml(iso, registry):
+def test_moments_web_ensure_worker_启用bot_POST一次_端口等于yml(iso, registry, monkeypatch):
+    import urllib.request
     d, port = cfg(iso, "bot3", True)
     w = _mw(registry)
     rec = _Rec()
-    w._urlopen = rec
+    monkeypatch.setattr(urllib.request, "urlopen", rec)
     w._ensure_worker_alive("bot3", "100", d)
     assert len(rec.urls) == 1 and f":{port}/" in rec.urls[0], rec.urls
 

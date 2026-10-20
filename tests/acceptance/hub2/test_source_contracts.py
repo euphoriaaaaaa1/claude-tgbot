@@ -104,7 +104,8 @@ def test_python侧的bot表必须来自注册表(marker, why):
         if p.name.startswith("bots_registry"):
             continue
         txt = _read(p)
-        if marker in txt and "bots_registry" not in txt:
+        # 只看赋值/定义，避免把日志与注释里提到旧表名的文件误判成硬编码。
+        if re.search(rf"^\s*{marker}\s*=", txt, re.M) and "bots_registry" not in txt:
             bad.append(str(p.relative_to(REPO_ROOT)))
     assert bad == [], f"{why} 还是硬编码的（没读注册表）：{bad}"
 

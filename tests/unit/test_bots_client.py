@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""M7 单测：bots_client + 第 4 段路由（INTERFACE §6.0-§6.2）。
+"""M7 单测：bots_client（INTERFACE §6.0-§6.2）。
 
 **绝不真跑 restart-bots.sh**：每个碰重启的用例都设了 `HUB_RESTART_CMD`，
 跑的是 true / exit 3 / 往 tmp 写标记这类假命令。
@@ -11,10 +11,8 @@ import time
 import threading
 
 import pytest
-from flask import Flask
 
 from moments import bots_client
-from moments.hub_routes import hub_bp
 
 TG_TOKEN = "123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"   # §6.0 给的形状，假值
 
@@ -24,14 +22,6 @@ def _no_seams(monkeypatch):
     """任何用例都不许继承外部 env 的接缝值与真实端口。"""
     for k in ("HUB_BOTS_FILE", "HUB_RESTART_CMD", "DISPATCHER_PORT_CHENLULU"):
         monkeypatch.delenv(k, raising=False)
-
-
-@pytest.fixture
-def client():
-    app = Flask(__name__)
-    app.register_blueprint(hub_bp)
-    app.config["TESTING"] = True
-    return app.test_client()
 
 
 def bots_file(tmp_path, entries):
@@ -306,106 +296,3 @@ def test_命令起不来也不会卡死互斥():
     st = wait_done(jobs, jobs.start(["/does/not/exist"]).job_id)
     assert st["state"] == "failed"
     assert jobs.start(["true"]).job_id, "失败后互斥没释放"
-
-
-# ------------------------------------------------------------ 第 4 段路由
-
-def test_列表端点形状(client, monkeypatch, tmp_path):
-    monkeypatch.setenv("HUB_BOTS_FILE", bots_file(tmp_path, [{"id": "ghostbot"}]))
-    monkeypatch.setenv("HUB_RESTART_CMD", "true")
-    r = client.get("/hub/api/bots")
-    assert r.status_code == 200
-    body = r.get_json()
-    assert body["restart_available"] is True          # §6.0：设了接缝就恒 true
-    assert body["bots"][0]["state"] == "unknown"
-
-
-def test_名单读不出来回500且detail不带路径(client, monkeypatch, tmp_path):
-    p = tmp_path / "missing.json"
-    monkeypatch.setenv("HUB_BOTS_FILE", str(p))
-    r = client.get("/hub/api/bots")
-    assert r.status_code == 500
-    body = r.get_json()
-    assert body["error"] == "config_unreadable"
-    assert str(tmp_path) not in body["detail"] and "Traceback" not in body["detail"]
-
-
-def test_脚本缺失回409而不是500(client, monkeypatch):
-    monkeypatch.delenv("HUB_RESTART_CMD", raising=False)
-    monkeypatch.setattr(bots_client, "restart_plan", lambda: (["bash", "x"], False))
-    r = client.post("/hub/api/bots/restart")
-    assert r.status_code == 409 and r.get_json()["error"] == "restart_script_missing"
-
-
-def test_重启端点不接受GET(client, monkeypatch, tmp_path):
-    """反向用例：一次误 GET 不该把用户的 bot 全重启了。故意不设接缝也不该执行任何命令。"""
-    marker = tmp_path / "must-not-exist"
-    monkeypatch.setattr(bots_client, "restart_plan",
-                        lambda: (["sh", "-c", "touch %s" % marker], True))
-    assert client.get("/hub/api/bots/restart").status_code == 405
-    time.sleep(0.2)
-    assert not marker.exists(), "GET 触发了重启"
-
-
-def test_受理202与轮询404(client, monkeypatch):
-    monkeypatch.setenv("HUB_RESTART_CMD", "true")
-    r = client.post("/hub/api/bots/restart")
-    assert r.status_code == 202
-    job_id = r.get_json()["job_id"]
-    assert re.fullmatch(r"[0-9a-f]{8}", job_id)
-    st = client.get("/hub/api/bots/restart/%s" % job_id)
-    assert st.status_code == 200 and st.get_json()["state"] in ("running", "done")
-    miss = client.get("/hub/api/bots/restart/deadbeef")
-    assert miss.status_code == 404 and miss.get_json()["error"] == "not_found"
-
-
-def test_响应里不回显命令串(client, monkeypatch, tmp_path):
-    marker = tmp_path / "secret-path-marker"
-    monkeypatch.setenv("HUB_RESTART_CMD", "sh -c 'touch %s'" % marker)
-    body = client.post("/hub/api/bots/restart").get_json()
-    jobs = client.application.extensions["hub_restart_jobs"]
-    st = wait_done(jobs, body["job_id"])
-    assert "secret-path-marker" not in json.dumps([body, st], ensure_ascii=False)
-
-
-# ---------------- §0.1 通则排查：第 4 段（BUG-18 / §12.7 ㊳） ----------------
-#
-# 排查结论：本段三个端点里 **一个都不读请求体**
-#   GET  /hub/api/bots                 无体
-#   POST /hub/api/bots/restart         无入参（重启计划全从 bots_client.restart_plan 来）
-#   GET  /hub/api/bots/restart/<job_id> 无体
-# 所以 §0.1 的 400 bad_body 在本段没有落点；要盯的是顶层数组别把它冒成 500。
-
-@pytest.mark.parametrize("raw", [[], [1, 2, 3], "s", 123, True, None])
-def test_restart收到顶层非对象的体照常受理不冒500(client, monkeypatch, raw):
-    monkeypatch.setenv("HUB_RESTART_CMD", "true")
-    r = client.post("/hub/api/bots/restart", json=raw)
-    assert r.status_code == 202, (raw, r.status_code, r.get_json())
-    assert re.fullmatch(r"[0-9a-f]{8}", r.get_json()["job_id"])
-
-
-# ---------------- BUG-27：线程起不来时互斥标记必须收回 ----------------
-
-def test_重启线程起不来时不把互斥永久卡住(client, monkeypatch, tmp_path):
-    """标记在起线程之前就立起来了，而 _run 永远不会跑到清理那句 ——
-    不收回的话之后每次重启都恒 409，只能重启门户才解得开。"""
-    monkeypatch.setenv("HUB_RESTART_CMD", "true")
-    boom = {"n": 0}
-    real_start = threading.Thread.start
-
-    def flaky(self):
-        if self.name == "hub-restart" and boom["n"] == 0:
-            boom["n"] += 1
-            raise RuntimeError("can't start new thread")
-        return real_start(self)
-    monkeypatch.setattr(threading.Thread, "start", flaky)
-
-    r = client.post("/hub/api/bots/restart")
-    assert r.status_code == 202, r.get_json()
-    st = client.get("/hub/api/bots/restart/%s" % r.get_json()["job_id"]).get_json()
-    assert st["state"] == "failed", "线程没起来却报成 running，用户会一直等"
-    # 关键：下一次重启还能受理，不是恒 409
-    r2 = client.post("/hub/api/bots/restart")
-    assert r2.status_code == 202, r2.get_json()
-    jobs = client.application.extensions["hub_restart_jobs"]
-    assert wait_done(jobs, r2.get_json()["job_id"])["state"] == "done"
