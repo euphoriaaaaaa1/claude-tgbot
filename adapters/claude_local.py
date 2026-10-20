@@ -293,8 +293,17 @@ class ClaudeLocalAdapter(BackendAdapter):
                     raise AdapterError("invalid", 422, err or "恢复默认失败")
                 result["message"] = "已恢复默认，下一条消息起生效"
             elif body.get("provider_id") is not None:
-                out, err = pc.set_bot_provider(bot_id, {"provider_id": body.get("provider_id")},
-                                               body.get("model"))
+                # provider_config 的写口要完整条目（base_url/api_key），不是裸 id。
+                try:
+                    data = pc.load_providers()
+                except Exception:
+                    raise AdapterError("internal", 500, "供应商清单读不出来") from None
+                entry = next((p for p in (data.get("providers") or [])
+                              if isinstance(p, dict) and p.get("id") == body.get("provider_id")),
+                             None)
+                if entry is None:
+                    raise AdapterError("invalid", 422, "供应商不存在")
+                out, err = pc.set_bot_provider(bot_id, entry, body.get("model"))
                 if out is None:
                     raise AdapterError("invalid", 422, err or "换供应商失败")
                 result["message"] = "已保存，下一条消息起生效"

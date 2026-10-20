@@ -138,11 +138,14 @@ def dispatcher_auth_headers(bot_id, channel_dir=None):
 
 
 def configs_dir() -> Path:
-    """配置根。测试接缝 ``HUB_CONFIGS_DIR``（INTERFACE §7），未设才走仓库 ``configs/``。
+    """配置根。测试接缝 ``CLAUDEBOT_CONFIG_DIR``（公开版契约）与 ``HUB_CONFIGS_DIR``
+    （旧面板接缝）优先，未设才走仓库 ``configs/``。
 
     本模块任何路径都经它取，绝不 expanduser 出真路径 —— 否则用例会去动生产配置。
     """
-    return Path(os.environ.get("HUB_CONFIGS_DIR") or (REPO_ROOT / "configs"))
+    return Path(os.environ.get("CLAUDEBOT_CONFIG_DIR")
+                or os.environ.get("HUB_CONFIGS_DIR")
+                or (REPO_ROOT / "configs"))
 
 
 def _valid_port(raw):
