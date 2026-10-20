@@ -437,7 +437,11 @@ class LaunchdBackend(ServiceBackend):
         elif self.dry_run:
             detail = "dry-run：未写 plist、未执行 launchctl"
         return self._result(
-            ACTION_REGISTER, spec, ok=ok, detail=detail, loaded=ok or self.dry_run
+            ACTION_REGISTER,
+            spec,
+            ok=ok,
+            detail=detail,
+            loaded=None if self.dry_run else ok,
         )
 
     def unregister(self, spec: ServiceSpec) -> OperationResult:
@@ -517,7 +521,7 @@ class LaunchdBackend(ServiceBackend):
             ok=ok,
             detail="" if ok else "kickstart 失败（服务未加载？先 register）：%s"
             % (proc.stderr or proc.stdout).strip(),
-            running=True if ok else None,
+            running=None if self.dry_run else (True if ok else None),
         )
 
     def status(self, spec: ServiceSpec) -> OperationResult:
@@ -653,7 +657,13 @@ class SystemdBackend(ServiceBackend):
         ).strip()
         if self.dry_run:
             detail = "dry-run：未写 unit、未执行 systemctl"
-        return self._result(ACTION_REGISTER, spec, ok=ok, detail=detail, loaded=ok)
+        return self._result(
+            ACTION_REGISTER,
+            spec,
+            ok=ok,
+            detail=detail,
+            loaded=None if self.dry_run else ok,
+        )
 
     def unregister(self, spec: ServiceSpec) -> OperationResult:
         spec.validate(need_command=False)
@@ -688,7 +698,7 @@ class SystemdBackend(ServiceBackend):
             ok=ok,
             detail="" if ok else "systemctl start 失败：%s"
             % (proc.stderr or proc.stdout).strip(),
-            loaded=ok,
+            loaded=None if self.dry_run else ok,
         )
 
     def stop(self, spec: ServiceSpec) -> OperationResult:
@@ -720,7 +730,7 @@ class SystemdBackend(ServiceBackend):
             ok=ok,
             detail="" if ok else "systemctl restart 失败：%s"
             % (proc.stderr or proc.stdout).strip(),
-            running=True if ok else None,
+            running=None if self.dry_run else (True if ok else None),
         )
 
     def status(self, spec: ServiceSpec) -> OperationResult:
@@ -801,7 +811,13 @@ class WindowsBackend(ServiceBackend):
         )
         if self.dry_run:
             detail = "dry-run：未执行 schtasks"
-        return self._result(ACTION_REGISTER, spec, ok=ok, detail=detail, loaded=ok)
+        return self._result(
+            ACTION_REGISTER,
+            spec,
+            ok=ok,
+            detail=detail,
+            loaded=None if self.dry_run else ok,
+        )
 
     def unregister(self, spec: ServiceSpec) -> OperationResult:
         spec.validate(need_command=False)
@@ -830,7 +846,7 @@ class WindowsBackend(ServiceBackend):
             ok=ok,
             detail="" if ok else "schtasks /Run 失败：%s"
             % (proc.stderr or proc.stdout).strip(),
-            running=ok,
+            running=None if self.dry_run else ok,
         )
 
     def stop(self, spec: ServiceSpec) -> OperationResult:
@@ -861,7 +877,7 @@ class WindowsBackend(ServiceBackend):
             ok=ok,
             detail="" if ok else "schtasks /Run 失败：%s"
             % (proc.stderr or proc.stdout).strip(),
-            running=ok,
+            running=None if self.dry_run else ok,
         )
 
     def status(self, spec: ServiceSpec) -> OperationResult:

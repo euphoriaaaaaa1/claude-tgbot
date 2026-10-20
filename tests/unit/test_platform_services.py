@@ -398,6 +398,7 @@ def test_cli_dry_run零写入(tmp_path, capsys):
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
+    assert payload["loaded"] is None, "dry-run 不应声称服务已加载"
     assert payload["commands"]
     assert not (tmp_path / "Library").exists()
     assert not (tmp_path / ".config").exists()
