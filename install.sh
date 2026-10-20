@@ -101,6 +101,7 @@ if "$PYTHON_BIN" platform_services.py register autostart --repo "$PWD"; then
   autostart_on=1
 else
   rc=$?
+  left=1
   todo "开机自启注册失败（退出码 $rc）。手动重跑：$PYTHON_BIN platform_services.py register autostart --repo \"$PWD\""
 fi
 
