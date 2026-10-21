@@ -227,7 +227,9 @@ def _direct_call(entry: dict, model: str, prompt: str, timeout: int) -> str:
     base_url = str(entry.get("base_url") or "").rstrip("/")
     key = entry.get("api_key") or ""
     if protocol == "openai":
-        url = base_url + "/chat/completions"
+        # 与 bot 直连同一口径：openai 兼容端点一律在 <base>/v1 下
+        from scripts.derive_endpoints import direct_openai_url
+        url = direct_openai_url(str(entry.get("base_url") or "")).rstrip("/") + "/chat/completions"
         body = {"model": model, "messages": [{"role": "user", "content": prompt}]}
         headers = {"Content-Type": "application/json", "Authorization": "Bearer " + key}
     elif protocol == "anthropic":
