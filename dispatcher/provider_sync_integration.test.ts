@@ -19,6 +19,16 @@ const mkSettings = (over: Record<string, unknown> = {}, top: Record<string, unkn
   })
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+// fs.watch 在 Linux（inotify）上事件合并/延迟比 macOS 明显，固定 300ms 会偶发不够；
+// 断言不变，只把"等尘埃落定"改成有上限的轮询。
+const waitFor = async (pred: () => boolean, timeoutMs = 3000) => {
+  const end = Date.now() + timeoutMs
+  while (Date.now() < end) {
+    if (pred()) return true
+    await sleep(25)
+  }
+  return pred()
+}
 
 const live: ProviderWatchHandle[] = []
 const dirs: string[] = []
@@ -147,7 +157,7 @@ test('连续快写5次_只重启一次_读到的是最后一次的内容', async
     f.atomicWrite(mkSettings({ ANTHROPIC_MODEL: `fake-model-burst-${i}` }))
     await sleep(10)
   }
-  await sleep(300)                   // 等 fs.watch + 防抖尘埃落定
+  await waitFor(() => f.hits() >= 1)   // 等 fs.watch + 防抖尘埃落定（Linux inotify 会慢）
   expect(f.hits()).toBe(1)
   // 最后一次的内容已成为新基线：再评估不会补第二次
   f.tick(10_000)
@@ -159,7 +169,7 @@ test('原子替换后watch不失聪_rename覆盖也能认出变化', async () =>
   const f = fixture(mkSettings(), 60)
   f.tick(10_000)
   f.atomicWrite(mkSettings({ ANTHROPIC_BASE_URL: 'https://api.third-fake.test/anthropic' }))
-  await sleep(300)
+  await waitFor(() => f.hits() >= 1)
   expect(f.hits()).toBe(1)           // 没手动 evaluate，全靠 fs.watch 目录事件
 })
 
