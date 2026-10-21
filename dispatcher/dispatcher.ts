@@ -1856,7 +1856,7 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
         const feats = botFeatures()
         if (chatId.startsWith('-') && !featureOn(feats, 'groups')) {
           process.stderr.write(`dispatcher[${BOT_NAME}]: group_feature_off /send chat=${chatId} 群聊功能关着，整条不发\n`)
-          return Response.json(GROUP_FEATURE_OFF_BODY, { status: 409 })
+          return Response.json({ ...GROUP_FEATURE_OFF_BODY, parts: [] }, { status: 409 })
         }
         // H-16 幂等：带 batch_id 且命中台账 → 直接回放首次结果（逐字），零发送。
         const batchId = typeof body.batch_id === 'string' && body.batch_id ? body.batch_id : undefined
@@ -1937,6 +1937,10 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
           : []
         const sentIds: number[] = []
         const dropped: { index: number; reason: string }[] = []
+        // 契约（INTERFACE.md §POST /send）：逐计划段回执，顺序与 message_ids 一致。
+        // 只含索引/成败/消息号/段类型/原因码，绝不含正文、路径或令牌。
+        type SendPart = { index: number; ok: boolean; message_id: number | null; kind: 'text' | 'file'; reason: string | null }
+        const parts: SendPart[] = []
         let sent = 0        // 成功送达的"计划段"数（一个 item 计 1，语音配对的双发也只计 1）
         const delay = access.splitOnParagraph ? (access.paragraphDelay ?? 0) : 0
 
@@ -2029,7 +2033,11 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
 
         let textIdx = 0   // 只数文字气泡，语音配对和 reply-to-first 都按它算
         for (let n = 0; n < items.length; n++) {
-          if (now() >= deadline) { dropped.push({ index: n, reason: 'timeout' }); continue }   // 预算已尽
+          if (now() >= deadline) {
+            dropped.push({ index: n, reason: 'timeout' })
+            parts.push({ index: n, ok: false, message_id: null, kind: items[n].kind, reason: 'timeout' })
+            continue
+          }   // 预算已尽
           const item = items[n]
           let raced: { timedOut: true } | { timedOut: false; v: { ok: boolean; reason?: string; ids: number[] } }
           if (item.kind === 'file') {
@@ -2043,12 +2051,21 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
             const shouldReplyTo = replyTo != null && replyMode !== 'off' && (replyMode === 'all' || i === 0)
             raced = await raceBudget(doText(item.chunk, i, shouldReplyTo), deadline - now())
           }
-          if (raced.timedOut) { dropped.push({ index: n, reason: 'timeout' }); continue }
+          if (raced.timedOut) {
+            dropped.push({ index: n, reason: 'timeout' })
+            parts.push({ index: n, ok: false, message_id: null, kind: item.kind, reason: 'timeout' })
+            continue
+          }
           if (raced.v.ok) {
             // 出站事实源：第一段成功送出时绑定本轮消费的承诺件（只写一次出站时刻）
             if (sent === 0 && promiseIds.length > 0) markOutbound(CHANNEL_DIR, chatId, promiseIds)
             sent++; sentIds.push(...raced.v.ids)
-          } else dropped.push({ index: n, reason: raced.v.reason || 'network' })
+            parts.push({ index: n, ok: true, message_id: raced.v.ids[0] ?? null, kind: item.kind, reason: null })
+          } else {
+            const reason = raced.v.reason || 'network'
+            dropped.push({ index: n, reason })
+            parts.push({ index: n, ok: false, message_id: null, kind: item.kind, reason })
+          }
         }
         // （旧的"图片统一压尾"循环已并入上方计划循环：无标记时行为不变，仍是压尾）
         // Peer inject (groups only; fire-and-forget). Bypass Telegram's
@@ -2097,7 +2114,7 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
         // H-16/H-17：恒含 planned/sent/dropped/idempotent；部分送达=2xx，全丢=502。
         const planned = items.length
         const status = (sent === 0 && planned > 0) ? 502 : 200
-        const respText = JSON.stringify({ ok: sent > 0, planned, sent, dropped, idempotent: !!batchId, message_ids: sentIds, ts: now(), ...featureNotes })
+        const respText = JSON.stringify({ ok: sent > 0, planned, sent, dropped, idempotent: !!batchId, message_ids: sentIds, parts, ts: now(), ...featureNotes })
         if (batchId) ledgerStore(ledger, batchId, status, respText, now())
         return new Response(respText, { status, headers: { 'content-type': 'application/json' } })
       }
