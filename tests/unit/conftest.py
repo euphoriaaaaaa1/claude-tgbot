@@ -4,6 +4,7 @@
 与验收测试的区别：这里直接调函数，不起 Flask、不起桩、不发 HTTP、不解析域名
 （SSRF 用例一律注入假解析器）。落盘只在 tmp_path 下，绝不碰真实 ~/.claude/settings.json。
 """
+import os
 import sys
 from pathlib import Path
 
@@ -33,6 +34,34 @@ def _no_real_settings(monkeypatch, tmp_path):
     # 安审 S3 起，写路径会去 chmod `<CLAUDE_TGBOT_HOME>/cliproxy/config.yaml`。
     # 不钉死的话用例会去动机主真实的那份配置。
     monkeypatch.setenv("CLAUDE_TGBOT_HOME", str(tmp_path / "tgbot-home"))
+
+
+_SERVICE_COMMANDS = ("launchctl", "systemctl", "schtasks")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_service_commands(monkeypatch, tmp_path):
+    """后台服务命令一律走替身，不许往本机 launchd / systemd 真挂任务。
+
+    真挂的任务以机主真实 HOME 定时跑，往真实 `~/.claude/channels` 写东西，测试结束也不会自己消失。
+    替身只把调用追加到 tmp_path 下的 service-calls.log、退出码 0。要验证真实注册时设
+    `TGBOT_REAL_SERVICE_TESTS=1`。Windows 上 shell 替身不生效，那里本来不跑这些脚本类用例。
+    """
+    if os.environ.get("TGBOT_REAL_SERVICE_TESTS") == "1" or os.name == "nt":
+        return
+    bin_dir = tmp_path / "fake-service-bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = tmp_path / "service-calls.log"
+    for name in _SERVICE_COMMANDS:
+        stub = bin_dir / name
+        stub.write_text(
+            "#!/bin/sh\n"
+            'printf \'%%s %%s\\n\' "$(basename "$0")" "$*" >> "%s"\n'
+            "exit 0\n" % log,
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
 
 
 def payload(**over):
