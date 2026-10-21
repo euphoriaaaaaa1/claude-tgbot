@@ -445,9 +445,9 @@ powershell -ExecutionPolicy Bypass -File windows\unregister-tasks.ps1
 
 然后按需删除（**会丢数据，先备份**）：
 
-- 仓库目录（含 `state.db`）；
+- 仓库目录（只放代码，运行数据默认在 `~/.claude-tgbot/state.db`）；
 - `~/.claude/channels/<bot>/`（对话记忆、人设、关系状态）；
-- `configs/providers.json`、`~/.claude/secrets/moments-panel*`、`~/.claude-tgbot/`；
+- `configs/providers.json`、`~/.claude/secrets/moments-panel*`、`~/.claude-tgbot/`（含状态库 `state.db`）；
 - 旧服务若仍存在，用 `platform_services.py status` 逐个确认后卸载。
 
 ---
