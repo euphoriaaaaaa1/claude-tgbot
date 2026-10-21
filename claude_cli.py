@@ -217,16 +217,13 @@ def _extract_direct_text(resp, protocol: str) -> str:
 
 
 def _resolve_protocol(entry: dict, model: str) -> str:
-    """按选中的模型解析直连协议：显式 protocol → protocols[model] → 供应商级派生。"""
+    """解析直连协议：只走供应商级判定，逐模型 ``protocols`` 表不参与。
+
+    ``provider_config.entry_protocol`` 的规则：显式 ``protocol``（归一后）→
+    ``base_url`` 路径含 ``anthropic`` 段则 anthropic，否则 openai。
+    ``model`` 保留在签名里供调用方与既有测试使用，本判定不再依赖它。
+    """
     import provider_config
-    raw = entry.get("protocol")
-    if raw in ("openai", "anthropic"):
-        return raw
-    protocols = entry.get("protocols")
-    if isinstance(protocols, dict):
-        chosen = protocols.get(model)
-        if chosen in ("openai", "anthropic"):
-            return chosen
     return provider_config.entry_protocol(entry)
 
 
@@ -248,8 +245,10 @@ def _direct_call(entry: dict, model: str, prompt: str, timeout: int) -> str:
         headers = {"Content-Type": "application/json", "Authorization": "Bearer " + key}
     elif protocol == "anthropic":
         # 与 bot 直连同一口径：地址带不带结尾的 /v1 都发往同一个 …/v1/messages
+        # 显式 anthropic_base_url 优先（与代理配置生成取同一个地址）。
         from scripts.derive_endpoints import direct_anthropic_url
-        url = direct_anthropic_url(str(entry.get("base_url") or "")).rstrip("/") + "/v1/messages"
+        anth_base = entry.get("anthropic_base_url") or entry.get("base_url")
+        url = direct_anthropic_url(str(anth_base or "")).rstrip("/") + "/v1/messages"
         body = {"model": model, "max_tokens": 4000,
                 "messages": [{"role": "user", "content": prompt}]}
         headers = {"Content-Type": "application/json", "x-api-key": key,

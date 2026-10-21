@@ -18,6 +18,7 @@ import os
 import sys
 import threading
 from typing import NamedTuple
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -177,31 +178,44 @@ def base_url() -> str:
 
 # ── config.yaml 生成（纯函数）──────────────────────────────────────────────
 
+def _normalize_protocol(value) -> str:
+    """协议取值归一：``strip().lower()`` 后命中 anthropic/openai 才算数，否则 ``""``。"""
+    if not isinstance(value, str):
+        return ""
+    value = value.strip().lower()
+    return value if value in ("anthropic", "openai") else ""
+
+
+def _protocol_from_base_url(base_url, anthropic_base_url=None) -> str:
+    """供应商未显式给协议时的地址兜底（与 dsh 侧同一规则）。
+
+    ``base_url`` 路径含 ``anthropic`` 段 → ``anthropic``；否则 ``anthropic_base_url``
+    有值且其路径含 ``anthropic`` 段 → ``anthropic``；否则 ``openai``。
+    """
+    for candidate in (base_url, anthropic_base_url):
+        if not isinstance(candidate, str) or not candidate:
+            continue
+        try:
+            path = urlsplit(candidate).path
+        except ValueError:
+            continue
+        if any(seg.lower() == "anthropic" for seg in path.split("/")):
+            return "anthropic"
+    return "openai"
+
+
 def _entry_protocol(entry: dict) -> str:
     """条目**有效协议**（provider 级）——与 ``provider_config.entry_protocol`` 同一语义的镜像。
 
     本模块是 providers.json 的**消费方**，设计上不 import provider_config（见 ``_load_snapshot``）。
-    派生规则（INTERFACE-provider-protocol-level §2.5）：显式 ``protocol`` 优先；否则仅当每个模型
-    都已在旧 ``protocols`` 判定为 anthropic/openai 且取值一致才派生该值，否则 ``""``。
+    显式 ``protocol``（归一后）优先；否则按地址兜底（``base_url`` 或
+    ``anthropic_base_url`` 路径含 ``anthropic`` 段则 anthropic，否则 openai），
+    **永不返回空串**。旧 ``protocols`` 表不再参与默认判定。
     """
-    raw = entry.get("protocol")
-    if raw in ("anthropic", "openai"):
-        return raw
-    protocols = entry.get("protocols")
-    if not isinstance(protocols, dict):
-        return ""
-    seen = set()
-    for m in entry.get("models") or []:
-        mid = m.get("id") if isinstance(m, dict) else (m if isinstance(m, str) else None)
-        if not isinstance(mid, str) or not mid:
-            continue
-        value = protocols.get(mid)
-        if value not in ("anthropic", "openai"):
-            return ""
-        seen.add(value)
-    if len(seen) != 1:
-        return ""
-    return seen.pop()
+    explicit = _normalize_protocol(entry.get("protocol"))
+    if explicit:
+        return explicit
+    return _protocol_from_base_url(entry.get("base_url"), entry.get("anthropic_base_url"))
 
 
 def _bucket(entry: dict) -> tuple[list, list]:

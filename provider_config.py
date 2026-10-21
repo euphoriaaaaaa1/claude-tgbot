@@ -15,7 +15,7 @@ import secrets
 import shutil
 import sys
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import yaml
 
@@ -566,31 +566,44 @@ def _public_entry(entry: dict) -> dict:
 _PROTOCOLS = ("anthropic", "openai")
 
 
-def entry_protocol(entry: dict) -> str:
-    """provider 级**有效协议**（INTERFACE-provider-protocol-level §1 / §2.5）。
+def _normalize_protocol(value) -> str:
+    """协议取值归一：``strip().lower()`` 后命中 anthropic/openai 才算数，否则 ``""``。"""
+    if not isinstance(value, str):
+        return ""
+    value = value.strip().lower()
+    return value if value in _PROTOCOLS else ""
 
-    优先级：条目显式 ``protocol`` 键 ∈ {anthropic, openai} → 原样返回；否则**只读派生**：
-    仅当该 provider 的**每个**模型都已在旧 ``protocols`` 中判定为 anthropic/openai
-    且取值**全部一致**时返回该唯一值，否则返回 ``""``（未选）。
 
-    **绝不**把 ``unknown``／未判定模型按某个协议一并发出——那会造成静默误路由。
-    派生值只读：磁盘上不写该键，直到用户下一次 PUT（见 ``upsert_provider``）才固化。
+def _protocol_from_base_url(base_url, anthropic_base_url=None) -> str:
+    """供应商未显式给协议时的地址兜底。
+
+    ``base_url`` 路径含 ``anthropic`` 段 → ``anthropic``；否则 ``anthropic_base_url``
+    有值且其路径含 ``anthropic`` 段 → ``anthropic``；否则 ``openai``。
+    统一用 ``urlsplit``（其 ``path`` 保留 ``;`` 路径参数），保证直连与代理判定一致。
     """
-    raw = entry.get("protocol")
-    if raw in _PROTOCOLS:
-        return raw
-    protocols = entry.get("protocols")
-    if not isinstance(protocols, dict):
-        return ""
-    seen = set()
-    for mid in _model_ids(entry):
-        value = protocols.get(mid)
-        if value not in _PROTOCOLS:
-            return ""
-        seen.add(value)
-    if len(seen) != 1:
-        return ""
-    return seen.pop()
+    for candidate in (base_url, anthropic_base_url):
+        if not isinstance(candidate, str) or not candidate:
+            continue
+        try:
+            path = urlsplit(candidate).path
+        except ValueError:
+            continue
+        if any(seg.lower() == "anthropic" for seg in path.split("/")):
+            return "anthropic"
+    return "openai"
+
+
+def entry_protocol(entry: dict) -> str:
+    """provider 级**有效协议**：显式 ``protocol``（归一后）→ 地址兜底默认。
+
+    旧 ``protocols`` 表不再参与判定。显式值归一后无效时按地址兜底
+    （``base_url`` 或 ``anthropic_base_url`` 路径含 ``anthropic`` 段则 anthropic，
+    否则 openai），**永不返回空串**。
+    """
+    explicit = _normalize_protocol(entry.get("protocol"))
+    if explicit:
+        return explicit
+    return _protocol_from_base_url(entry.get("base_url"), entry.get("anthropic_base_url"))
 
 
 def _find(data: dict, provider_id: str) -> dict | None:
@@ -945,6 +958,8 @@ def _gate0_outside_lock(pid, body, proxy_opt, anthropic_opt, openai_opt, protoco
     if _no_usable_key(body) and _override_changed(old, anthropic_opt, openai_opt):
         return None
     base_changed = "base_url" in body and body.get("base_url") != old.get("base_url")
+    # 与锁内同一判据：覆盖地址变化单独传，协议保留/清空规则与 base_url 变化不同。
+    override_changed = _override_changed(old, anthropic_opt, openai_opt)
     cand = dict(old)
     if "base_url" in body:
         cand["base_url"] = body["base_url"]
@@ -952,7 +967,7 @@ def _gate0_outside_lock(pid, body, proxy_opt, anthropic_opt, openai_opt, protoco
         cand["models"] = models
     if new_key is not None:
         cand["api_key"] = new_key
-    cand["protocol"] = _next_protocol(old, protocol_opt, base_changed)
+    cand["protocol"] = _next_protocol(old, protocol_opt, base_changed, override_changed)
     for k, v in (("proxy", proxy_opt), ("anthropic_base_url", anthropic_opt), ("openai_base_url", openai_opt)):
         if v is not _UNSET:
             cand[k] = v
@@ -971,12 +986,21 @@ def _gate0_outside_lock(pid, body, proxy_opt, anthropic_opt, openai_opt, protoco
     return None
 
 
-def _next_protocol(entry: dict, protocol_opt, base_changed: bool) -> str:
-    """写入后的**有效协议**：显式提交优先；否则「地址一换、结论作废」清空；否则保留（含派生值）。"""
+def _next_protocol(entry: dict, protocol_opt, base_url_changed: bool,
+                   override_changed: bool = False) -> str:
+    """写入后的**协议存储值**：显式提交优先；否则按地址变化决定保留还是清空。
+
+    - ``base_url`` 变了：既有契约「地址一换、结论作废」→ 清空，读时按新地址重算。
+    - 只有覆盖地址（``anthropic_base_url`` / ``openai_base_url``）变了：旧条目协议是
+      显式值则原样保留，不能因另一侧地址变化改判；旧值是派生值（归一后为空）则清空，
+      让读取按新覆盖地址重算。``entry`` 的地址字段此时已更新，``protocol`` 仍是旧值。
+    """
     if protocol_opt is not _UNSET:
         return protocol_opt
-    if base_changed:
+    if base_url_changed:
         return ""
+    if override_changed:
+        return _normalize_protocol(entry.get("protocol"))
     return entry_protocol(entry)
 
 
@@ -1116,8 +1140,10 @@ def upsert_provider(body: dict, provider_id: str | None = None) -> tuple[dict | 
             if pre_old is not None and any(prev.get(k) != pre_old.get(k) for k in _CONC_KEYS):
                 raise ProviderConflict(_ERR_CONCURRENT)   # 门 0 探针期间被别的请求改动（锁内最新清单）
             old_base_url = entry.get("base_url")
-            base_changed = "base_url" in body and body.get("base_url") != old_base_url
-            next_protocol = _next_protocol(entry, protocol_opt, base_changed)
+            # 「地址变了」分两种：base_url 变化沿用清空契约；覆盖地址变化只改覆盖字段时
+            # 也要让派生值按新地址重算，但不能清掉显式 protocol（见 _next_protocol）。
+            base_url_changed = "base_url" in body and body.get("base_url") != old_base_url
+            override_changed = _override_changed(entry, anthropic_opt, openai_opt)
             if new_name is not None:
                 entry["name"] = new_name
             if "base_url" in body:
@@ -1129,20 +1155,22 @@ def upsert_provider(body: dict, provider_id: str | None = None) -> tuple[dict | 
             if default_model is not _UNSET:
                 entry["default_model"] = default_model
             entry["updated_at"] = now
-            # 协议固化 + 旧键删除（INTERFACE-provider-protocol-level §1/§2.5）：显式提交优先；
-            # 否则 base_url 真的换了就清空（地址一换、结论作废），否则保留有效协议（含派生值）。
-            # 任意一次 PUT 都把旧 protocols / unavailable_models 从条目删除，不留空壳。
-            entry["protocol"] = next_protocol
-            entry.pop("protocols", None)
-            entry.pop("unavailable_models", None)
 
-        # 本轮可写字段（§1.2）。protocol 已在上面按语义写入。
+        # 本轮可写字段（§1.2）。
         if proxy_opt is not _UNSET:
             entry["proxy"] = proxy_opt
         if anthropic_opt is not _UNSET:
             entry["anthropic_base_url"] = anthropic_opt
         if openai_opt is not _UNSET:
             entry["openai_base_url"] = openai_opt
+
+        if updating:
+            # 协议必须在三个地址字段都赋值之后、用**更新后**的条目计算：显式提交优先；
+            # 地址真有变化则清空（读时按新地址重新推导），否则保留/重新推导有效协议。
+            # 任意一次 PUT 都把旧 protocols / unavailable_models 从条目删除，不留空壳。
+            entry["protocol"] = _next_protocol(entry, protocol_opt, base_url_changed, override_changed)
+            entry.pop("protocols", None)
+            entry.pop("unavailable_models", None)
 
         # E-15（修法二）：锁外探针的结论落到条目「未验证」标记（绑定响应据此继续提示）。
         # 内部键，不进 _public_entry 的 14 键；本请求没跑探针（mark=None）时保留旧值。
