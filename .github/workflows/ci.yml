@@ -24,7 +24,8 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # 固定版本：本地门禁与 CI 用同一 bun，避免运行时差异造成偶发红
+          bun-version: "1.3.11"
 
       - name: Install Python dependencies
         run: |
