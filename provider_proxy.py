@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sys
 import threading
 from typing import NamedTuple
 
@@ -1168,4 +1169,9 @@ def _selftest() -> None:
 
 
 if __name__ == "__main__":
-    _selftest()
+    if "--sync" in sys.argv[1:]:
+        # 供 scripts/run_provider_proxy.sh 在 exec 外部 cli-proxy-api 之前生成 config.yaml。
+        # 非显式 sync：写入段完成即返回，核验交后台 worker，不阻塞服务启动。
+        sync()
+    else:
+        _selftest()

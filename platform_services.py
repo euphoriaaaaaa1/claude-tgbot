@@ -1045,13 +1045,15 @@ def service_spec(
     if name == "provider-proxy":
         return ServiceSpec(
             name=name,
-            command=(python_bin, "provider_proxy.py"),
-            description="claude-tgbot 供应商代理 8770",
+            command=("/bin/bash", str(repo_path / "scripts" / "run_provider_proxy.sh")),
+            description="claude-tgbot 供应商代理 8770（需自行放置 cli-proxy-api）",
             working_dir=str(repo_path),
             env=base_env,
             run_at_load=True,
             keep_alive=True,
             log_dir=log_dir,
+            # 启动器依赖 bash 与外部 cli-proxy-api；Windows 无此组合，注册时明确报不支持。
+            platforms=("Darwin", "Linux"),
         )
 
     if name == "relations-tick":

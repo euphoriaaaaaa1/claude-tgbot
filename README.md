@@ -227,6 +227,8 @@ bash restart-bots.sh
 python3 platform_services.py register provider-proxy --repo "$PWD"
 ```
 
+- 该服务需要自行放置 `cli-proxy-api` 二进制（公开版不随附）：优先读 `CLAUDEBOT_CLI_PROXY_BIN`，否则找 `~/Library/Application Support/claudebotlife-provider-proxy/cli-proxy-api` 或 `~/.claude-tgbot/cli-proxy-api`。未安装时服务会明确报错退出，不影响其他功能。
+
 - 每个 bot 的 `<channels>/<bot>/.claude/settings.json` 由 `provider_config` 写。**不要手改**；如果你在 `settings.local.json` 里写了 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_MODEL` / `ANTHROPIC_API_KEY`，管理台会报 `local_conflict` 并拒绝写入，需要你手工清掉这几个键再重试。
 - 旧版配置迁移（一次性、默认 dry-run）：
 

@@ -421,6 +421,48 @@ def test_未知服务名明确报错(tmp_path):
         ps.service_spec("no-such-service", repo=tmp_path)
 
 
+def test_provider_proxy指向启动脚本(tmp_path):
+    """8770 入口不是 provider_proxy.py（它只自检），而是生成配置后 exec 外部二进制的脚本。"""
+    spec = ps.service_spec("provider-proxy", repo=REPO_ROOT)
+    script = REPO_ROOT / "scripts" / "run_provider_proxy.sh"
+    assert spec.command == ("/bin/bash", str(script))
+    assert spec.platforms == ("Darwin", "Linux")
+    assert spec.run_at_load and spec.keep_alive
+    assert os.access(script, os.X_OK), "启动脚本必须带可执行位"
+
+
+def test_provider_proxy在Windows明确不支持(tmp_path):
+    backend = ps.WindowsBackend(home=tmp_path, runner=FakeRunner(), system="Windows")
+    spec = ps.service_spec("provider-proxy", repo=REPO_ROOT)
+    with pytest.raises(ps.UnsupportedPlatform, match="provider-proxy"):
+        backend.register(spec)
+
+
+def test_provider_proxy脚本缺二进制时固定报错(tmp_path):
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("CLAUDEBOT_") and k != "PYTHON"
+    }
+    env.update(
+        {
+            "HOME": str(tmp_path),
+            "CLAUDEBOT_PROXY_DIR": str(tmp_path / "proxy"),
+            "CLAUDEBOT_PROVIDER_PATH": str(tmp_path / "providers.json"),
+        }
+    )
+    script = REPO_ROOT / "scripts" / "run_provider_proxy.sh"
+    proc = subprocess.run(
+        ["bash", str(script)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 1
+    assert "未安装 cli-proxy-api，8770 代理不可用；请按 README 放置二进制" in proc.stderr
+
+
 # ---------------------------------------------------------------- 实际注册（条件跑）
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS launchd 实跑")
