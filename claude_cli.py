@@ -216,6 +216,20 @@ def _extract_direct_text(resp, protocol: str) -> str:
     raise RuntimeError("上游 anthropic 回执无正文")
 
 
+def _resolve_protocol(entry: dict, model: str) -> str:
+    """按选中的模型解析直连协议：显式 protocol → protocols[model] → 供应商级派生。"""
+    import provider_config
+    raw = entry.get("protocol")
+    if raw in ("openai", "anthropic"):
+        return raw
+    protocols = entry.get("protocols")
+    if isinstance(protocols, dict):
+        chosen = protocols.get(model)
+        if chosen in ("openai", "anthropic"):
+            return chosen
+    return provider_config.entry_protocol(entry)
+
+
 def _direct_call(entry: dict, model: str, prompt: str, timeout: int) -> str:
     """直连 providers.json 里的供应商（按协议选端点）。
 
@@ -223,7 +237,7 @@ def _direct_call(entry: dict, model: str, prompt: str, timeout: int) -> str:
     绝不进请求体、绝不进日志。
     """
     import provider_config
-    protocol = provider_config.entry_protocol(entry)
+    protocol = _resolve_protocol(entry, model)
     base_url = str(entry.get("base_url") or "").rstrip("/")
     key = entry.get("api_key") or ""
     if protocol == "openai":
