@@ -86,3 +86,15 @@ def test_direct_call_openai_打到v1chatcompletions_且密钥只在请求头(ups
             "model": "m-1",
             "messages": [{"role": "user", "content": "你好"}],
         }
+
+
+def test_mixed_provider_按选中模型取协议(monkeypatch, tmp_path):
+    """混装供应商：只有选中模型标了 openai 时也应直连，不因个别模型未标注而回退。"""
+    import claude_cli
+    entry = {"id": "p1", "base_url": "https://a.example", "api_key": "k",
+             "protocols": {"m1": "openai"}}
+    assert claude_cli._resolve_protocol(entry, "m1") == "openai"
+    entry2 = {"id": "p2", "protocol": "anthropic", "protocols": {"m2": "openai"}}
+    assert claude_cli._resolve_protocol(entry2, "m2") == "anthropic"
+    entry3 = {"id": "p3", "base_url": "https://a.example", "protocols": {"m1": "openai", "m2": "anthropic"}}
+    assert claude_cli._resolve_protocol(entry3, "m3") == ""
