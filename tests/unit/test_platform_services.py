@@ -465,7 +465,10 @@ def test_provider_proxy脚本缺二进制时固定报错(tmp_path):
 
 # ---------------------------------------------------------------- 实际注册（条件跑）
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS launchd 实跑")
+@pytest.mark.skipif(
+    sys.platform != "darwin" or os.environ.get("TGBOT_REAL_SERVICE_TESTS") != "1",
+    reason="macOS launchd 实跑：会真的往本机 launchd 注册临时任务，默认不跑；要跑设 TGBOT_REAL_SERVICE_TESTS=1",
+)
 def test_macos_临时label真实注册与立即卸载(tmp_path):
     """临时 label + 立即卸载；绝不改名/停掉任何生产服务。"""
     domain = "gui/%d" % os.getuid()
