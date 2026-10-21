@@ -1754,7 +1754,7 @@ async function handlePartyRequest(req: Request): Promise<Response> {
   return Response.json({ ok: true, chat_id: chatId, party: { on: false } })
 }
 
-async function handlePhotoRoundRequest(req: Request): Promise<Response> {
+export async function handlePhotoRoundRequest(req: Request): Promise<Response> {
   const bad = (detail: 'body' | 'chat_id' | 'delivery_key') =>
     Response.json({ ok: false, error: 'bad_request', detail }, { status: 400 })
   let raw: string
@@ -1777,7 +1777,7 @@ async function handlePhotoRoundRequest(req: Request): Promise<Response> {
       logPhotoStateProblem(chatId, current.status)
       deletePhotoState(path)
     }
-    return Response.json({ ok: true, active: false })
+    return Response.json({ ok: true, active: false, round: 0, expires_at_ms: 0 })
   }
   if (deliveryKey === current.state.last_delivery_key) {
     return Response.json({ ok: true, active: true, round: current.state.rounds, expires_at_ms: photoExpiresAtMs(current.state) })
