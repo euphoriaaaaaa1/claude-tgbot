@@ -176,6 +176,19 @@ def acquire(op_id: str, *, persons=()) -> LifecycleLock:
     return _acquire(op_id, persons)
 
 
+def acquire_wait(op_id: str, *, persons=(), timeout: float = 2.0) -> LifecycleLock:
+    """拿生命周期锁，最多等 ``timeout`` 秒。只给"重新收拾"这类用户动作使用：
+    上一个任务可能刚写完终态、锁还没释放，界面立刻点重试不该吃一个瞬时 409。"""
+    end = time.monotonic() + max(0.0, timeout)
+    while True:
+        try:
+            return acquire(op_id, persons=persons)
+        except LifecycleBusy:
+            if time.monotonic() >= end:
+                raise
+            time.sleep(0.05)
+
+
 def _acquire(op_id: str, persons) -> LifecycleLock:
     if not isinstance(op_id, str) or OP_ID_RE.fullmatch(op_id) is None:
         raise ValueError("操作编号不合规")
@@ -967,7 +980,7 @@ def resolve(op_id: str) -> str:
         raise OpNotFound()
     if rec["status"] != "needs_attention":
         raise NotResolvable()
-    lock = acquire(op_id, persons=_persons_of(rec))
+    lock = acquire_wait(op_id, persons=_persons_of(rec))
     task = None
     try:
         rec = _load(op_id)
