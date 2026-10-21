@@ -31,7 +31,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pytest
           # 验收用例会 import voicecall（可选模块），运行时依赖不在 requirements.txt。
-          python -m pip install fastapi httpx uvicorn
+          # python-multipart 是 voicecall 表单端点的运行时依赖，缺了会 7 条用例报错。
+          python -m pip install fastapi httpx uvicorn python-multipart
 
       - name: Install Bun dependencies
         working-directory: dispatcher
