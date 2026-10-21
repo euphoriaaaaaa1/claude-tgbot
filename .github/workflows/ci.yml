@@ -44,8 +44,16 @@ jobs:
         run: python -m pytest tests/unit tests/acceptance -q
 
       - name: Bun tests
-        working-directory: dispatcher
-        run: bun test
+        # 每个测试文件单独一个进程：bun 测试在模块加载期改 process.env，
+        # 批量跑会让 CHANNEL_DIR/BOT_NAME 等互相污染（与 scripts/test-gate.sh 同口径）。
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            echo "== $f"
+            bun test "$f" --timeout 120000 || fail=1
+          done < <(find dispatcher tests/acceptance -name '*.test.ts' -type f \
+                     -not -path '*/node_modules/*' | sort)
+          exit $fail
 
       - name: Desensitization scan
         run: python scripts/scan_release.py
