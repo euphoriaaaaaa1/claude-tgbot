@@ -69,12 +69,13 @@ def _create(client, **over):
     return r.get_json()["provider"]
 
 
-def test_crud_十三键且不返回密钥(stack):
+def test_crud_十四键且不返回密钥(stack):
     pc, _pp, _routes, _bot_dir, client = stack
     provider = _create(client)
     assert list(provider) == [
         "id", "name", "base_url", "models", "default_model", "key_masked", "has_key",
-        "created_at", "updated_at", "proxy", "protocol", "anthropic_base_url", "openai_base_url"]
+        "created_at", "updated_at", "proxy", "proxy_auto", "protocol", "anthropic_base_url",
+        "openai_base_url"]
     assert "api_key" not in provider
     assert provider["has_key"] is True and provider["key_masked"].endswith("7890")
 

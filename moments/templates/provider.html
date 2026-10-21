@@ -95,6 +95,11 @@ th { font-size:12px; color:var(--ink-soft); font-weight:500; }
 .models-default { margin-top:4px; overflow-wrap:anywhere; }
 .models-list { margin-top:8px; }
 .models-list[hidden] { display:none; }
+/* 供应商面板里的「经本机翻译代理」行：开关读/写该供应商的 proxy */
+.proxy-row { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; margin-top:8px;
+  padding-top:8px; border-top:1px solid var(--hairline); }
+.proxy-row input[type="checkbox"] { width:auto; margin:0; }
+.proxy-desc { flex:1 1 100%; }
 .model-item { display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px; padding:8px 0;
   border-top:1px solid var(--hairline); }
 .model-name { flex:1 1 150px; min-width:0; color:var(--ink); }
@@ -247,20 +252,19 @@ th { font-size:12px; color:var(--ink-soft); font-weight:500; }
   <div id="banners"></div>
 
   <div class="panel" id="proxyPanel">
-    <h2>本机代理实例（provider 协议转换）</h2>
+    <h2>供应商路由代理</h2>
     <div class="row">
       <span class="tag" id="proxyStatus" data-state="bad">未运行</span>
       <span class="mono" id="proxyKey"></span>
       <span class="mono" id="proxyCount"></span>
-      <button class="btn btn-ghost" id="proxySyncBtn">同步代理配置</button>
+      <button class="btn btn-ghost" id="proxySyncBtn">重新应用供应商代理</button>
       <span id="proxySyncMsg" class="hint"></span>
     </div>
     <div id="proxyError" class="banner err" hidden></div>
     <span id="proxyGenMsg" class="hint"></span>
     <div id="proxySuspended" class="banner err" hidden><span></span>
       <button type="button" class="btn btn-ghost" id="proxyRestartBtn" onclick="restartProxy()">重启实例</button></div>
-    <div class="hint">开启代理开关的 provider 的模型会注册进这个实例；已绑定 provider 的 bot 通过它调用上游（协议转换由实例完成）。</div>
-    <div class="hint">此实例只服务本面板的 bot，与本机其它工具使用的代理互不影响。</div>
+    <div class="hint">这里只管实例运行状态与配置同步；单个供应商是否经本机翻译代理，在该供应商的面板里切换。</div>
   </div>
 
   <div class="panel">
@@ -343,8 +347,8 @@ th { font-size:12px; color:var(--ink-soft); font-weight:500; }
 </div>
 <template id="miRowTpl"><div class="mi-row" role="option" data-model-id=""><span class="mi-label"></span></div></template>
 <!-- 协议是 provider 级设置，在表单的 [data-role="protocol-input"] 里选；不再有模型级协议控件。 -->
-<!-- 本轮新增控件的开标签模板（属性要在 HTML 标签上，JS 只填值）：proxy-toggle 带 data-provider-id。 -->
-<template id="proxyCtlTpl"><button type="button" class="btn btn-ghost" data-role="proxy-toggle" data-provider-id=""></button></template>
+<!-- 供应商面板里的代理开关：属性要在 HTML 标签上，JS 只填值；data-provider-id 由脚本按行填。 -->
+<template id="proxyCtlTpl"><label class="proxy-row"><input type="checkbox" data-role="proxy-toggle" data-provider-id=""><span>经本机翻译代理</span><span class="hint proxy-desc" data-role="proxy-desc">非 Anthropic 格式的供应商需要打开，bot 才能正常调用</span></label></template>
 
 <!-- 模型多选对话框：全页唯一，原生模态（自带焦点圈定与 Esc 关闭）。「拉取模型」与每行「刷新模型」都打开它；
      点「确定」才写回，取消 / 关闭 / Esc / 点遮罩都是零写入。关闭叉放在结构末尾，Tab 顺序里排最后。 -->
@@ -1091,14 +1095,21 @@ function renderProviders() {
       md.querySelector('[data-role="models-default"]').textContent = '默认模型：' + (p.default_model || '未设');
       applyExpanded(md, p.id);
     }
+    // 代理开关收进供应商面板（顶部实例块只管实例本身）；
+    // proxy_auto=true 时说明来源是自动开启，用户仍可在这里手动关闭。
+    const proxyRow = document.getElementById('proxyCtlTpl').content.firstElementChild.cloneNode(true);
+    const proxyToggle = proxyRow.querySelector('[data-role="proxy-toggle"]');
+    proxyToggle.setAttribute('data-provider-id', p.id);
+    proxyToggle.checked = p.proxy === true;
+    proxyToggle.onchange = () => setProxy(p.id, proxyToggle.checked);
+    if (p.proxy_auto) {
+      proxyRow.querySelector('[data-role="proxy-desc"]').textContent = '已自动开启（非 Anthropic 格式），可手动关闭';
+    }
+    md.appendChild(proxyRow);
     tr.appendChild(md);
 
     const td = el('td');
     const actions = el('div', 'row');
-    const toggle = document.getElementById('proxyCtlTpl').content.firstElementChild.cloneNode(true);
-    toggle.setAttribute('data-provider-id', p.id);
-    toggle.textContent = p.proxy ? '关闭代理' : '开启代理';
-    toggle.onclick = () => setProxy(p.id, !p.proxy);
     const refresh = document.getElementById('modelsRefreshTpl').content.firstElementChild.cloneNode(true);
     refresh.setAttribute('data-provider-id', p.id);
     const edit = el('button', 'btn btn-ghost', '编辑');
@@ -1107,7 +1118,7 @@ function renderProviders() {
     const del = el('button', 'btn btn-danger', '删除');
     del.setAttribute('data-role', 'provider-delete');
     del.onclick = () => removeProvider(p.id);
-    actions.appendChild(toggle); actions.appendChild(refresh); actions.appendChild(edit); actions.appendChild(del);
+    actions.appendChild(refresh); actions.appendChild(edit); actions.appendChild(del);
     td.appendChild(actions);
     tr.appendChild(td);
     tb.appendChild(tr);
@@ -1152,6 +1163,15 @@ function cancelEdit() {
   setFormModels(null);
 }
 
+// 地址形态判定：与后端同一口径，只看路径里有没有整段 anthropic。
+function baseUrlHasAnthropicSegment(value) {
+  try {
+    return new URL(value).pathname.split('/').some(seg => seg.toLowerCase() === 'anthropic');
+  } catch (e) {
+    return false;
+  }
+}
+
 async function saveProvider() {
   const msg = document.getElementById('formMsg');
   msg.textContent = '';
@@ -1167,6 +1187,15 @@ async function saveProvider() {
   if (proto) body.protocol = proto;
   // 新建时在选择框里勾好的模型随这次保存一并提交（编辑已有供应商的模型走选择框的「确定」）
   if (!EDIT_ID && FORM_MODELS) body.models = FORM_MODELS;
+  // 新建非 Anthropic 格式供应商的保存前提示（地址路径不含 anthropic 段）：
+  // 有模型 → 询问是否现在打开本机翻译代理；无模型 → 只提示先拉模型，不拦保存。
+  if (!EDIT_ID && body.protocol === 'openai' && !baseUrlHasAnthropicSegment(body.base_url)) {
+    if (!(body.models || []).length) {
+      alert('这个供应商走非 Anthropic 格式：先拉取模型，保存后会自动开启本机翻译代理。');
+    } else {
+      body.proxy = confirm('这个供应商走非 Anthropic 格式，需要本机翻译代理，bot 才能正常调用。\n要现在打开本机翻译代理吗？');
+    }
+  }
   let r;
   if (EDIT_ID) {
     r = await jsonFetch('/api/providers/' + encodeURIComponent(EDIT_ID), {
@@ -1495,7 +1524,11 @@ async function setProxy(providerId, on) {
   const r = await jsonFetch('/api/providers/' + encodeURIComponent(providerId), {
     method: 'PUT', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({proxy: !!on})});
-  if (!r.ok) { alert((r.body && r.body.error) || ('失败 ' + r.status)); return; }
+  if (!r.ok) {
+    alert((r.body && r.body.error) || ('失败 ' + r.status));
+    await load();   // 失败时按服务端真值重画，别让复选框停在假状态
+    return;
+  }
   await load();
 }
 
