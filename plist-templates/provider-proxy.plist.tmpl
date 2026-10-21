@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{PROXY_LABEL}</string>
+
+    <!-- ProgramArguments **不含密钥**：只有二进制路径与 -config 路径（路径非密）。
+         api-key 落在 config.yaml（0600），进程参数里绝不出现。 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>{PROXY_BIN}</string>
+        <string>-config</string>
+        <string>{PROXY_DIR}/config.yaml</string>
+        <string>-local-model</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{PROXY_DIR}</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <!-- ThrottleInterval 必须很小：面板「重启实例」与核验补救都假设 kickstart 后 < 1 s 内恢复监听
+         （INTERFACE §9.5 启动窗口以 t0 为基准、上限 5 s）。取 1 s 仍能防止崩溃循环时的热重启
+         （面板侧另有 60 s kickstart 限频）。 -->
+    <key>ThrottleInterval</key>
+    <integer>1</integer>
+
+    <key>StandardOutPath</key>
+    <string>{PROXY_DIR}/logs/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>{PROXY_DIR}/logs/stderr.log</string>
+
+    <!-- 只放 PATH 与 NO_PROXY：进程自身不得走本机代理去打环回地址。 -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>NO_PROXY</key>
+        <string>127.0.0.1,localhost</string>
+    </dict>
+</dict>
+</plist>
