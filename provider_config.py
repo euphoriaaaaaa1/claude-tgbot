@@ -555,6 +555,8 @@ def _public_entry(entry: dict) -> dict:
         "created_at": entry.get("created_at"),
         "updated_at": entry.get("updated_at"),
         "proxy": entry.get("proxy") is True,
+        # 自动开启标记（auto-proxy-on-openai）：只认 is True，缺字段 = 老条目/人工选择
+        "proxy_auto": entry.get("proxy_auto") is True,
         "protocol": entry_protocol(entry),
         "anthropic_base_url": (entry.get("anthropic_base_url")
                                if isinstance(entry.get("anthropic_base_url"), str) else ""),
@@ -574,6 +576,20 @@ def _normalize_protocol(value) -> str:
     return value if value in _PROTOCOLS else ""
 
 
+def _has_anthropic_segment(value) -> bool:
+    """地址路径里有没有**整段** ``anthropic``（大小写不敏感）。非 str / 空 / 解析失败 → False。
+
+    ``urlsplit`` 的 ``path`` 保留 ``;`` 路径参数，保证直连、代理与自动判定用同一口径。
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        path = urlsplit(value).path
+    except ValueError:
+        return False
+    return any(seg.lower() == "anthropic" for seg in path.split("/"))
+
+
 def _protocol_from_base_url(base_url, anthropic_base_url=None) -> str:
     """供应商未显式给协议时的地址兜底。
 
@@ -582,13 +598,7 @@ def _protocol_from_base_url(base_url, anthropic_base_url=None) -> str:
     统一用 ``urlsplit``（其 ``path`` 保留 ``;`` 路径参数），保证直连与代理判定一致。
     """
     for candidate in (base_url, anthropic_base_url):
-        if not isinstance(candidate, str) or not candidate:
-            continue
-        try:
-            path = urlsplit(candidate).path
-        except ValueError:
-            continue
-        if any(seg.lower() == "anthropic" for seg in path.split("/")):
+        if _has_anthropic_segment(candidate):
             return "anthropic"
     return "openai"
 
@@ -614,6 +624,58 @@ def _find(data: dict, provider_id: str) -> dict | None:
 # 免得「是否提供」既写成 `x is None` 又写成 `"x" in body`，任一处改动就静默漂移
 # （而 default_model 的漂移方向恰好会撞上 §1.4「"" ⇒ 显式清空」）。
 _UNSET: object = object()
+
+
+def _auto_proxy_target(entry: dict) -> bool:
+    """保存后的条目是否命中「自动走本机翻译代理」：
+
+    协议判定为 ``openai``、``base_url`` / ``anthropic_base_url`` 路径里都没有整段
+    ``anthropic``，且**至少有一个模型**。无模型的条目保存时不自动开（先建供应商、
+    后加模型的既有流程不受影响，也不会因自动开代理触发「无模型」准入 400）。
+    调用时条目上的协议、地址与模型必须已是**本次保存后**的值。
+    """
+    return entry_protocol(entry) == "openai" and not (
+        _has_anthropic_segment(entry.get("base_url"))
+        or _has_anthropic_segment(entry.get("anthropic_base_url"))) and bool(_model_ids(entry))
+
+
+def _decide_proxy(prev: dict | None, entry: dict, proxy_opt) -> None:
+    """按接口 §2 决定写入后的 ``proxy`` / ``proxy_auto``（``entry`` 已写好协议与地址）。
+
+    记忆规则（``proxy_auto`` 字段存在且为 false = 人工选择过，老条目则无此字段）：
+
+    - 显式提交 ``proxy`` → 以用户为准，一律记 ``proxy_auto=False``（人工开/关）。
+    - 未提交：上次自动开的保持；人工开着的保持；**人工关闭过的保持关闭**；
+      新建 / 老条目才按触发条件自动开启（不命中不落 ``proxy_auto`` 字段）。
+    """
+    if proxy_opt is not _UNSET:
+        entry["proxy"] = proxy_opt
+        entry["proxy_auto"] = False
+        return
+    if prev is not None:
+        if prev.get("proxy_auto") is True:
+            if prev.get("proxy") is not True:
+                # 脏数据（proxy=false 但 proxy_auto=true）：按人工关闭归一，不再自动开
+                entry["proxy"] = False
+                entry["proxy_auto"] = False
+                return
+            entry["proxy"] = True
+            entry["proxy_auto"] = True
+            return
+        if prev.get("proxy") is True:            # 人工开着：不因保存被关
+            entry["proxy"] = True
+            entry["proxy_auto"] = prev.get("proxy_auto") is True
+            return
+        if prev.get("proxy_auto") is False:      # 人工关闭过：不再自动打开
+            entry["proxy"] = False
+            entry["proxy_auto"] = False
+            return
+    if _auto_proxy_target(entry):
+        entry["proxy"] = True
+        entry["proxy_auto"] = True
+    else:
+        entry["proxy"] = False
+        entry.pop("proxy_auto", None)            # 老条目保持「无此字段」，供下次重新判定
 
 
 def new_provider_id(data: dict) -> str:
@@ -795,7 +857,14 @@ class ProviderConflict(RuntimeError):
 # 「地址错」拒保存，但要给用户一个**不再静默**的提示——保存/绑定响应带 warning、面板显示。
 WARN_OPENAI_UNVERIFIED = ("openai 上游地址未验证（探测 404）：若调用失败，"
                           "请在面板手填 openai_base_url")
+_AUTO_PROXY_SYNC_FAILED = "代理没能应用，已保持直连"
 _REQ_WARN = threading.local()   # 请求级旁路；线程复用，须在请求边界清（reset_request_warn_state）
+
+
+def _append_request_warning(text: str) -> None:
+    """把一条 warning 追加到本请求旁路（多条用「；」拼接，不覆盖探针写入的地址未验证提示）。"""
+    prev = getattr(_REQ_WARN, "value", None)
+    _REQ_WARN.value = ("%s；%s" % (prev, text)) if prev else text
 
 
 def take_request_warning() -> str | None:
@@ -939,15 +1008,18 @@ def _gate0_outside_lock(pid, body, proxy_opt, anthropic_opt, openai_opt, protoco
     判定（协议总有值，序 0 为防御性保留），必须在地址探针（网络）**之前**给出——故在跑
     ``_gate0_error`` 前先 ``_admission_local_error``。
     """
-    if pid is None:   # 新建：false→true 且两覆盖地址均空才跑门 0（锁外）；缺 api_key 留给锁内既有 400
+    if pid is None:   # 新建：显式开代理或**将会自动开启**且两覆盖地址均空才跑门 0（锁外）
         key = body.get("api_key")
-        if proxy_opt is not True or anthropic_opt not in (_UNSET, "") or openai_opt not in (_UNSET, "") \
-                or not (isinstance(key, str) and key):
+        if anthropic_opt not in (_UNSET, "") or openai_opt not in (_UNSET, ""):
+            return None
+        if not (isinstance(key, str) and key):
             return None
         cand = {"base_url": body.get("base_url"), "api_key": key, "anthropic_base_url": "",
                 "openai_base_url": "", "models": models if models is not None else [],
                 "protocol": protocol_opt if protocol_opt is not _UNSET else ""}
-        return _admission_with_probe(cand)
+        if proxy_opt is True or (proxy_opt is _UNSET and _auto_proxy_target(cand)):
+            return _admission_with_probe(cand)
+        return None
     try:
         old = _find(load_providers(), pid)
     except ProvidersCorrupt:
@@ -973,6 +1045,8 @@ def _gate0_outside_lock(pid, body, proxy_opt, anthropic_opt, openai_opt, protoco
     for k, v in (("proxy", proxy_opt), ("anthropic_base_url", anthropic_opt), ("openai_base_url", openai_opt)):
         if v is not _UNSET:
             cand[k] = v
+    if proxy_opt is _UNSET:   # 预测「本次保存是否会自动开代理」：after 决定要不要跑门 0
+        _decide_proxy(old, cand, proxy_opt)
     before, after = old.get("proxy") is True, cand.get("proxy") is True
     if before and after and cand.get("base_url") != old.get("base_url"):
         return _ERR_PROXY_BASE_URL
@@ -1174,6 +1248,15 @@ def upsert_provider(body: dict, provider_id: str | None = None) -> tuple[dict | 
             entry.pop("protocols", None)
             entry.pop("unavailable_models", None)
 
+        # auto-proxy-on-openai：协议与地址都写完之后再定 proxy / proxy_auto
+        # （显式选择优先；自动开启的保持；人工关过的不再被自动打开）。
+        _decide_proxy(prev if updating else None, entry, proxy_opt)
+        # 本次是「自动开代理」导致的 false→true：已绑定的 bot 要跟着无声重写接入配置，
+        # 因此不走「已绑定不得翻转代理」的 409 守卫（显式翻转仍走原守卫）。
+        auto_opened = (proxy_opt is _UNSET and entry.get("proxy") is True
+                       and (not updating or prev.get("proxy") is not True))
+        target_id = provider_id if updating else entry.get("id")
+
         # E-15（修法二）：锁外探针的结论落到条目「未验证」标记（绑定响应据此继续提示）。
         # 内部键，不进 _public_entry 的 14 键；本请求没跑探针（mark=None）时保留旧值。
         _mark = _take_unverified_mark()
@@ -1195,7 +1278,8 @@ def upsert_provider(body: dict, provider_id: str | None = None) -> tuple[dict | 
             before, after = prev.get("proxy") is True, entry.get("proxy") is True
             if before and after and entry.get("base_url") != prev.get("base_url"):
                 return None, _ERR_PROXY_BASE_URL
-            _binding_guard(provider_id, prev, entry, data)
+            if not auto_opened:
+                _binding_guard(provider_id, prev, entry, data)
             err = (_gates_local_error(entry, data)
                    if after and (not before or entry.get("models") != prev.get("models")) else None)
         if err:
@@ -1206,10 +1290,37 @@ def upsert_provider(body: dict, provider_id: str | None = None) -> tuple[dict | 
         # 备份，避免每次改名都堆备份。备份机会性：失败不阻断本次写（helper 内部自吞并记 stderr）。
         if provider_id is not None and any(k in prev for k in _LEGACY_KEYS):
             _backup_providers_before_migration()
+        bound = ([(b, ((data.get("bindings") or {}).get(b) or {}).get("model"))
+                  for b in bound_bots(target_id, data)] if auto_opened else [])
         _commit_locked(data)
         public = _public_entry(entry)
         snapshot = copy.deepcopy(data)     # 快照在**锁内**取（I3）
-    _sync_after_write(snapshot)
+    sync_result = _sync_after_write(snapshot)
+    if auto_opened:
+        if not (isinstance(sync_result, dict) and sync_result.get("ok") is True):
+            # 代理没应用成功（非 ok / 端口不可用）：回滚本次自动开启，保持直连；
+            # 不重写绑定 bot 的接入配置（否则会把它们指向一个没起来的实例）。
+            rolled_snapshot = None
+            with _manifest_lock():
+                data = load_providers()
+                entry = _find(data, target_id)
+                if entry is not None:
+                    public = _public_entry(entry)
+                    if entry.get("proxy") is True and entry.get("proxy_auto") is True:
+                        entry["proxy"] = False
+                        entry.pop("proxy_auto", None)
+                        _commit_locked(data)
+                        public = _public_entry(entry)
+                        rolled_snapshot = copy.deepcopy(data)
+            if rolled_snapshot is not None:
+                _sync_after_write(rolled_snapshot)   # 尽力把实例配置也退回直连形态
+            _append_request_warning(_AUTO_PROXY_SYNC_FAILED)
+            return public, None
+        done = set(_cascade_provider_change(target_id))
+        missed = [bot for bot, _model in bound if bot not in done]
+        if missed:
+            _append_request_warning("已自动开启代理，但以下 bot 的接入配置未能更新，请重新绑定：%s"
+                                    % ",".join(sorted(missed)))
     return public, None
 
 
@@ -1603,9 +1714,13 @@ def set_models(provider_id: str, items, base):
                     in_use.append({"model": m, "bots": users})
             if in_use:
                 return in_use, "in_use"
+            prev = copy.deepcopy(entry)
             old = _entry_models_by_id(entry)
             entry["models"] = [{"id": m, "label": label or (old.get(m) or {}).get("label") or m}
                                for m, label in wanted.items()]
+            # 模型变化后走同一套自动开代理决策：满足触发条件（openai、地址无 anthropic 段、
+            # 有模型）就开；人工关过的仍保持关闭。准入不过（重名）→ 零写入并如实报错。
+            _decide_proxy(prev, entry, _UNSET)
             # data 是锁内刚读出的局部副本：下面任何一步 return 都不落盘，等于零写入
             if entry.get("proxy") is True and _name_dup_error(entry, data):
                 return None, "name_dup"
