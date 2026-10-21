@@ -30,6 +30,12 @@ export function parseBotCtl(trimmed: string): { cmd: 'stopbot' | 'startbot'; tar
   return parseBotCtlWithBots(trimmed, CTL_BOTS)
 }
 
+/** 公开版 /stopbot /startbot 的回复：不 spawn 任何脚本，只指向 8767 管理台。 */
+export function botCtlNotice(ctl: { cmd: 'stopbot' | 'startbot'; target: string }): string {
+  const action = ctl.cmd === 'stopbot' ? '停用' : '启用'
+  return `公开版请在 8767 管理台${action}这只 bot（${ctl.target}）。`
+}
+
 /** /model [编号|模型名] | /provider [编号|供应商名|全局]：查看 / 切换本 bot 的模型与供应商（实际执行在
  *  公开版的 provider 管理脚本）。只取首行、截 200 字；arg 为空串 = 列出。不是这两个命令 → null。 */
 export function parseProviderCmd(trimmed: string): { kind: 'model' | 'provider'; arg: string } | null {

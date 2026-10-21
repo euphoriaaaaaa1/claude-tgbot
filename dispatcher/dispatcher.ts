@@ -51,7 +51,7 @@ import {
   applyGroupMessage, applyMyChatMember, isoSeconds, minIntervalSecondsFromEnv,
   readGroupsSeenFile, withGroupsSeenLock, writeGroupsSeenFile, writeJsonAtomic,
 } from './groups_seen'
-import { parseBotCtl } from './botctl'
+import { parseBotCtl, botCtlNotice } from './botctl'
 import {
   parseRecentTurns, summarizeTurns, runClearSummary, AUTH_FAILED,
   RECEIPT_CLEARED_SKIP, RECEIPT_NO_SUMMARY,
@@ -1039,17 +1039,9 @@ async function slashBridgeIfApplicable(ctx: Context, text: string): Promise<bool
       await bot.api.sendMessage(chatId, ctl.usage, replyOpt).catch(() => {})
       return true
     }
-    const script = join(homedir(), '.claude', 'dispatcher',
-      ctl.cmd === 'stopbot' ? 'stop-bot.sh' : 'start-bot.sh')
-    // 先回执再执行：stop 自己 / start 的全栈重启都会把本 dispatcher 杀掉，之后没机会回执。
-    const note = ctl.cmd === 'stopbot'
-      ? `正在停用 ${ctl.target}（看门狗与重启脚本都不会再拉它；恢复发 /startbot ${ctl.target}）`
-      : `正在启用 ${ctl.target}（全栈重启，各 bot 断线几秒）`
-    await bot.api.sendMessage(chatId, note, replyOpt).catch(() => {})
-    process.stderr.write(`dispatcher[${BOT_NAME}]: botctl ${ctl.cmd} ${ctl.target} by ${sender}\n`)
-    const child = spawn('bash', [script, ctl.target], { detached: true, stdio: 'ignore' })
-    child.on('error', e => process.stderr.write(`dispatcher[${BOT_NAME}]: botctl spawn failed: ${e instanceof Error ? e.message : String(e)}\n`))
-    child.unref()
+    // 公开版没有 stop-bot.sh / start-bot.sh：不 spawn 任何脚本，只给管理台操作提示。
+    await bot.api.sendMessage(chatId, botCtlNotice(ctl), replyOpt).catch(() => {})
+    process.stderr.write(`dispatcher[${BOT_NAME}]: botctl ${ctl.cmd} ${ctl.target} by ${sender}（公开版仅提示 8767 管理台）\n`)
     return true
   }
 

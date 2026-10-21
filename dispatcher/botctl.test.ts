@@ -1,8 +1,8 @@
 // botctl.ts 单测：/stopbot /startbot 解析（名单注入）、供应商命令解析、逐步添加流程。
 import { describe, expect, test } from 'bun:test'
 import {
-  ADD_FLOW_TTL_MS, CTL_BOTS, createAddFlows, parseBotCtlWithBots, parseProviderAdd,
-  parseProviderCmd, redactProviderAdd,
+  ADD_FLOW_TTL_MS, CTL_BOTS, botCtlNotice, createAddFlows, parseBotCtlWithBots,
+  parseProviderAdd, parseProviderCmd, redactProviderAdd,
 } from './botctl'
 
 const BOTS = ['alpha', 'beta']
@@ -32,6 +32,22 @@ describe('parseBotCtlWithBots', () => {
 
   test('默认名单来自 DISPATCHER_CTL_BOTS（测试环境未设时为空）', () => {
     expect(Array.isArray(CTL_BOTS)).toBe(true)
+  })
+})
+
+describe('botCtlNotice', () => {
+  test('只提示 8767 管理台，不暴露任何脚本', () => {
+    const stop = botCtlNotice({ cmd: 'stopbot', target: 'alpha' })
+    expect(stop).toContain('8767 管理台')
+    expect(stop).toContain('停用')
+    expect(stop).toContain('alpha')
+    expect(stop).not.toContain('.sh')
+
+    const start = botCtlNotice({ cmd: 'startbot', target: 'beta' })
+    expect(start).toContain('8767 管理台')
+    expect(start).toContain('启用')
+    expect(start).toContain('beta')
+    expect(start).not.toContain('.sh')
   })
 })
 
