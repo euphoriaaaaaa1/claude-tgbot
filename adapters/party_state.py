@@ -196,7 +196,10 @@ def public_state(chat_id: str, now_ms_value=None) -> dict:
         return {"on": False, "error": "state_unreadable"}
     if st is None:
         return {"on": False}
+    # INTERFACE 4.7 起对外契约用 ``started_at_ms``；``opened_at_ms`` 是状态文件字段，
+    # 继续保留给既有页面/调用方，两者同值。
     return {"on": True, "source": st["source"], "opened_at_ms": st["opened_at_ms"],
+            "started_at_ms": st["opened_at_ms"],
             "exclude": list(st["exclude"]), "note": st["note"]}
 
 
