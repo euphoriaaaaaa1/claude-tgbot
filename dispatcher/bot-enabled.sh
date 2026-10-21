@@ -22,11 +22,14 @@ REPO_DIR="$CLAUDEBOT_REPO_DIR"
 CHANNELS_ROOT="${CLAUDEBOT_CHANNELS_ROOT:-${HUB_CHANNELS_DIR:-$HOME/.claude/channels}}"
 # 运行期文件（pid）与日志都放 ~/.claude-tgbot/ 下，和安装契约一致。
 RUN_DIR="${CLAUDEBOT_RUN_DIR:-$HOME/.claude-tgbot/run}"
-LOG_DIR="${CLAUDEBOT_LOG_DIR:-$HOME/.claude-tgbot/logs}"
+# 这两个变量供 source 本文件的 restart-bots 脚本使用，导出以告知 shellcheck（SC2034）。
+export LOG_DIR="${CLAUDEBOT_LOG_DIR:-$HOME/.claude-tgbot/logs}"
 
 # 测试/运维接缝：默认命令都能被整体替换，脚本不写死绝对路径。
 PYTHON_BIN="${CLAUDEBOT_PYTHON:-python3}"
 PS_CMD="${CLAUDEBOT_PS:-ps}"
+
+# bun 的可执行路径：restart-bots 用；没有就退回 PATH 里的 bun。
 if [ -z "${CLAUDEBOT_BUN:-}" ]; then
   if command -v bun >/dev/null 2>&1; then
     BUN_BIN="$(command -v bun)"
@@ -39,6 +42,7 @@ if [ -z "${CLAUDEBOT_BUN:-}" ]; then
 else
   BUN_BIN="$CLAUDEBOT_BUN"
 fi
+export BUN_BIN
 
 # 让 `python3 -m bots_registry` 在任何 cwd 下都能 import 到仓库模块。
 _be_python_env() {
