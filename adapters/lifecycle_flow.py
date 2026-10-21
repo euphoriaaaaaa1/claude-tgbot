@@ -1292,6 +1292,23 @@ def _switch_take_token(task) -> str:
     return "令牌有效（@%s）" % username
 
 
+def _switch_source_features(task):
+    """源边的八项开关（只带开着的键）；不支持、读不出或形状不对一律 None（目标侧不写文件）。"""
+    if task.target_backend != "claude":
+        return None
+    try:
+        ad = _adapter_of(task)
+        if _switch_meta(ad).get("bot.features") is not True:
+            return None
+        got = ad.get_features(task.bot_id)
+    except Exception:  # noqa: BLE001  读开关失败不阻断切换
+        return None
+    state = got.get("features") if isinstance(got, dict) else None
+    if not isinstance(state, dict):
+        return None
+    return [key for key in FEATURE_KEYS if state.get(key) is True]
+
+
 def _switch_create_run(task) -> str:
     if task.data.get("target_existing") is True:
         raise ops.StepSkipped("目标边已有同一只 bot，直接用")
@@ -1304,6 +1321,9 @@ def _switch_create_run(task) -> str:
             "telegram_user_id": task.data.get("telegram_user_id") or 0,
             "chat_id": task.data.get("source_chat_id"), "enabled": False,
             "purpose": "switch_in", "op_id": task.op_id}
+    picked = _switch_source_features(task)
+    if picked is not None:   # 源边读得到就带过去；读不到目标侧不写 features.json
+        spec["features"] = picked
     ad = call(lambda: registry.adapter(task.target_backend))
     try:
         out = _write_lifecycle(lambda: ad.create(spec, token)) or {}
