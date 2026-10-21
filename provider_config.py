@@ -740,8 +740,9 @@ def _registered_names(entry: dict) -> set:
 def _proxy_admission_error(entry: dict, data: dict) -> str | None:
     """``proxy=true`` 的准入判定（INTERFACE-provider-protocol-level §2）：通过 → ``None``，否则错误文案。
 
-    门顺序**固定**：未选协议 → 无模型 → 地址问题 → 重名。更具体的诊断优先——
-    未选协议时谈地址无意义；地址问题由 ``_gate0_error``（网络，须在锁外）判定。
+    门顺序**固定**：协议 → 无模型 → 地址问题 → 重名。更具体的诊断优先——
+    协议经归一/地址兜底后总有值，序 0 仅为防御性保留、正常不再触发；地址问题由
+    ``_gate0_error``（网络，须在锁外）判定。
     """
     return _admission_local_error(entry) or _api_admission_remote_error(entry, data)
 
@@ -752,7 +753,7 @@ def _api_admission_remote_error(entry: dict, data: dict) -> str | None:
 
 
 def _admission_local_error(entry: dict) -> str | None:
-    """序 0/1：未选协议 / 无模型（本地、无网络、可在锁外预检）。"""
+    """序 0/1：协议（防御性保留，协议总有值）/ 无模型（本地、无网络、可在锁外预检）。"""
     if entry_protocol(entry) not in _PROTOCOLS:
         return _ADM_PROTOCOL
     if not _model_ids(entry):
@@ -863,7 +864,7 @@ def _gates234_error(entry: dict, data: dict) -> str | None:
 
 
 def _gates_local_error(entry: dict, data: dict) -> str | None:
-    """锁内版准入门（E-12）：**只做本地判定**——序 0/1（未选协议/无模型）+ 序 3（重名），
+    """锁内版准入门（E-12）：**只做本地判定**——序 0/1（协议/无模型；序 0 为防御性保留）+ 序 3（重名），
     绝不发网络探针；地址门（序 2）已由 ``_gate0_outside_lock`` 在锁外判过。
     持清单锁期间发慢探针会拖住整把清单锁（其它 bot 的读写全被卡）。"""
     return _admission_local_error(entry) or _name_dup_error(entry, data)
@@ -873,8 +874,8 @@ def _binding_guard(pid: str, prev: dict, entry: dict, data: dict) -> None:
     """统一绑定守卫（9.6，R8/D1=A）：前后任一 proxy=true，且有已绑定 bot 的应写三键将变（含翻转 proxy）
     或其 model 将不在 E 中 → 409。前后都 proxy=false 不触发。
 
-    本轮输入差异（INTERFACE-provider-protocol-level §4）：usable 由「协议已判 + 不在 unavailable」
-    简化为「**provider 的 ``protocol`` 已选**」，即已选协议时 usable = 该 provider 的全部模型。
+    本轮输入差异（INTERFACE-provider-protocol-level §4）：协议经归一/地址兜底后总有值，
+    故 usable = 该 provider 的全部模型（不再依赖旧 ``protocols`` 表与 unavailable）。
     """
     if prev.get("proxy") is not True and entry.get("proxy") is not True:
         return
@@ -934,8 +935,9 @@ def _gate0_outside_lock(pid, body, proxy_opt, anthropic_opt, openai_opt, protoco
     """锁外预检（9.6 顺序：…→ 开启中改地址 400 → 门 0）。返回错误文案；门 0 跑过时返回探针前现值
     （供提交锁内比对并发改动）；否则 None。404 / 缺 api_key 留给锁内既有判定。
 
-    门顺序（INTERFACE-provider-protocol-level §2）**序 0/1 先于序 2**：未选协议 / 无模型是本地
-    判定，必须在地址探针（网络）**之前**给出——故在跑 ``_gate0_error`` 前先 ``_admission_local_error``。
+    门顺序（INTERFACE-provider-protocol-level §2）**序 0/1 先于序 2**：协议 / 无模型是本地
+    判定（协议总有值，序 0 为防御性保留），必须在地址探针（网络）**之前**给出——故在跑
+    ``_gate0_error`` 前先 ``_admission_local_error``。
     """
     if pid is None:   # 新建：false→true 且两覆盖地址均空才跑门 0（锁外）；缺 api_key 留给锁内既有 400
         key = body.get("api_key")
@@ -1185,7 +1187,8 @@ def upsert_provider(body: dict, provider_id: str | None = None) -> tuple[dict | 
             entry.pop("openai_addr_unverified", None)
 
         # 开启 proxy=true 的准入判定（INTERFACE-provider-protocol-level §2）。门顺序固定为
-        # **未选协议 → 无模型 → 地址问题 → 重名**：更具体的诊断优先；地址门已在锁外判过。
+        # **协议 → 无模型 → 地址问题 → 重名**（协议总有值，序 0 为防御性保留）：更具体的诊断优先；
+        # 地址门已在锁外判过。
         if provider_id is None:
             err = _gates_local_error(entry, data) if entry.get("proxy") is True else None   # 门 0 已在锁外
         else:   # 9.6：开启中改地址 → 统一守卫 → 准入门（仅 false→true 或开启中 models 变化才跑）

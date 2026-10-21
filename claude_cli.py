@@ -253,8 +253,6 @@ def _direct_call(entry: dict, model: str, prompt: str, timeout: int) -> str:
                 "messages": [{"role": "user", "content": prompt}]}
         headers = {"Content-Type": "application/json", "x-api-key": key,
                    "anthropic-version": "2023-06-01"}
-    else:
-        raise RuntimeError("provider 未选协议")
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
                                  headers=headers, method="POST")

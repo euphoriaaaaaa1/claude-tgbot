@@ -222,7 +222,7 @@ def _bucket(entry: dict) -> tuple[list, list]:
     """按条目**有效协议**把模型整桶分到 (anthropic 桶, openai 桶)。
 
     provider 级：该 provider 的全部模型进**唯一**对应块，另一桶恒空（INTERFACE §3）。
-    协议未选（``""``）→ 两桶都空（不发任何模型）。
+    协议归一/地址兜底后总有值（anthropic 或 openai），两桶都空的分支仅为防御性保留。
     """
     protocol = _entry_protocol(entry)
     models = []
@@ -1163,11 +1163,12 @@ def _selftest() -> None:
     assert o[0]["api-key-entries"] == [{"api-key": "k2"}]
     assert "p_c" not in str(cfg), "proxy=false 的 provider 不得进配置"
 
-    # 未选协议：两桶都空 → 整块不生成（含旧 protocols 判成 unknown 的派生为空）
+    # 旧 protocols 表不参与判定：无显式协议时按 base_url 兜底为 openai
     cfg2 = yaml.safe_load(build_config({"providers": [
         {"id": "p_d", "base_url": "https://d.example", "api_key": "k", "proxy": True,
          "models": [{"id": "u", "label": "u"}], "protocols": {"u": "unknown"}}]}))
-    assert "claude-api-key" not in cfg2 and "openai-compatibility" not in cfg2
+    assert "claude-api-key" not in cfg2
+    assert cfg2["openai-compatibility"][0]["models"] == [{"name": "u", "alias": "u"}]
 
     # YAML 注入：模型名/字段含换行与控制字符时不得追加出新块
     cfg3 = yaml.safe_load(build_config({"proxy": {"instance_key": "k"}, "providers": [
