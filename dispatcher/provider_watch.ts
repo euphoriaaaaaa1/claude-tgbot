@@ -10,7 +10,7 @@
  * dispatcher 本体不重启，只重启 claude 子进程（重启逻辑在 worker-manager，这里只发信号）。
  */
 import { createHash } from 'crypto'
-import { readFileSync, watch, type FSWatcher } from 'fs'
+import { readFileSync, watch, watchFile, unwatchFile, type FSWatcher, type StatWatcher } from 'fs'
 import { join, dirname, basename } from 'path'
 import { homedir } from 'os'
 import { providerSig, shouldRefresh, debounceGate } from './provider_sync'
@@ -111,6 +111,14 @@ export function startProviderWatch(opts: ProviderWatchOptions): ProviderWatchHan
     watcher.unref?.()
   } catch { /* 目录还不存在等：全靠轮询 */ }
 
+  // Linux(inotify)/网络盘上 fs.watch 对「临时文件 + rename 覆盖」可能完全不给事件；
+  // 再加一层 stat 轮询（250ms，unref），只负责把漏掉的写唤醒防抖，语义与 fs.watch 相同。
+  let statWatcher: StatWatcher | null = null
+  try {
+    statWatcher = watchFile(path, { interval: 250 }, () => schedule())
+    statWatcher.unref?.()
+  } catch { /* 文件还不存在等：目录 watch 与 10s 轮询兜底 */ }
+
   const poll = setInterval(schedule, pollMs)
   poll.unref?.()
 
@@ -118,6 +126,7 @@ export function startProviderWatch(opts: ProviderWatchOptions): ProviderWatchHan
     stop() {
       stopped = true
       if (timer) { clearTimeout(timer); timer = null }
+      if (statWatcher) { try { unwatchFile(path) } catch {} ; statWatcher = null }
       clearInterval(poll)
       try { watcher?.close() } catch {}
       watcher = null
