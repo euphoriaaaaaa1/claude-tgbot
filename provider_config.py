@@ -538,9 +538,10 @@ def _public_entry(entry: dict) -> dict:
     （旧 INTERFACE §1.2）。故这里按**类型**归一化，不用 ``or ""`` —— 后者只兜假值，
     清单被手工改成 ``123``／``["m1"]``／``{"id":"m1"}`` 时会把原值直接透给前端。
 
-    本轮键集（INTERFACE-provider-protocol-level §1，恰 13 键、顺序即此）：**移除**
-    ``protocols`` / ``unavailable_models``，**新增** provider 级 ``protocol``（可能是
-    读取时派生的值，见 ``entry_protocol``）。``proxy`` 只认 ``is True``（缺省 false）。
+    本轮键集（INTERFACE-provider-protocol-level §1 的 13 键 + 自动开启标记，顺序即此）：
+    **移除** ``protocols`` / ``unavailable_models``，**新增** provider 级 ``protocol``
+    （可能是读取时派生的值，见 ``entry_protocol``）与 ``proxy_auto``。
+    ``proxy`` 只认 ``is True``（缺省 false）。
     """
     key = entry.get("api_key") or ""
     default_model = entry.get("default_model")
