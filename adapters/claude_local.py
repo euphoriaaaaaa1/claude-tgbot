@@ -210,6 +210,29 @@ def _provider_config():
         raise AdapterUnavailable("unconfigured", "供应商配置模块还没就绪") from None
 
 
+FEATURES_FIELD_MESSAGE = "features 必须是八项功能的布尔对象或键数组"
+
+
+def _picked_features(value):
+    """features → 勾选键数组；不合规返回 None（八项布尔对象或键数组，与受理期同口径）。"""
+    if isinstance(value, dict):
+        picked = []
+        for key, on in value.items():
+            if key not in bot_features.KEYS or not isinstance(on, bool):
+                return None
+            if on:
+                picked.append(key)
+        return picked
+    if isinstance(value, (list, tuple)):
+        picked = []
+        for key in value:
+            if not isinstance(key, str) or key not in bot_features.KEYS or key in picked:
+                return None
+            picked.append(key)
+        return picked
+    return None
+
+
 class ClaudeLocalAdapter(BackendAdapter):
     backend = "claude"
 
@@ -754,21 +777,27 @@ class ClaudeLocalAdapter(BackendAdapter):
             raise AdapterError("invalid", 422, "请求体必须是 JSON 对象")
         if not isinstance(token, SecretToken):
             raise AdapterError("invalid", 422, "令牌格式不对")
-        picked = spec.get("features")
-        if picked is None:
-            picked = []
-        elif not isinstance(picked, (list, tuple)):
-            raise AdapterError("invalid", 422, "features 必须是数组")
-        picked = list(picked)
+        purpose = spec.get("purpose") if isinstance(spec.get("purpose"), str) else "new"
+        features = spec.get("features")
         voice = spec.get("voice") if isinstance(spec.get("voice"), dict) else {}
-        voice_id = voice.get("voice_id")
-        try:
-            doc, _skipped = bot_features.initial_features(picked, voice_id)
-        except ValueError as e:
-            raise AdapterError("invalid", 422, str(e)) from None
-        # 新建一律带 features 文档：空数组（含 API 的空对象）落成八项全关；配了 voice_id 自动开 voice。
-        out = claude_create.create(spec.get("bot_id"), dict(spec, features=doc), token,
-                                   op_id=_op_id(spec.get("op_id"), "create"), ctx=_files_ctx())
+        if features is None and purpose == "switch_in":
+            # 切换建目标不带开关：不落盘，读侧按八项全开（与改造前一致）
+            out = claude_create.create(spec.get("bot_id"), dict(spec), token,
+                                       op_id=_op_id(spec.get("op_id"), "create"), ctx=_files_ctx())
+        else:
+            picked = _picked_features([] if features is None else features)
+            if picked is None:
+                raise AdapterError("invalid", 422, FEATURES_FIELD_MESSAGE)
+            voice_id = voice.get("voice_id")
+            if isinstance(voice_id, str) and voice_id.strip() and "voice" not in picked:
+                picked.append("voice")
+            try:
+                doc, _skipped = bot_features.initial_features(picked, voice_id)
+            except ValueError as e:
+                raise AdapterError("invalid", 422, str(e)) from None
+            # 新建一律带 features 文档：空数组（含 API 的空对象）落成八项全关；配了 voice_id 自动开 voice。
+            out = claude_create.create(spec.get("bot_id"), dict(spec, features=doc), token,
+                                       op_id=_op_id(spec.get("op_id"), "create"), ctx=_files_ctx())
         # 新建后按勾选的开关补放技能；补放失败不影响新建结果（下次 PUT/worker 拉起前会再对齐）。
         try:
             bot_features.sync_skills(str(out.get("bot_id") or spec.get("bot_id") or ""))
