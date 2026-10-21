@@ -277,3 +277,25 @@ def test_public_scrubs_error_message():
 def test_get_op_rejects_bad_ids():
     assert ops.get_op("../../etc/passwd") is None
     assert ops.get_op("20260101T000000Z-probe-deadbeef") is None
+
+
+def test_resolve等待瞬时锁_上一个任务刚写完终态也能立刻收拾(monkeypatch, tmp_path):
+    """解决实测竞态：op 写完 needs_attention 与释放锁之间有一瞬，界面立刻点“重新收拾”不该吃 409。"""
+    import threading
+    import time as _t
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    held = ops.acquire(ops.new_op_id("switch"))
+    released = threading.Event()
+
+    def release_soon():
+        _t.sleep(0.15)
+        held.release()
+        released.set()
+
+    threading.Thread(target=release_soon, daemon=True).start()
+    lock = ops.acquire_wait(ops.new_op_id("switch"), timeout=2.0)
+    try:
+        assert released.is_set()
+    finally:
+        lock.release()
