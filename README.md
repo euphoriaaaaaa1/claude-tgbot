@@ -94,6 +94,16 @@ bash restart-bots.sh
 bash stop-bots.sh
 ```
 
+### 2.5 装完自检（三步）
+
+1. **管理台能开**：设置口令后打开 <http://127.0.0.1:8767/login>，应看到登录页；登录后 `/console`、`/provider` 都能打开。`/login` 返回 503 表示还没设置口令，回 §4.1。
+2. **服务在跑**：分别查两个服务：
+   ```bash
+   python3 platform_services.py status autostart --repo "$PWD"
+   python3 platform_services.py status provider-web --repo "$PWD"
+   ```
+3. **能建出 bot**：按 §5 新建一只，总览出现这张卡片；如果“首次拉起”显示待 dispatcher，先 `bash restart-bots.sh`，再启用一次。
+
 ---
 
 ## 3. 安装（Windows 10/11，原生，不需要 WSL）
@@ -141,7 +151,7 @@ python3 -m moments.panel_auth --set-password
 python3 -m moments.panel_auth --show-status
 ```
 
-口令哈希和 cookie secret 写在 `~/.claude/secrets/moments-panel.env`（0600）。设置新口令会让旧会话全部失效。
+`--set-password` 会在终端里提示输入两次口令（不回显），所以要在**交互式终端**里跑，不能把口令管道进去。口令哈希和 cookie secret 写在 `~/.claude/secrets/moments-panel.env`（0600）。设置新口令会让旧会话全部失效。
 
 ### 4.2 启动
 
@@ -251,6 +261,34 @@ python3 scripts/migrate_legacy_providers.py --dry-run
     ```powershell
     icacls "%USERPROFILE%\.config\claude-dsh-console\adapter.token" /inheritance:r /grant:r "%USERNAME%:R"
     ```
+### 7.1 装 dsh（可选，三步）
+
+1. **装 dsh**：clone `https://github.com/wsxwj123/dsh-bot`（公开仓），需要 bun 和 python3。仓库必须放在**家目录根下**（如 `~/dsh-bot`）——放桌面/文稿/下载/iCloud 下，macOS 隐私保护会拦住 launchd。
+2. **生成令牌**：写一个随机串到 `~/.config/claude-dsh-console/adapter.token`，权限 0600。两边默认读同一个文件，只需生成一次。
+   ```bash
+   mkdir -p ~/.config/claude-dsh-console
+   python3 -c 'import secrets; print(secrets.token_hex(32))' > ~/.config/claude-dsh-console/adapter.token
+   chmod 600 ~/.config/claude-dsh-console/adapter.token
+   ```
+3. **起适配服务**：在 dsh 仓里运行 `python3 -m moments.adapter_service`，默认监听 `127.0.0.1:17990`，只允许回环。macOS 可用 dsh 仓自带的 `com.dsh-bot.console` launchd 任务常驻；Linux/Windows 需要自己用 tmux 或系统服务拉起。
+
+最小验证：
+
+```bash
+curl -H "Authorization: Bearer $(cat ~/.config/claude-dsh-console/adapter.token)" \
+  http://127.0.0.1:17990/adapter/v1/meta
+```
+
+应返回 `{"backend":"dsh","adapter":"v1",...}`。然后在启动 8767 时设置 `CONSOLE_DSH_ADAPTER_URL=http://127.0.0.1:17990`（只认回环，写局域网 IP 或主机名会被拒）。
+
+### 7.2 必须知道的限制
+
+- dsh 只提供本机 `/adapter/v1` 接口，不提供公网服务；管理台和 dsh 必须在同一台机器上。
+- 开机自启只有 macOS（launchd）；Linux/Windows 要用户自己拉起适配服务。
+- dsh 侧 bot 运行还需要它自己的供应商清单与每只 bot 的配置（`~/.dsh-bot/` 下），先按 dsh 仓文档配好，公开版的“新建 bot”才能建出可用的 dsh bot。
+- dsh 的 oauth 账号接口在没配 cliproxy 时会返回 `warnings: ["cliproxy_unconfigured"]`，功能可用，忽略这条 warning 即可。
+- 公开版暂不接入 dsh 的技能全文接口（`/adapter/v1/bots/{id}/skills/{name}`）；管理台不展示技能页。
+
 - dsh 没装或没启动时，总览里该侧显示 `未安装 / 未配置 / 连接失败`，Claude 侧不受影响；相关写接口返回 502/503，不会静默成功。
 - 切换底层：`/console` 的 bot 页 → 切换。两边都必须启用，目标边必须开启群聊；切换是异步任务，页面会显示进度和失败步骤。失败不会假装回滚，按页面提示处理。
 
