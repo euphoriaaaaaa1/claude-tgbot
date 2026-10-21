@@ -5,17 +5,78 @@
 """
 import os
 import sqlite3
+import sys
 import tempfile
 import time
 import json
 import contextlib
+import pathlib
 from datetime import datetime, timezone
 
-# 默认落在仓库根的 state.db；测试/门禁可用 CLAUDEBOT_DB_PATH 指到临时目录，
-# 避免运行产物污染公开仓。
-DB_PATH = os.path.abspath(os.path.expanduser(
-    os.environ.get("CLAUDEBOT_DB_PATH")
-    or os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.db")))
+# 默认落在 ~/.claude-tgbot/state.db（遵循 HOME），运行数据不写进代码目录；
+# 测试/门禁仍可用 CLAUDEBOT_DB_PATH 覆盖。
+_REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+_LEGACY_DB_PATH = os.path.join(_REPO_ROOT, "state.db")
+
+
+def _default_db_path() -> str:
+    return os.path.join(os.path.expanduser("~"), ".claude-tgbot", "state.db")
+
+
+def _ensure_parent_dir(path: str) -> None:
+    """建库前确保父目录存在，权限 0700（已有目录不改权限）。"""
+    parent = os.path.dirname(os.path.abspath(path))
+    if os.path.isdir(parent):
+        return
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    if os.name == "posix":
+        with contextlib.suppress(OSError):
+            os.chmod(parent, 0o700)
+
+
+def _migrate_legacy_db(dest: str) -> None:
+    """新位置还没有库、仓库根却有旧库时，用 SQLite 在线备份一次性复制过去。
+
+    旧库只读打开，绝不回写仓库根；复制失败保留旧库原样，本次改用新位置。
+    """
+    if not os.path.isfile(_LEGACY_DB_PATH):
+        return
+    tmp = "%s.migrating-%d" % (dest, os.getpid())
+    try:
+        _ensure_parent_dir(dest)
+        src = sqlite3.connect(
+            pathlib.Path(_LEGACY_DB_PATH).as_uri() + "?mode=ro", uri=True)
+        try:
+            dst = sqlite3.connect(tmp)
+            try:
+                src.backup(dst)
+                dst.commit()
+            finally:
+                dst.close()
+        finally:
+            src.close()
+        if os.name == "posix":
+            with contextlib.suppress(OSError):
+                os.chmod(tmp, 0o600)
+        os.replace(tmp, dest)
+    except BaseException as exc:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        print("警告：旧状态库迁移失败（%s），本次使用 %s" % (exc, dest),
+              file=sys.stderr)
+
+
+def _resolve_db_path() -> str:
+    override = os.environ.get("CLAUDEBOT_DB_PATH")
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    dest = _default_db_path()
+    if not os.path.exists(dest):
+        _migrate_legacy_db(dest)
+    return dest
+
+
+DB_PATH = _resolve_db_path()
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -241,6 +302,7 @@ def init():
     旧库先备份（SQLite 在线备份），再在**单个事务**里建表/补列/写 schema 版本；
     任一步失败整体回滚，库保持迁移前状态。全新空库不产生备份。
     """
+    _ensure_parent_dir(DB_PATH)          # 首次运行时 ~/.claude-tgbot 可能还不存在
     with _connect() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
@@ -256,6 +318,7 @@ def init():
 
 @contextlib.contextmanager
 def _connect():
+    _ensure_parent_dir(DB_PATH)          # 未走 init() 的调用方也能建库
     conn = sqlite3.connect(DB_PATH, timeout=10.0)
     conn.row_factory = sqlite3.Row
     try:
