@@ -20,8 +20,8 @@ const mkSettings = (over: Record<string, unknown> = {}, top: Record<string, unkn
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 // fs.watch 在 Linux（inotify）上事件合并/延迟比 macOS 明显，固定 300ms 会偶发不够；
-// 断言不变，只把"等尘埃落定"改成有上限的轮询。
-const waitFor = async (pred: () => boolean, timeoutMs = 3000) => {
+// 断言不变，只把"等尘埃落定"改成有上限的轮询（CI runner 负载高时事件可能迟到数秒）。
+const waitFor = async (pred: () => boolean, timeoutMs = 10000) => {
   const end = Date.now() + timeoutMs
   while (Date.now() < end) {
     if (pred()) return true
