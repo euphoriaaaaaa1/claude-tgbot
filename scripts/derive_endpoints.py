@@ -74,6 +74,35 @@ def direct_anthropic_url(base_url):
     return base_url
 
 
+def direct_openai_url(base_url):
+    """直连 openai 协议时写给上游的接口地址（不含 ``/chat/completions``）。
+
+    - 去尾 ``/``；
+    - **路径**以 ``/anthropic`` 结尾先剥掉该后缀；
+    - **路径**已以 ``/v1`` 结尾则原样返回，否则补 ``/v1``。
+
+    后缀只看路径，主机名恰为 ``v1`` / ``anthropic`` 时不参与判断；带查询串或片段
+    原样返回；解析失败或非字符串同样原样返回。
+    """
+    if not isinstance(base_url, str):
+        return base_url
+    try:
+        parts = urlsplit(base_url)
+    except ValueError:
+        return base_url
+    if "?" in base_url or "#" in base_url:
+        return base_url
+    b = _strip_trailing_slash(base_url)
+    if (parts.path.rstrip("/").endswith(_OPENAI_STRIP) and b.endswith(_OPENAI_STRIP)
+            and len(b) > len(_OPENAI_STRIP)):
+        b = b[: -len(_OPENAI_STRIP)]
+        parts = urlsplit(b)
+    if (parts.path.rstrip("/").endswith(_ANTHROPIC_STRIP) and b.endswith(_ANTHROPIC_STRIP)
+            and len(b) > len(_ANTHROPIC_STRIP)):
+        return b
+    return b + _ANTHROPIC_STRIP
+
+
 def effective_endpoints(base_url: str, anthropic_base_url: str = "",
                         openai_base_url: str = "") -> tuple[str, str]:
     """返回 ``(anthropic_url, openai_url)``。
