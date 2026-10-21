@@ -97,4 +97,4 @@ def test_mixed_provider_按选中模型取协议(monkeypatch, tmp_path):
     entry2 = {"id": "p2", "protocol": "anthropic", "protocols": {"m2": "openai"}}
     assert claude_cli._resolve_protocol(entry2, "m2") == "anthropic"
     entry3 = {"id": "p3", "base_url": "https://a.example", "protocols": {"m1": "openai", "m2": "anthropic"}}
-    assert claude_cli._resolve_protocol(entry3, "m3") == ""
+    assert claude_cli._resolve_protocol(entry3, "m3") == "openai"
