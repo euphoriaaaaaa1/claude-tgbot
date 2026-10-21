@@ -25,5 +25,8 @@ def test_db_path_env_override(tmp_path):
     assert _db_path({"CLAUDEBOT_DB_PATH": str(target)}) == os.path.abspath(str(target))
 
 
-def test_db_path_default_is_repo_root():
-    assert _db_path({}) == os.path.join(str(ROOT), "state.db")
+def test_db_path_default_is_home_state_dir(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    assert _db_path({"HOME": str(home)}) == os.path.join(
+        str(home), ".claude-tgbot", "state.db")
