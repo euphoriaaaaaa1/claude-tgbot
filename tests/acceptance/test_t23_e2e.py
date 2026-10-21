@@ -415,7 +415,7 @@ def test_photo_round_idempotent_and_expired(sandbox, tmp_path):
         expired = dict(state, opened_at_ms=now_ms - 86_400_000, rounds=2)
         (photo_root / BOT / "10001.json").write_text(json.dumps(expired), encoding="utf-8")
         gone = photo("k3")
-        assert gone == {"ok": True, "active": False}, gone
+        assert gone == {"ok": True, "active": False, "round": 0, "expires_at_ms": 0}, gone
         assert not (photo_root / BOT / "10001.json").exists()
     finally:
         try:
