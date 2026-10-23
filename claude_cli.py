@@ -3,8 +3,8 @@
 关键点：
 - 必须 unset CLAUDE_CODE_OAUTH_TOKEN，CLI 才会走 keychain refresh 路径
   （与现有 kill-idle-workers.sh / restart-bots.sh 同逻辑）
-- cwd 用 /tmp/claudebotlife-oneshot（避免误加载某个项目的 CLAUDE.md）
-- 全局 ~/.claude/CLAUDE.md 仍会被加载，1-2k token 开销可接受
+- cwd 缺省用每次新建的空临时目录（避免误加载某个项目的 CLAUDE.md 与项目设置）
+- 带辅助调用隔离参数：不读全局钩子、插件、个人技能、全局 CLAUDE.md，不加载 MCP
 - --no-session-persistence 跳过会话持久化，节省 IO
 """
 import subprocess
@@ -15,8 +15,6 @@ import re
 import urllib.request
 
 import tempfile
-ONESHOT_CWD = os.path.join(tempfile.gettempdir(), "claudebotlife-oneshot")
-os.makedirs(ONESHOT_CWD, exist_ok=True)
 
 import shutil as _shutil
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN") or _shutil.which("claude") or "claude"
@@ -75,20 +73,25 @@ def call_claude(prompt: str, timeout: int = 60, cwd: str = None,
         return deepseek_client.call_text(prompt, timeout=timeout, max_tokens=4000)
 
     # 原 Claude CLI 路径
-    cwd = cwd or ONESHOT_CWD
     full_prompt = CONTENT_GEN_PREFIX + prompt
-    args = [CLAUDE_BIN, "--print", "--no-session-persistence"]
+    # 辅助调用隔离：不读用户级设置源（全局钩子、插件、个人技能、全局 CLAUDE.md），不加载 MCP，不落会话文件。
+    # 去掉用户源后 cwd 下的 .claude/ 会被当成项目设置读，所以缺省 cwd 每次新建空临时目录、用完即删
+    # （临时目录下的固定目录别人能抢先建好并放进 .claude/）。
+    args = [CLAUDE_BIN, "--print", "--no-session-persistence",
+            "--setting-sources", "project,local", "--strict-mcp-config"]
     if model:
         args += ["--model", model]
     # prompt 走 stdin，**不进 argv**：prompt 含用户聊天/MEMORY.md 全文，放命令行会撞
     # Windows cmd 的引号转义(注入)、8191 字符上限、%VAR% 展开三个坑。claude --print 无位置
     # 参数时从 stdin 读 prompt。
     _win_cmd = sys.platform == "win32" and str(CLAUDE_BIN).lower().endswith((".cmd", ".bat"))
-    proc = subprocess.run(
-        args, cwd=cwd, env=_build_env(), input=full_prompt,
-        capture_output=True, text=True, timeout=timeout,
-        shell=_win_cmd,
-    )
+    # ignore_cleanup_errors：Windows 上 claude 子进程退出前可能还占着目录，删不掉时不让它盖掉真正的错误（如超时）
+    with tempfile.TemporaryDirectory(prefix="claudebotlife-oneshot-", ignore_cleanup_errors=True) as tmp:
+        proc = subprocess.run(
+            args, cwd=cwd or tmp, env=_build_env(), input=full_prompt,
+            capture_output=True, text=True, timeout=timeout,
+            shell=_win_cmd,
+        )
     if proc.returncode != 0:
         raise RuntimeError(
             f"claude --print failed (exit={proc.returncode}): {proc.stderr[:500]}"
