@@ -799,8 +799,9 @@ def api_set_models(provider_id):
     if err:
         return _coded(*_SET_MODELS_ERRORS[err])
     pc._cascade_provider_change(provider_id)
-    return jsonify({"ok": True, "provider_id": provider_id, "models": result["models"],
-                    "added": result["added"], "removed": result["removed"]})
+    # 自动开的代理没能应用、已撤回时带上 warning（与保存供应商同一口径）
+    return jsonify(_with_warning({"ok": True, "provider_id": provider_id, "models": result["models"],
+                                  "added": result["added"], "removed": result["removed"]}))
 
 
 def _model_arg(body: dict):
