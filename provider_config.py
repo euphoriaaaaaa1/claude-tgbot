@@ -1298,25 +1298,10 @@ def upsert_provider(body: dict, provider_id: str | None = None) -> tuple[dict | 
         snapshot = copy.deepcopy(data)     # 快照在**锁内**取（I3）
     sync_result = _sync_after_write(snapshot)
     if auto_opened:
-        if not (isinstance(sync_result, dict) and sync_result.get("ok") is True):
-            # 代理没应用成功（非 ok / 端口不可用）：回滚本次自动开启，保持直连；
+        if not _sync_ok(sync_result):
             # 不重写绑定 bot 的接入配置（否则会把它们指向一个没起来的实例）。
-            rolled_snapshot = None
-            with _manifest_lock():
-                data = load_providers()
-                entry = _find(data, target_id)
-                if entry is not None:
-                    public = _public_entry(entry)
-                    if entry.get("proxy") is True and entry.get("proxy_auto") is True:
-                        entry["proxy"] = False
-                        entry.pop("proxy_auto", None)
-                        _commit_locked(data)
-                        public = _public_entry(entry)
-                        rolled_snapshot = copy.deepcopy(data)
-            if rolled_snapshot is not None:
-                _sync_after_write(rolled_snapshot)   # 尽力把实例配置也退回直连形态
-            _append_request_warning(_AUTO_PROXY_SYNC_FAILED)
-            return public, None
+            rolled = _rollback_auto_proxy(target_id)
+            return (rolled if rolled is not None else public), None
         done = set(_cascade_provider_change(target_id))
         missed = [bot for bot, _model in bound if bot not in done]
         if missed:
@@ -1324,6 +1309,34 @@ def upsert_provider(body: dict, provider_id: str | None = None) -> tuple[dict | 
                                     % ",".join(sorted(missed)))
     return public, None
 
+
+
+def _sync_ok(sync_result) -> bool:
+    return isinstance(sync_result, dict) and sync_result.get("ok") is True
+
+
+def _rollback_auto_proxy(provider_id: str) -> dict | None:
+    """自动开启的代理没应用成功（非 ok / 端口不可用）：撤回本次自动开启，保持直连。
+
+    保存供应商与只保存模型两条路径共用。条目仍是「自动开着」才撤回（其间被人工改过就不动），
+    撤回后尽力把实例配置也同步回直连形态，并给本次请求挂上 ``_AUTO_PROXY_SYNC_FAILED`` 警告。
+    返回条目当前的公开形态；条目已不在时返回 None。
+    """
+    public, rolled_snapshot = None, None
+    with _manifest_lock():
+        data = load_providers()
+        entry = _find(data, provider_id)
+        if entry is not None:
+            if entry.get("proxy") is True and entry.get("proxy_auto") is True:
+                entry["proxy"] = False
+                entry.pop("proxy_auto", None)
+                _commit_locked(data)
+                rolled_snapshot = copy.deepcopy(data)
+            public = _public_entry(entry)
+    if rolled_snapshot is not None:
+        _sync_after_write(rolled_snapshot)   # 尽力把实例配置也退回直连形态
+    _append_request_warning(_AUTO_PROXY_SYNC_FAILED)
+    return public
 
 def delete_provider(provider_id: str) -> tuple[bool, str | None]:
     with _manifest_lock():
@@ -1698,6 +1711,7 @@ def set_models(provider_id: str, items, base):
         if isinstance(item, dict) and item.get("context") is not None:
             contexts[model_id] = item["context"]
 
+    auto_opened = False
     try:
         with _manifest_lock():
             data = load_providers()
@@ -1722,6 +1736,7 @@ def set_models(provider_id: str, items, base):
             # 模型变化后走同一套自动开代理决策：满足触发条件（openai、地址无 anthropic 段、
             # 有模型）就开；人工关过的仍保持关闭。准入不过（重名）→ 零写入并如实报错。
             _decide_proxy(prev, entry, _UNSET)
+            auto_opened = entry.get("proxy") is True and prev.get("proxy") is not True
             # data 是锁内刚读出的局部副本：下面任何一步 return 都不落盘，等于零写入
             if entry.get("proxy") is True and _name_dup_error(entry, data):
                 return None, "name_dup"
@@ -1741,7 +1756,8 @@ def set_models(provider_id: str, items, base):
             out = copy.deepcopy(data)
     except ProvidersCorrupt:
         return None, "corrupt"
-    _sync_after_write(out)
+    if not _sync_ok(_sync_after_write(out)) and auto_opened:
+        _rollback_auto_proxy(provider_id)   # 与保存供应商同一处理：撤回本次自动开启并带警告
     return result, None
 
 
