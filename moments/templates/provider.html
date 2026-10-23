@@ -861,6 +861,19 @@ function providerById(id) {
   return null;
 }
 
+// 保存后的弹窗（auto-proxy-on-openai）：按重载后的实际结果提示，不靠保存前猜——
+// 本次由服务端自动开了本机翻译代理要说一声；服务端带回的 warning（代理没能应用已保持直连、
+// 部分 bot 接入配置未更新、地址未验证）也弹出来。两样都有时合成一次弹窗
+function alertAfterSave(providerId, wasProxy, warning) {
+  const lines = [];
+  const p = providerId ? providerById(providerId) : null;
+  if (!wasProxy && p && p.proxy === true && p.proxy_auto === true) {
+    lines.push('已自动开启本机翻译代理：这个供应商走非 Anthropic 格式，bot 要经它才能正常调用。不需要的话可在该供应商面板里关掉。');
+  }
+  if (warning) lines.push(warning);
+  if (lines.length) alert(lines.join('\n\n'));
+}
+
 // 概览里按供应商编号给的补充信息（bot 直连用的地址、逐模型的窗口与使用者）；没给就当空
 function providerDetail(id) {
   const d = ((DATA && DATA.provider_details) || {})[id];
@@ -1196,6 +1209,8 @@ async function saveProvider() {
       body.proxy = confirm('这个供应商走非 Anthropic 格式，需要本机翻译代理，bot 才能正常调用。\n要现在打开本机翻译代理吗？');
     }
   }
+  const editedId = EDIT_ID;   // cancelEdit 会清掉 EDIT_ID，重载后比对代理状态要用
+  const wasProxy = !!(editedId && (providerById(editedId) || {}).proxy);
   let r;
   if (EDIT_ID) {
     r = await jsonFetch('/api/providers/' + encodeURIComponent(EDIT_ID), {
@@ -1209,6 +1224,7 @@ async function saveProvider() {
   // E-15：保存成功但上游地址未验证（探测 404）→ 把 warning 显示出来，不再静默
   if (r.body && r.body.warning) { msg.textContent = r.body.warning; }
   await load();
+  alertAfterSave(editedId, wasProxy, r.body && r.body.warning);
 }
 
 async function removeProvider(id) {
@@ -1848,6 +1864,7 @@ async function confirmModelDialog() {
       && !confirm(ProviderUX.emptyConfirmText(ProviderUX.selectionSummary(DLG.candidates, DLG.selection)))) return;
   const seq = DLG.seq;
   const providerId = DLG.providerId;
+  const wasProxy = !!(providerById(providerId) || {}).proxy;
   DLG.saving = true;
   refreshDialogSummary();
   let r;
@@ -1865,6 +1882,9 @@ async function confirmModelDialog() {
   if (r.ok && r.body && r.body.ok === true) {
     closeModelDialog();
     await load();
+    // 只保存模型也可能触发自动开代理：开成了、或没开成已撤回直连，都弹窗说明；warning 另在表单提示处留一行
+    if (r.body.warning) document.getElementById('formMsg').textContent = r.body.warning;
+    alertAfterSave(providerId, wasProxy, r.body.warning);
     // 行按钮已随重画换成新节点，焦点还给同一条供应商的「刷新模型」；表单的「拉取模型」没换，浏览器自己还
     if (!modelDialog.open && document.activeElement === document.body) {
       focusIn(providerRowOf(providerId), '[data-role="models-refresh"]');
