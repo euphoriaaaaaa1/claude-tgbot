@@ -400,18 +400,22 @@ async def synthesize_voice(
             _fish_client = None
             mp3_bytes = await _do_post(effective)
         except httpx.HTTPStatusError as e:
-            # 免费模型返回 4xx（最可能是免费窗口 2026-07 底到期）→ 自动降级到同价付费版并粘住，
-            # 语音不中断。付费版也失败才抛（说明是别的错，不是免费到期）。
+            # 原模型回非 2xx → 本次改用付费回落模型再发一次，语音不中断；回落也失败才抛。
+            # 粘住（此后所有请求直接用付费模型、不再先试原模型）要同时满足：请求的是默认模型、原模型回的是 4xx
+            # （429 除外，最可能是免费窗口到期），且回落成功。429 与 5xx 是临时故障，只本次退回；回落也失败说明问题
+            # 出在请求本身（音色编号不存在、没权限、文本），不是模型——否则一只 bot 的音色失效就让所有 bot 此后都
+            # 改用付费模型；调用方自己传的别的模型名失败也只本次退回，不能借它让所有 bot 改用付费模型。
             if effective != FISH_MODEL_FALLBACK:
-                log.warning(
-                    f"Fish 模型 {effective} 返回 {e.response.status_code} → 自动降级到付费模型 "
-                    f"{FISH_MODEL_FALLBACK}（从现在起产生费用）"
-                )
-                _fish_active_model = FISH_MODEL_FALLBACK
-                mp3_bytes = await _do_post(FISH_MODEL_FALLBACK)
+                status = e.response.status_code
+                log.warning(f"Fish 模型 {effective} 返回 {status} → 本次改用付费模型 {FISH_MODEL_FALLBACK}")
+                mp3_bytes = await _do_post(FISH_MODEL_FALLBACK)   # 回落也失败在这里抛出，不粘住
+                effective = FISH_MODEL_FALLBACK
+                if not (status == 429 or status >= 500) and model == FISH_MODEL_DEFAULT:
+                    _fish_active_model = FISH_MODEL_FALLBACK
+                    log.warning(f"已粘住付费模型 {FISH_MODEL_FALLBACK}（从现在起产生费用，重启语音桥后恢复先试原模型）")
             else:
                 raise
-    log.info(f"  Fish 返回 mp3 {len(mp3_bytes)} bytes, {int((time.time()-t0)*1000)}ms, model={effective if _fish_active_model is None else FISH_MODEL_FALLBACK}")
+    log.info(f"  Fish 返回 mp3 {len(mp3_bytes)} bytes, {int((time.time()-t0)*1000)}ms, model={effective}")
 
     # mp3 → ogg/opus (Telegram voice 格式)
     loop = asyncio.get_event_loop()
