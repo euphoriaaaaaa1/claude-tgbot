@@ -891,7 +891,7 @@ function renderCard(backend, bot) {
     node.setAttribute('data-moved-to', movedTo);
     stateTag.className = 'tag local';
     stateTag.textContent = movedTo === 'pending' ? '正在切换底层' : '已切到 ' + movedTo;
-    stateLineEl.textContent = '已迁出这边，只能经「切换底层」启用';
+    stateLineEl.textContent = '已迁出这边，要迁回请手动操作';
     stateLineEl.hidden = false;
   }
   node.querySelector('[data-role="provider-line"]').textContent = ConsoleUX.providerLine(bot, backend);
@@ -1416,18 +1416,17 @@ function renderArchiveRow(a) {
 function renderLifecycleHead() {
   const backend = selBackend(), bot = selBot();
   const can = backend && bot ? LifecycleUX.lifecycleButtons(backend) : {archive: false, del: false};
-  const targets = backend && bot ? LifecycleUX.switchTargets(bot, (DATA && DATA.backends) || []) : [];
-  const mine = !!(backend && backend.status === 'ok' && (backend.capabilities || {})['bot.enable'] === true);
   const switchBtn = document.getElementById('switchBot');
   const archiveBtn = document.getElementById('archiveBot');
   const deleteBtn = document.getElementById('deleteBot');
-  switchBtn.hidden = !(mine && targets.length);
+  // 切换底层入口不显示：现有切换不完整（人设、技能导入不全），需要迁移时按文档手动迁；对话框与后台接口保留
+  switchBtn.hidden = true;
   archiveBtn.hidden = !can.archive;
   deleteBtn.hidden = !can.del;
   switchBtn.disabled = BUSY;
   archiveBtn.disabled = BUSY;
   deleteBtn.disabled = BUSY;
-  document.getElementById('lifecycleFoot').hidden = !(can.archive || can.del || (mine && targets.length));
+  document.getElementById('lifecycleFoot').hidden = !(can.archive || can.del);
 }
 function renderOps() {
   const active = LifecycleUX.opItems(OPS.active, 20) || [];
