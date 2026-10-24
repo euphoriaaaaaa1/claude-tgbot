@@ -22,6 +22,7 @@ import { join, extname, basename, dirname } from 'path'
 import { homedir, tmpdir } from 'os'
 import { getManager, unifiedSessionUuid, projectSlug, resolveClaude, killTree } from './worker-manager.ts'
 import { winCmdSpawnSpec } from './win_cmd'
+import { isolationSwitchOff, readSettingsFile, summarySpawnPlan, userSettingsPath } from './worker_isolation'
 import { buildSendPlan } from './send_plan'
 import { classifySendError, describeSendError } from './send_error'
 import { startProviderWatch } from './provider_watch'
@@ -830,7 +831,9 @@ const SUMMARY_ENV_KEYS = new Set([
  * cwd 用临时目录：不能是 bot 目录（会在 bot 的 projects 里多出 jsonl，还会吃 .mcp.json）。
  * --strict-mcp-config 且不带 --mcp-config → 不加载任何 MCP server。
  * --no-session-persistence → 不落会话文件（否则 ~/.claude/projects/ 下每次多出一个临时目录名的会话）。
- * 仍读用户级设置：不少人把供应商与模型配在全局 settings.json，去掉用户源会让摘要连不上模型。
+ * 不读用户级设置源（--setting-sources project,local）：用户级钩子、插件、技能、全局 CLAUDE.md 不进摘要；
+ * 不少人把供应商与模型配在全局 settings.json，所以它的 env 段照原样补进子进程环境、顶层 model 在没有
+ * ANTHROPIC_MODEL 时补上，模型与供应商仍跟随全局。任一关闭标记或用户级凭证辅助键 → 旧参数、env 不变。
  * 超时/非 0 退出/空输出 → null；认证失败 → AUTH_FAILED 哨兵，由 summarizeTurns 重试一次。
  */
 function runClaudeSummary(prompt: string): Promise<string | null> {
@@ -840,15 +843,16 @@ function runClaudeSummary(prompt: string): Promise<string | null> {
     let cwd = ''
     try {
       cwd = mkdtempSync(join(tmpdir(), 'clear-summary-'))
-      const env: Record<string, string> = {}
+      const baseEnv: Record<string, string> = {}
       for (const [k, v] of Object.entries(process.env)) {
-        if (typeof v === 'string' && SUMMARY_ENV_KEYS.has(k.toUpperCase())) env[k] = v
+        if (typeof v === 'string' && SUMMARY_ENV_KEYS.has(k.toUpperCase())) baseEnv[k] = v
       }
-      if (!env.PATH && !env.Path) env.PATH = '/usr/bin:/bin:/usr/local/bin'
-      if (!env.HOME && !env.USERPROFILE) env.HOME = homedir()
+      if (!baseEnv.PATH && !baseEnv.Path) baseEnv.PATH = '/usr/bin:/bin:/usr/local/bin'
+      if (!baseEnv.HOME && !baseEnv.USERPROFILE) baseEnv.HOME = homedir()
+      // 用户级设置只读这一次；开关按 bot 目录判（含频道根的全局标记），CHANNEL_DIR 为空串时判不出 → 隔离
+      const { args, env } = summarySpawnPlan(baseEnv, readSettingsFile(userSettingsPath()), isolationSwitchOff(CHANNEL_DIR) !== null)
       const cleanup = () => { try { if (cwd) rmSync(cwd, { recursive: true, force: true }) } catch {} }
       const claude = resolveClaude()
-      const args = ['-p', '--strict-mcp-config', '--no-session-persistence']
       // Windows .cmd 得经 cmd /d /s /c 起，引号拼法与 worker-manager 共用 win_cmd.ts（两份内联复制曾修一处漏一处）。
       // spec 只在 viaCmd 分支算：winCmdLine 的 %…%/!…! 守卫会抛错，POSIX 路径不该受 cmd 规则约束（抛错由外层 catch 接住 → 摘要为空）
       const spawnViaCmd = () => {
