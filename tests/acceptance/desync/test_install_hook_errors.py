@@ -118,5 +118,7 @@ def test_bot目录名含中文与空格_照常安装_恰一条compact项(iso):
     d, p = _bot(iso, json.dumps({"model": "haiku"}), name="陈 璐璐")
     assert _run(d).returncode == 0
     with open(p, encoding="utf-8") as f:
-        items = [h for h in json.load(f)["hooks"]["SessionStart"] if h.get("matcher") == "compact"]
+        # pub-parity 接口 ①-7：matcher=compact 下现有群聊、私聊两条，这里只数群聊那一条（脚本名过滤）
+        items = [h for h in json.load(f)["hooks"]["SessionStart"]
+                 if h.get("matcher") == "compact" and "compact_group_context.py" in h["hooks"][0]["command"]]
     assert len(items) == 1
