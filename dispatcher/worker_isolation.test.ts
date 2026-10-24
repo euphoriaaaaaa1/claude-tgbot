@@ -1,7 +1,7 @@
-// worker_isolation.ts 单测：补验收用例没覆盖的边界（令牌不外流、链接自愈各分支、排除项、透传类型校验、日志过滤）。
+// worker_isolation.ts 单测：补验收用例没覆盖的边界（令牌不外流、链接自愈各分支、排除项、透传类型校验、日志过滤、个人技能与命令名）。
 // 零副作用：全部在临时目录里，HOME 指向临时目录，令牌为假值，不起进程、不联网。
 import { test, expect, afterAll } from 'bun:test'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import {
@@ -146,4 +146,75 @@ test('summarySpawnPlan：全局 env 不覆盖身份键；补 model；关闭标�
   expect(base).toEqual({ PATH: '/bin', HOME: '/h' })
   expect(summarySpawnPlan(base, u, true).env).toEqual(base)
   expect(overlayEnv({}, { a: 'x', A: 'y' }, ['A'])).toEqual({})
+})
+
+// ───────── 个人技能与个人命令写进 skillOverrides（验收没覆盖的边角）─────────
+const isRoot = typeof process.getuid === 'function' && process.getuid() === 0
+const BUNDLED = ['design', 'doctor', 'plugin-authoring']
+const overridesOf = (r: any): Record<string, unknown> => JSON.parse(readFileSync(r.flagFile, 'utf8')).skillOverrides
+const off = (...names: string[]) => Object.fromEntries(names.map(n => [n, 'off']))
+const putFile = (p: string, text = '') => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, text) }
+const userSkill = (sb: ReturnType<typeof sandbox>, ...rel: string[]) => join(sb.home, '.claude', 'skills', ...rel)
+const userCmd = (sb: ReturnType<typeof sandbox>, ...rel: string[]) => join(sb.home, '.claude', 'commands', ...rel)
+
+test('个人技能：技能目录是链接、SKILL.md 是链接都照写；SKILL.md 是悬空链接的不写', () => {
+  const sb = sandbox(); const dot = join(sb.root, 'dotfiles')
+  putFile(join(dot, 'linked-skill', 'SKILL.md'), '---\nname: linked-fm\n---\n'); putFile(join(dot, 'only.md'), '# md\n')
+  mkdirSync(userSkill(sb, 'md-link'), { recursive: true }); mkdirSync(userSkill(sb, 'dangling'), { recursive: true })
+  symlinkSync(join(dot, 'linked-skill'), userSkill(sb, 'linked-dir'))
+  symlinkSync(join(dot, 'only.md'), userSkill(sb, 'md-link', 'SKILL.md'))
+  symlinkSync(join(sb.root, 'gone.md'), userSkill(sb, 'dangling', 'SKILL.md'))
+  expect(overridesOf(prep(sb))).toEqual(off(...BUNDLED, 'linked-dir', 'linked-fm', 'md-link'))
+})
+
+test('frontmatter：BOM、CRLF、两端引号与空白都认；没有结束线、name 为空、缩进的 name 都只写目录名', () => {
+  const sb = sandbox()
+  putFile(userSkill(sb, 'crlf', 'SKILL.md'), '﻿---\r\ndescription: x\r\nname: "crlf-name"\r\n---\r\n# body\r\n')
+  putFile(userSkill(sb, 'single', 'SKILL.md'), "---  \nname:   ' single-name '   \n---\n")
+  putFile(userSkill(sb, 'unclosed', 'SKILL.md'), '---\nname: ghost-unclosed\n# 没有结束线\n')
+  putFile(userSkill(sb, 'empty-name', 'SKILL.md'), '---\nname: ""\n---\n')
+  putFile(userSkill(sb, 'nested', 'SKILL.md'), '---\nmeta:\n  name: ghost-nested\n---\n')
+  expect(overridesOf(prep(sb))).toEqual(off(...BUNDLED, 'crlf', 'crlf-name', 'single', 'single-name', 'unclosed', 'empty-name', 'nested'))
+})
+
+test('skills、commands 各读各的：一个是普通文件读不出，另一个照常写，不降级、不记 note', () => {
+  const sb1 = sandbox(); putFile(join(sb1.home, '.claude', 'skills'), 'not a dir'); putFile(userCmd(sb1, 'pp-c.md'))
+  const r1 = prep(sb1)
+  expect(r1.status).toBe('ok'); expect(r1.notes).toEqual([]); expect(overridesOf(r1)).toEqual(off(...BUNDLED, 'pp-c'))
+  const sb2 = sandbox(); putFile(userSkill(sb2, 'pp-s', 'SKILL.md')); putFile(join(sb2.home, '.claude', 'commands'), 'not a dir')
+  const r2 = prep(sb2)
+  expect(r2.status).toBe('ok'); expect(r2.notes).toEqual([]); expect(overridesOf(r2)).toEqual(off(...BUNDLED, 'pp-s'))
+})
+
+test('排除名单对 frontmatter 名与命令名同样适用；bot 侧同名的是链接目录也排除，是普通文件不算', () => {
+  const sb = sandbox(); const botSkills = join(sb.botDir, '.claude', 'skills')
+  putFile(userSkill(sb, 'pp-x', 'SKILL.md'), '---\nname: novelai-skill\n---\n')
+  putFile(userSkill(sb, 'pp-y', 'SKILL.md'), '---\nname: bot-own\n---\n')
+  putFile(userCmd(sb, 'novelai-skill.md')); putFile(userCmd(sb, 'sub', 'bot-linked.md')); putFile(userCmd(sb, 'bot-file.md'))
+  mkdirSync(join(botSkills, 'bot-own'), { recursive: true }); mkdirSync(join(sb.root, 'shared-skills', 'x'), { recursive: true })
+  symlinkSync(join(sb.root, 'shared-skills', 'x'), join(botSkills, 'bot-linked'))
+  putFile(join(botSkills, 'bot-file'), 'x')
+  expect(overridesOf(prep(sb))).toEqual(off(...BUNDLED, 'pp-x', 'pp-y', 'bot-file'))
+})
+
+test('命令：.md 不分大小写；链接文件与链接子目录照收；链接成环不卡死；悬空链接与只剩扩展名的跳过；键按 UTF-16 码元序', () => {
+  const sb = sandbox(); const dot = join(sb.root, 'dotfiles')
+  putFile(userCmd(sb, 'Upper.MD')); putFile(userCmd(sb, 'mixed.Md')); putFile(userCmd(sb, '.md'))
+  putFile(join(dot, 'cmds', 'ext-cmd.md')); putFile(join(dot, 'one.md'))
+  symlinkSync(join(dot, 'cmds'), userCmd(sb, 'linked-dir')); symlinkSync(join(dot, 'one.md'), userCmd(sb, 'linked-file.md'))
+  symlinkSync(userCmd(sb), userCmd(sb, 'loop')); symlinkSync(join(sb.root, 'gone.md'), userCmd(sb, 'dangling.md'))
+  const o = overridesOf(prep(sb))
+  expect(o).toEqual(off(...BUNDLED, 'Upper', 'mixed', 'ext-cmd', 'linked-file'))
+  expect(Object.keys(o)).toEqual(['Upper', 'design', 'doctor', 'ext-cmd', 'linked-file', 'mixed', 'plugin-authoring'])
+})
+
+test.skipIf(isRoot)('局部读不出：SKILL.md 无读权限照写目录名；命令子目录无权限只跳过那一层', () => {
+  const sb = sandbox(); const md = userSkill(sb, 'locked-md', 'SKILL.md'); const lockedDir = userCmd(sb, 'locked')
+  putFile(md, '---\nname: ghost-locked\n---\n'); putFile(join(lockedDir, 'hidden.md')); putFile(userCmd(sb, 'open.md'))
+  chmodSync(md, 0); chmodSync(lockedDir, 0)
+  try {
+    const r = prep(sb)
+    expect(r.status).toBe('ok'); expect(r.notes).toEqual([])
+    expect(overridesOf(r)).toEqual(off(...BUNDLED, 'locked-md', 'open'))
+  } finally { chmodSync(md, 0o644); chmodSync(lockedDir, 0o755) }
 })
