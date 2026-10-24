@@ -37,7 +37,9 @@ def _backups(p):
 
 
 def _compact_items(s):
-    return [h for h in s["hooks"]["SessionStart"] if h.get("matcher") == "compact"]
+    # pub-parity 接口 ①-7/①-8：补装后 matcher=compact 下有群聊、私聊两条；本文件关心的是群聊那一条，故再按脚本名过滤
+    return [h for h in s["hooks"]["SessionStart"]
+            if h.get("matcher") == "compact" and "compact_group_context.py" in h["hooks"][0]["command"]]
 
 
 def test_首次安装_追加compact项_命令为解释器加脚本_timeout10(iso):
@@ -90,7 +92,8 @@ def test_已有其它SessionStart项_保留并追加(iso):
     d, p = _bot(iso, settings=s)
     assert _run(d).returncode == 0
     ss = _load(p)["hooks"]["SessionStart"]
-    assert ss[0] == s["hooks"]["SessionStart"][0] and len(ss) == 2
+    # pub-parity 接口 ①-7/③：补装一次补齐四条，原有 1 项 + 新增 4 项 = 5（原为 2）
+    assert ss[0] == s["hooks"]["SessionStart"][0] and len(ss) == 5
 
 
 def test_没有hooks键_创建hooks与SessionStart数组(iso):
