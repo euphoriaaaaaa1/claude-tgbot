@@ -1,0 +1,4 @@
+（现在：10/24 周六 上午08:30）
+【私聊】<channel chat_id="111222333" scene="private" user="alice" user_id="111222333" chat_type="private" ts="2026-10-24T08:30:00.000Z" message_id="7">
+你好，今天天气不错
+</channel>
