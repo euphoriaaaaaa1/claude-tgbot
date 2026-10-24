@@ -226,6 +226,7 @@ bash restart-bots.sh
 bot 的 worker 默认只加载 bot 自己的项目设置与本地设置（`--setting-sources project,local`），你的用户级设置 `~/.claude/settings.json` 不再整份进 bot。
 
 - 不再给 bot 用的：用户级钩子、插件、`~/.claude/skills/` 下的个人技能、全局 `CLAUDE.md`，以及 Claude Code 自带的通用技能（代码审查、定时任务、调试之类）。bot 只剩它自己目录 `.claude/skills/` 里的技能和生图技能。
+- 个人技能与个人命令（`~/.claude/commands/`）会自动按名字关掉。个人子代理（`~/.claude/agents/`）在 bot 文件夹位于家目录下时仍会进 bot，这是 Claude Code 的已知限制，bot 文件夹放在家目录以外的不受影响。
 - 依赖某个个人技能的，两条出路：把它放进 bot 目录的 `.claude/skills/`，或建下面的关闭标记。
 - 生图技能照常可用：dispatcher 在 `~/.claude/worker-shared/` 下建一个指向 `$NOVELAI_SKILL_ROOT`（默认 `~/.claude/skills/novelai-skill`）的链接挂给 bot；没装生图技能就不建。
 - 跟随全局的：bot 自己没配的供应商、模型、思考强度。全局 `settings.json` 的 `env` 段整段带进 worker 的进程环境（bot 自己 env 里已有的键不被覆盖）；`effortLevel` 与 `modelSettings`、`alwaysThinkingEnabled`、`switchModelsOnFlag`、顶层 `model` 在 bot 两份设置都没设时照搬。
