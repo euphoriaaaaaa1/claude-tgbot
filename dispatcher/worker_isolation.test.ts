@@ -248,3 +248,36 @@ test('bot 自己 .claude/commands/ 下的命令名不写入：递归、扩展名
   expect(r.status).toBe('ok'); expect(r.notes).toEqual([])
   expect(overridesOf(r)).toEqual(off(...BUNDLED, 'pp-mine', 'pp-deep', 'pp-keep'))
 })
+
+test('frontmatter 只读前 8 KB：大文件开头的 name 照认；结束线恰在 8 KB 内认、超出一个字节只写目录名', () => {
+  const sb = sandbox()
+  putFile(userSkill(sb, 'pp-big', 'SKILL.md'), '---\nname: pp-big-fm\n---\n' + 'x'.repeat(1024 * 1024))
+  putFile(userSkill(sb, 'pp-far', 'SKILL.md'), `---\ndescription: ${'y'.repeat(9000)}\nname: pp-far-fm\n---\n`)
+  const edge = (name: string, extra: number) => {
+    const head = `---\nname: ${name}\ndescription: `, tail = '\n---'
+    return head + 'z'.repeat(8 * 1024 - head.length - tail.length + extra) + tail + '\n# body\n'
+  }
+  expect(Buffer.byteLength(edge('pp-edge-fm', 0).split('\n# body')[0])).toBe(8 * 1024)
+  putFile(userSkill(sb, 'pp-edge', 'SKILL.md'), edge('pp-edge-fm', 0))
+  putFile(userSkill(sb, 'pp-over', 'SKILL.md'), edge('pp-over-fm', 1))
+  expect(overridesOf(prep(sb))).toEqual(off(...BUNDLED, 'pp-big', 'pp-big-fm', 'pp-edge', 'pp-edge-fm', 'pp-far', 'pp-over'))
+})
+
+test('生图引擎 SKILL.md 的 frontmatter 名也排除：个人技能与命令里同名的都不写，目录名排除照旧', () => {
+  const sb = sandbox()
+  writeFileSync(join(sb.engineDir, 'SKILL.md'), '---\nname: pp-engine-fm\ndescription: e\n---\n# e\n')
+  putFile(userSkill(sb, 'pp-engine-copy', 'SKILL.md'), '---\nname: pp-engine-fm\n---\n')
+  putFile(userSkill(sb, 'pp-engine-fm', 'SKILL.md')); putFile(userSkill(sb, 'novelai-skill', 'SKILL.md'))
+  putFile(userCmd(sb, 'pp-engine-fm.md')); putFile(userCmd(sb, 'pp-other.md'))
+  const r = prep(sb)
+  expect(r.status).toBe('ok')
+  expect(overridesOf(r)).toEqual(off(...BUNDLED, 'pp-engine-copy', 'pp-other'))
+})
+
+test('生图引擎 SKILL.md 没有 frontmatter 或引擎没装：只按目录名排除，不降级', () => {
+  const sb1 = sandbox(); putFile(userSkill(sb1, 'pp-a', 'SKILL.md'), '---\nname: e\n---\n')
+  expect(overridesOf(prep(sb1))).toEqual(off(...BUNDLED, 'e', 'pp-a'))
+  const sb2 = sandbox(false); putFile(userSkill(sb2, 'novelai-skill', 'SKILL.md'), '---\nname: pp-b\n---\n')
+  const r2 = prep(sb2)
+  expect(r2.status).toBe('ok'); expect(overridesOf(r2)).toEqual(off(...BUNDLED, 'pp-b'))
+})
