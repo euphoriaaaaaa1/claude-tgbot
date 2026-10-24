@@ -201,6 +201,7 @@ python3 platform_services.py start provider-web --repo "$PWD"
 - 人设：`/console` → 该 bot → 人设。空白模板只写了一句“在这里写下你的 bot 的角色、说话方式与边界”，**没有现成人设**。
 - 生活设定：作息、爱好、城市、生日、校历等可在 `/console` 的生活设定页填。
 - 语音：可填 TTS 音色编号；不填走默认音色。
+- 群聊压缩补回：对话上下文被压缩后，把所在群最近的聊天补回去。管理台新建的 bot 自动带上；更早建的 bot 跑一次 `python3 scripts/install_compact_hook.py ~/.claude/channels/<bot编号>` 补装（重复跑不会装出第二条；该 bot 目录下要已有 `.claude/settings.json`，内容是 `{}` 也行）。
 - 启停：总览页的启用/停用。停用后不再收发消息。
 
 手动建（管理台不可用时）：
@@ -368,6 +369,7 @@ bash stop-bots.sh                     # 停止全部 bot
 bash scripts/watch-bot.sh mybot       # 跟踪某个 bot 的实时对话日志
 python3 -m bots_registry --format=sh  # 查看注册表：id / 端口 / namespace
 python3 -m bot_features --show mybot  # 查看八项开关
+python3 scripts/install_compact_hook.py ~/.claude/channels/mybot  # 给更早建的 bot 补装群聊压缩补回钩子（可重复跑）
 python3 platform_services.py status provider-web --repo "$PWD"
 python3 platform_services.py unregister autostart
 ```
