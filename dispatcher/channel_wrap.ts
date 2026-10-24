@@ -40,6 +40,24 @@ export function unescapeChannelWrapper(text: string): string {
   return text.replace(/&lt;(?=\/?channel)/gi, '<')
 }
 
+/**
+ * `<channel>` 开标签的属性值转义（buildContent 的每个属性值都经过这里）：回车、换行各换成一个空格，
+ * `&`、`<`、`>`、`"` 转成实体。属性值来自发送方（名字、文件名、MIME 等），不转义就能在值里伪造出第二个
+ * 开标签、或让值跨行吃进正文，冒充私聊身份。`&` 最先转，免得把后面生成的实体再转一遍；解析方按实体解码还原。
+ */
+export function escapeChannelAttr(value: string): string {
+  return String(value).replace(/[\r\n]/g, ' ').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+// MIME 白名单：类型/子类型，两段都只许字母数字与 !#$&^_.+-，各 1 到 64 个字符；带参数（; 之后的部分）的不收。
+const MIME_RE = /^[A-Za-z0-9!#$&^_.+-]{1,64}\/[A-Za-z0-9!#$&^_.+-]{1,64}$/
+
+/** Telegram 给的 mime_type：合格原样返回；不合格或不是字符串返回 undefined，即当作没有这个字段。 */
+export function safeMime(value: unknown): string | undefined {
+  return typeof value === 'string' && MIME_RE.test(value) ? value : undefined
+}
+
 /** 内部消息判定：只看元数据 synthetic 标记，不看正文（H-27）。 */
 export function isInternalMessage(meta: unknown): boolean {
   return !!meta && typeof meta === 'object' && !Array.isArray(meta)
