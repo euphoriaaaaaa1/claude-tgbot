@@ -20,7 +20,7 @@ import {
   mkdirSync, existsSync, statSync, watch, chmodSync, unlinkSync, realpathSync, type FSWatcher,
 } from 'fs'
 import { backupSessionJsonl } from './backup_retention'
-import { join, delimiter, dirname, basename } from 'path'
+import { join, delimiter, dirname, basename, resolve } from 'path'
 import { homedir, tmpdir, platform } from 'os'
 import { buildTimePrefix } from './time_annotate'
 import { settingsPath } from './provider_watch'
@@ -33,6 +33,10 @@ import { photoDeliveryKeyFromMeta } from './photo_mode'
 import { planInboxBatch, readInboxMeta } from './inbox_names'
 import { escapeChannelWrapper } from './channel_wrap'
 import { winCmdSpawnSpec, probeClaudeWin } from './win_cmd'
+import {
+  globalSettingsEnv, isolationInitCheck, isolationLogLine, isolationSwitchOff, overlayEnv, prepareWorkerIsolation,
+  readSettingsFile, userSettingsPath, workerSpawnArgs, type InitFailReason, type PrepareDegraded, type PrepareOk,
+} from './worker_isolation'
 
 // ─── 配置（与 dispatcher.ts 同源的 env）────────────────────────────────
 const BOT = process.env.BOT_NAME || ''
@@ -627,7 +631,8 @@ const PRODUCTION_REQUIRED_WORKER_ENV = [
 ] as const
 
 // worker 子进程 env：清旧 ccp 残留 → 叠 settings.json env → 代理重定向 → 身份变量 → 白名单过滤
-function buildEnv(): Record<string, string> {
+// → （隔离模式）叠全局 env 段 overlay：去掉 user 源后 CLI 不再自己加载它，补进进程环境（身份键不被覆盖）
+function buildEnv(overlay?: Record<string, string>): Record<string, string> {
   const env: Record<string, string | undefined> = { ...process.env }
   for (const k of ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL',
@@ -648,7 +653,8 @@ function buildEnv(): Record<string, string> {
   // 仓库根（dispatcher/ 的上一级）→ comfyui-skill 靠它定位 scripts/comfyui_gen.py 和 configs/
   env.CLAUDEBOTLIFE_REPO = join(import.meta.dir, '..')
   // 订阅模式不注入静态 token：claude 自己读平台凭证并自动续期（darwin=keychain, win=DPAPI）
-  return workerEnv(env, PRODUCTION_REQUIRED_WORKER_ENV)
+  const out = workerEnv(env, PRODUCTION_REQUIRED_WORKER_ENV)
+  return overlay ? overlayEnv(out, overlay) : out
 }
 
 // worker 的 MCP 配置由 manager 自己写（消灭对部署机 ~/.claude/dispatcher/worker-mcp.json 的隐式依赖）
@@ -817,6 +823,10 @@ export class WorkerManager {
   private intentionalKill = false
   private needsReplyReminder = false      // 冷轮标记：下一条真人消息前置 REPLY_REMINDER
   private stdoutBuf = ''
+  // worker 隔离启动自检：isoExpect = 本次以隔离参数拉起（engine=挂了生图技能）；isoFallback = 自检降级位，
+  // 置位后下次拉起直接走旧参数。只在内存里，dispatcher 重启即清零再试。
+  private isoExpect: { engine: boolean; sawInit: boolean } | null = null
+  private isoFallback: InitFailReason | null = null
   private watchers: FSWatcher[] = []
   private resultTimer: ReturnType<typeof setTimeout> | null = null
   private burst
@@ -1085,7 +1095,7 @@ export class WorkerManager {
       }
 
       const mcpConfig = writeMcpConfig()
-      const args = [
+      const baseArgs = [
         '-p',
         '--input-format', 'stream-json',
         '--output-format', 'stream-json',
@@ -1098,7 +1108,29 @@ export class WorkerManager {
         '--mcp-config', mcpConfig,
         '--strict-mcp-config',
       ]
-      const env = buildEnv()
+      // worker 隔离：判定顺序 关闭标记 → 自检降级位 → 准备（只读检查在前、写盘在后）。准备与读取都不抛；
+      // 任何一步不成就用 baseArgs 且不叠 env，与改动前逐字相同。日志只有常量。
+      let args = baseArgs
+      let overlay: Record<string, string> | undefined
+      this.isoExpect = null
+      const off = isolationSwitchOff(botDir)
+      if (off) logSpawn(isolationLogLine({ kind: 'off', src: off }))
+      else if (this.isoFallback) {
+        logSpawn(isolationLogLine({ kind: 'prep', info: { status: 'degraded', reason: this.isoFallback, notes: [] } }))
+      } else {
+        const home = process.env.HOME || homedir()
+        const user = readSettingsFile(userSettingsPath())    // 用户级只读这一次，透传与 env 补回同源
+        let prep: PrepareOk | PrepareDegraded = prepareWorkerIsolation({ botDir, home, user,
+          engineDir: resolve(process.env.NOVELAI_SKILL_ROOT || join(home, '.claude', 'skills', 'novelai-skill')) })
+        const isoArgs = prep.status === 'ok' ? workerSpawnArgs(baseArgs, prep, botDir) : null
+        if (prep.status === 'ok' && isoArgs) {
+          args = isoArgs
+          overlay = overlayEnv({}, globalSettingsEnv(user), prep.botEnvKeys)
+          this.isoExpect = { engine: prep.sharedDir !== null, sawInit: false }
+        } else if (prep.status === 'ok') prep = { status: 'degraded', reason: 'args_unexpected', notes: prep.notes }
+        logSpawn(isolationLogLine({ kind: 'prep', info: prep }))
+      }
+      const env = buildEnv(overlay)
       // 保证子进程能找到 claude/bun（launchd/服务的精简 PATH 不含用户 bin 目录）
       const extraPath = platform() === 'darwin'
         ? [join(homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin']
@@ -1159,7 +1191,8 @@ export class WorkerManager {
 
   // 绑定子进程事件。假件句柄没有 stdout/stderr/stdin → 一律可选链跳过（测试不真起进程）。
   private wireProc(handle: any): void {
-    if (!handle || typeof handle.on !== 'function') return
+    if (!handle) return
+    if (typeof handle.on !== 'function') { this.wireStreamProc(handle); return }
     try { handle.stdout?.on?.('data', (chunk: Buffer) => this.onStdout(chunk)) } catch {}
     try {
       handle.stderr?.on?.('data', (chunk: Buffer) => {
@@ -1172,8 +1205,35 @@ export class WorkerManager {
     handle.on('exit', (code: number) => this.onExit(code ?? 0, handle))
   }
 
+  // 注入的 spawn 也可返回 Bun.spawn 形态的句柄：stdout/stderr 是 Web ReadableStream，退出经 exited Promise 告知。
+  // 没有这些字段的假件（只有 pid）照旧什么都不绑。
+  private wireStreamProc(handle: any): void {
+    const drain = (stream: any, onText: (s: string) => void) => {
+      if (!stream || typeof stream.getReader !== 'function') return
+      void (async () => {
+        const reader = stream.getReader()
+        const dec = new TextDecoder()
+        try {
+          for (;;) {
+            const { value, done } = await reader.read()
+            if (done) break
+            if (value) onText(dec.decode(value, { stream: true }))
+          }
+        } catch {}
+      })()
+    }
+    drain(handle.stdout, s => this.onStdout(s))
+    drain(handle.stderr, s => { const t = s.trim(); if (t) logStream({ type: '_stderr', text: t.slice(0, 2000) }) })
+    if (handle.exited && typeof handle.exited.then === 'function') {
+      handle.exited.then(
+        (code: unknown) => this.onExit(typeof code === 'number' ? code : 0, handle),
+        () => this.onExit(-1, handle),
+      )
+    }
+  }
+
   // ── stdout 事件流 ─────────────────────────────────────────────────
-  private onStdout(chunk: Buffer): void {
+  private onStdout(chunk: Buffer | string): void {
     this.lastEventAt = (this.now ?? Date.now)()   // 任何 stdout 数据都算"worker 还活着"，重置卡死计时
     this.stdoutBuf += chunk.toString()
     let nl: number
@@ -1192,6 +1252,13 @@ export class WorkerManager {
     if (ev.type === 'system' && ev.subtype === 'init') {
       // ⚠️ init 在 headless 下是"收到第一条输入后"才发的（不是启动即发）——
       // 不能拿它当喂消息的前置门（会互相等死锁）。这里只作确认信号+归零退避。
+      // 隔离自检：被 flag 关掉的自带技能又出现（flag 没被认）或挂了生图技能却不在清单里 → 置位，
+      // 本次会话照常跑完，下次拉起走旧参数。只看本进程的第一个 init。
+      if (this.isoExpect && !this.isoExpect.sawInit) {
+        this.isoExpect.sawInit = true
+        const bad = isolationInitCheck(ev, this.isoExpect.engine)
+        if (bad) { this.isoFallback = bad; logSpawn(isolationLogLine({ kind: 'init_fail', reason: bad })) }
+      }
       this.restartAttempt = 0
       logSpawn('worker init 确认 (system/init)')
       logChat('── worker 会话已确认 ──')
@@ -1327,6 +1394,13 @@ export class WorkerManager {
       return
     }
     this.handledExit = true
+    // 隔离自检：隔离参数拉起后在 init 之前非 0 退出、且不是 dispatcher 主动停/杀 → 下次拉起走旧参数
+    // （防 CLI 将来对 flag 或 --setting-sources 改成直接报错，所有 bot 一起反复起不来）
+    if (this.isoExpect && !this.isoExpect.sawInit && !this.intentionalKill && !this.stopRequested && code !== 0) {
+      this.isoFallback = 'spawn_failed'
+      logSpawn(isolationLogLine({ kind: 'init_fail', reason: 'spawn_failed' }))
+    }
+    this.isoExpect = null
     const exitPid = proc?.pid ?? this.pid ?? -1
     logSpawn(`wm_exit pid=${exitPid}`)
     logSpawn(`worker exit code=${code}${this.intentionalKill ? ' (intentional)' : ''}`)
@@ -1646,6 +1720,7 @@ export class WorkerManager {
   }
 
   // inbox meta → 组装后的 content（worker-plugin.ts deliverFile 的组装逻辑逐字段迁入）
+  // 改外壳或标注位置要同步 tests/fixtures/inbound_private.txt（scripts/compact_private_context.py 按它解析私聊入站）
   private buildContent(meta: any): string {
     const text: string = typeof meta.text === 'string' ? meta.text : ''
     const isBotSender = meta.is_bot_sender === true
