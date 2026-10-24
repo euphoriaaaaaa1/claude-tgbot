@@ -406,14 +406,16 @@ _COMPACT_HOOK_INSTALLER = os.path.join(os.path.dirname(os.path.dirname(os.path.a
 
 
 def _with_compact_hook(settings):
-    """新 bot 的项目设置直接带上群聊压缩补回钩子，与 scripts/install_compact_hook.py 同一份定义、同样幂等合并。
-    按文件路径加载该脚本，不经 `scripts` 包名导入，免得用户环境里同名的包顶替；模板的 hooks 结构不合预期时原样保留。"""
+    """新 bot 的项目设置直接带齐四条 SessionStart 钩子（群聊、私聊压缩补回，一次性找回，清空后回顾），
+    与 scripts/install_compact_hook.py 同一份定义、同样幂等合并：结果要么四条齐，要么原样保留模板。
+    按文件路径加载该脚本，不经 `scripts` 包名导入，免得用户环境里同名的包顶替；加载失败照常上抛走新建回滚；
+    模板的 hooks 结构不合预期时原样保留。"""
     spec = importlib.util.spec_from_file_location("_install_compact_hook", _COMPACT_HOOK_INSTALLER)
     installer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(installer)
     if installer.validate(settings):
         return settings
-    return installer.merge(settings)[0]
+    return installer.merge_all(settings)[0]
 
 
 def _write_payload(payload: str, spec: dict, token: SecretToken, channel: str, ctx) -> None:
