@@ -231,7 +231,7 @@ bot 的 worker 默认只加载 bot 自己的项目设置与本地设置（`--set
 - 生图技能照常可用：dispatcher 在 `~/.claude/worker-shared/` 下建一个指向 `$NOVELAI_SKILL_ROOT`（默认 `~/.claude/skills/novelai-skill`）的链接挂给 bot；没装生图技能就不建。
 - 跟随全局的：bot 自己没配的供应商、模型、思考强度。全局 `settings.json` 的 `env` 段整段带进 worker 的进程环境（bot 自己 env 里已有的键不被覆盖）；`effortLevel` 与 `modelSettings`、`alwaysThinkingEnabled`、`switchModelsOnFlag`、顶层 `model` 在 bot 两份设置都没设时照搬。
 - 全局的禁止规则 `permissions.deny` 与 bot 自己的合并后照样带给 bot；要约束 bot 的规则，请写进 bot 自己的 `.claude/settings.json`。worker 以跳过权限确认的模式运行，全局禁止规则在这种模式下是否生效尚未验证。
-- /clear 时生成摘要的那次模型调用同样不加载用户级设置，模型与供应商仍跟随全局。Windows 上这次调用的临时目录位于用户目录之下，全局 `CLAUDE.md` 与个人技能仍可能进入摘要调用，这是已知限制。
+- /clear 时生成摘要的那次模型调用同样不加载用户级设置，模型与供应商仍跟随全局。Windows 上这次调用的临时目录位于用户目录之下，全局 `CLAUDE.md`、个人技能与个人命令仍可能进入摘要调用，这是已知限制。
 
 关闭标记有两种，存在即生效（不读内容），下次拉起 worker 或下次 /clear 时生效，不用重启 dispatcher：
 
