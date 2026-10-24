@@ -218,3 +218,33 @@ test.skipIf(isRoot)('局部读不出：SKILL.md 无读权限照写目录名；�
     expect(overridesOf(r)).toEqual(off(...BUNDLED, 'locked-md', 'open'))
   } finally { chmodSync(md, 0o644); chmodSync(lockedDir, 0o755) }
 })
+
+test('命令目录深度上限：命令目录本身算第 1 层，第 5 层照收、第 6 层起不进；经链接进去的按链接所在层数接着算', () => {
+  const sb = sandbox(); const tree = join(sb.root, 'tree')
+  putFile(userCmd(sb, 'l2', 'l3', 'l4', 'l5', 'in5.md')); putFile(userCmd(sb, 'l2', 'l3', 'l4', 'l5', 'l6', 'in6.md'))
+  putFile(join(tree, 'a', 'b', 'c', 'in-c.md')); putFile(join(tree, 'a', 'b', 'c', 'd', 'in-d.md'))
+  symlinkSync(tree, userCmd(sb, 'deep-link'))   // deep-link 是第 2 层，a、b、c 依次是第 3、4、5 层
+  expect(overridesOf(prep(sb))).toEqual(off(...BUNDLED, 'in5', 'in-c'))
+})
+
+test('命令目录条目上限：链接指向 2100 个 .md 的大目录，合计只访问 2000 个条目，已收到的照写，不降级、不记 note', () => {
+  const sb = sandbox(); const big = join(sb.root, 'big'); mkdirSync(big, { recursive: true })
+  for (let i = 0; i < 2100; i++) writeFileSync(join(big, `c${String(i).padStart(4, '0')}.md`), '')
+  putFile(userCmd(sb, 'first.md')); symlinkSync(big, userCmd(sb, 'big-link'))
+  const r = prep(sb); const o = overridesOf(r)
+  expect(r.status).toBe('ok'); expect(r.notes).toEqual([])
+  expect(BUNDLED.every(k => o[k] === 'off')).toBe(true)
+  // 根目录 2 个条目（first.md、big-link）加大目录里的条目合计 2000 个，其中 big-link 是目录不算名字：不论读取顺序都恰收 1999 个
+  expect(Object.keys(o).filter(k => !BUNDLED.includes(k)).length).toBe(1999)
+})
+
+test('bot 自己 .claude/commands/ 下的命令名不写入：递归、扩展名不分大小写，对个人技能目录名、frontmatter 名、命令名一律适用；超过深度上限的不算；三个自带项照写', () => {
+  const sb = sandbox(); const botCmd = (...rel: string[]) => join(sb.botDir, '.claude', 'commands', ...rel)
+  putFile(userCmd(sb, 'pp-shared.md')); putFile(userCmd(sb, 'pp-mine.md')); putFile(userCmd(sb, 'pp-deep.md'))
+  putFile(userSkill(sb, 'pp-skill-vs-cmd', 'SKILL.md'), '---\nname: pp-fm-vs-cmd\n---\n'); putFile(userSkill(sb, 'pp-keep', 'SKILL.md'))
+  putFile(botCmd('pp-shared.md')); putFile(botCmd('sub', 'pp-skill-vs-cmd.md')); putFile(botCmd('x', 'pp-fm-vs-cmd.MD'))
+  putFile(botCmd('l2', 'l3', 'l4', 'l5', 'l6', 'pp-deep.md')); putFile(botCmd('design.md'))
+  const r = prep(sb)
+  expect(r.status).toBe('ok'); expect(r.notes).toEqual([])
+  expect(overridesOf(r)).toEqual(off(...BUNDLED, 'pp-mine', 'pp-deep', 'pp-keep'))
+})
