@@ -14,6 +14,10 @@ Object.assign(process.env, { HOME: join(BASE, 'home'), CHANNEL_DIR: botDir, BOT_
   TELEGRAM_WORKER_CHAT_ID: '111222333', TELEGRAM_DISPATCHER_URL: 'http://127.0.0.1:9', TELEGRAM_BOT_TOKEN: 'FAKE-TOKEN-DO-NOT-LEAK' })
 afterAll(() => { setSystemTime(); try { rmSync(BASE, { recursive: true, force: true }) } catch { /* ignore */ } })
 
+// 被测函数的时区取环境变量 BOT_TZ（没设就按本机时区）；样例按 UTC 生成。不固定的话时刻行会随机器时区变（如 Asia/Shanghai）。
+// 必须在 import 被测模块之前设好。
+process.env.BOT_TZ = 'UTC'
+
 const { WorkerManager } = await import('../../../dispatcher/worker-manager')
 const SAMPLE = join(import.meta.dir, '..', '..', 'fixtures', 'inbound_private.txt')
 const META = { chat_id: '111222333', message_id: 7, from_id: '111222333', from_username: 'alice', user: 'alice', scene: 'private',
