@@ -62,6 +62,7 @@ import { createHangRuntime } from './hang_runtime'
 import { sweepStaleSynthetic, STALE_SYNTHETIC_MS } from './inbox_names'
 import { probeSituation } from './situation_bridge'
 import { inboxHumanMarks } from './chat_guard'
+import { safeMime } from './channel_wrap'
 
 // ─── env ──────────────────────────────────────────────────────────────
 const CHANNEL_DIR = process.env.CHANNEL_DIR || ''
@@ -1411,6 +1412,7 @@ async function handleInbound(
   }
 }
 
+// 文件名只换掉少数字符；mime_type 另走 safeMime 白名单（类型/子类型），不合格就当没有（审查重要-1）
 function safeName(s: string | undefined): string | undefined {
   return s?.replace(/[<>\[\]\r\n;]/g, '_')
 }
@@ -1430,7 +1432,7 @@ bot.on('message:document', ctx => {
   const d = ctx.message.document
   const name = safeName(d.file_name)
   const text = ctx.message.caption ?? `(document: ${name ?? 'file'})`
-  return handleInbound(ctx, text, undefined, { kind: 'document', file_id: d.file_id, size: d.file_size, mime: d.mime_type, name })
+  return handleInbound(ctx, text, undefined, { kind: 'document', file_id: d.file_id, size: d.file_size, mime: safeMime(d.mime_type), name })
 })
 bot.on('message:voice', async ctx => {
   const voice = ctx.message.voice
@@ -1439,7 +1441,7 @@ bot.on('message:voice', async ctx => {
   const voiceChatType = ctx.chat?.type
   if ((voiceChatType === 'group' || voiceChatType === 'supergroup') && !featureOn(botFeatures(), 'groups')) {
     return handleInbound(ctx, ctx.message.caption ?? '(voice message)', undefined,
-      { kind: 'voice', file_id: voice.file_id, size: voice.file_size, mime: voice.mime_type })
+      { kind: 'voice', file_id: voice.file_id, size: voice.file_size, mime: safeMime(voice.mime_type) })
   }
   // H-14：先过白名单再转写 —— 非白名单直接跳过，绝不调转写服务、绝不上送令牌。
   if (!inboundSenderAllowed(ctx)) {
@@ -1469,18 +1471,18 @@ bot.on('message:voice', async ctx => {
     }
   }
   return handleInbound(ctx, text, undefined,
-    { kind: 'voice', file_id: voice.file_id, size: voice.file_size, mime: voice.mime_type },
+    { kind: 'voice', file_id: voice.file_id, size: voice.file_size, mime: safeMime(voice.mime_type) },
     voiceText)
 })
 bot.on('message:audio', ctx => {
   const a = ctx.message.audio
   const text = ctx.message.caption ?? `(audio: ${safeName(a.title) ?? safeName(a.file_name) ?? 'audio'})`
-  return handleInbound(ctx, text, undefined, { kind: 'audio', file_id: a.file_id, size: a.file_size, mime: a.mime_type, name: safeName(a.file_name) })
+  return handleInbound(ctx, text, undefined, { kind: 'audio', file_id: a.file_id, size: a.file_size, mime: safeMime(a.mime_type), name: safeName(a.file_name) })
 })
 bot.on('message:video', ctx => {
   const v = ctx.message.video
   return handleInbound(ctx, ctx.message.caption ?? '(video)', undefined,
-    { kind: 'video', file_id: v.file_id, size: v.file_size, mime: v.mime_type, name: safeName(v.file_name) })
+    { kind: 'video', file_id: v.file_id, size: v.file_size, mime: safeMime(v.mime_type), name: safeName(v.file_name) })
 })
 bot.on('message:video_note', ctx => {
   const vn = ctx.message.video_note
