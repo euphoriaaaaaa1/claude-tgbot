@@ -370,13 +370,14 @@ def _create_with_template_settings(home, monkeypatch, bot_id, template_settings=
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def test_create新bot自带群聊压缩补回钩子(home, monkeypatch):
+def test_create新bot自带四条SessionStart钩子(home, monkeypatch):
     settings = _create_with_template_settings(home, monkeypatch, "newbotc")
-    compact = [it for it in settings["hooks"]["SessionStart"] if it.get("matcher") == "compact"]
-    assert compact == [_install_compact_hook().hook_item()]
+    ich = _install_compact_hook()
+    # 群聊、私聊压缩补回，一次性找回，清空后回顾：按安装器 HOOKS 的顺序恰好四条
+    assert settings["hooks"]["SessionStart"] == [ich.hook_item(m, s) for m, s in ich.HOOKS]
 
 
-def test_create模板旧写法的压缩钩子换成绝对路径且只留一条(home, monkeypatch):
+def test_create模板旧写法的压缩钩子换成绝对路径_四条各一条(home, monkeypatch):
     stop = {"hooks": [{"type": "command", "command": "true"}]}
     template = {"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:1"},
                 "hooks": {"SessionStart": [{"matcher": "compact", "hooks": [
@@ -384,7 +385,8 @@ def test_create模板旧写法的压缩钩子换成绝对路径且只留一条(h
                     "Stop": [stop]}}
     settings = _create_with_template_settings(home, monkeypatch, "newbotd", template)
     assert "env" not in settings
-    assert settings["hooks"]["SessionStart"] == [_install_compact_hook().hook_item()]
+    ich = _install_compact_hook()
+    assert settings["hooks"]["SessionStart"] == [ich.hook_item(m, s) for m, s in ich.HOOKS]
     assert settings["hooks"]["Stop"] == [stop]
 
 
