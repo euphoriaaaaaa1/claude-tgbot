@@ -4,6 +4,16 @@
 // 跑法:bun test tests/acceptance/h2b_replay/
 import { test, expect, beforeEach, afterEach, afterAll } from 'bun:test'
 import { boot, captureStderr, releaseStderr, eventText, isPendingName, cleanupAll, type Harness } from './_fixture.ts'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+
+// pub-parity：worker 现在默认走隔离（拉起时读家目录下的全局设置、可能在家目录建共享链接）。本测试验的是 H2b 重放，与隔离无关，
+// 所以在 CHANNEL_DIR（临时 bot 目录）的上一级放全局关闭标记，让它照旧走改动前的老路径，不碰真实家目录。
+// 夹具把 CHANNEL_DIR 直接建在系统临时目录下，这里的"上一级"就是系统临时目录；标记只有在本次由我们创建时才在收尾删除。
+const ISOLATION_OFF_MARKER = join(dirname(process.env.CHANNEL_DIR as string), '.worker-isolation-off')
+const markerPreexisted = existsSync(ISOLATION_OFF_MARKER)
+if (!markerPreexisted) writeFileSync(ISOLATION_OFF_MARKER, '')
+afterAll(() => { if (!markerPreexisted) rmSync(ISOLATION_OFF_MARKER, { force: true }) })
 
 const HARNS: Harness[] = []
 beforeEach(() => captureStderr())
