@@ -7,9 +7,12 @@ import importlib.util
 import json
 import os
 import shlex
+import stat
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SCRIPT = _ROOT / "scripts" / "install_compact_hook.py"
@@ -100,3 +103,78 @@ def test_装完后命令可被shell按两段切开_第一段是当前解释器(t
         toks = shlex.split(it["hooks"][0]["command"])
         assert it["matcher"] == matcher and toks == [sys.executable, str(_ROOT / "scripts" / script)]
         assert it["hooks"][0]["timeout"] == 10
+
+
+# ---------------- 已装判定收紧与临时文件新建（审查建议-3、建议-5）----------------
+_posix_only = pytest.mark.skipif(os.name == "nt", reason="用 POSIX 引号与符号链接构造")
+
+
+@_posix_only
+@pytest.mark.parametrize("shape", ["多一个参数", "外层sh包装", "env包装", "两条里一条带包装"])
+def test_已装要求恰好两段_多参数或包装都替换成标准写法_仍只一条(shape):
+    script = "clear_recap.py"
+    good = ich.hook_command(script=script)
+    sp = shlex.quote(ich.script_path(script))
+    odd = {"多一个参数": f"{good} --extra", "外层sh包装": f"/bin/sh -c 'exec \"$0\"' {sp}",
+           "env包装": f"/usr/bin/env {shlex.quote(sys.executable)} {sp}", "两条里一条带包装": f"{good} --extra"}[shape]
+    items = [{"matcher": "startup", "hooks": [{"type": "command", "command": odd, "timeout": 10}]}]
+    if shape == "两条里一条带包装":
+        items.append(ich.hook_item("startup", script))
+    new, changes = ich.merge_all({"hooks": {"SessionStart": items}})
+    mine = [it for it in new["hooks"]["SessionStart"] if it.get("matcher") == "startup" and ich._script_command(it, script)]
+    assert len(mine) == 1 and mine[0]["hooks"][0]["command"] == good
+    assert f"SessionStart[startup] replaced: {good}" in changes
+    again, none = ich.merge_all(new)
+    assert none == [] and again == new
+
+
+def test_标准两段写法仍算已装():
+    assert all(ich._is_current(ich.hook_command(script=sc), sc) for _, sc in FOUR)
+    assert not ich._is_current(ich.hook_command(script="clear_recap.py"), "recall_private.py")
+
+
+def _bot_with_settings(tmp_path, mode=0o600):
+    bot = tmp_path / "bot"
+    (bot / ".claude").mkdir(parents=True)
+    target = bot / ".claude" / "settings.json"
+    target.write_text(json.dumps({"env": {"X": "fake"}}), encoding="utf-8")
+    os.chmod(target, mode)
+    return bot, target
+
+
+@_posix_only
+def test_写settings的临时文件以0600新建_写完沿用原权限(tmp_path, monkeypatch):
+    bot, target = _bot_with_settings(tmp_path, 0o640)
+    seen = []
+    real_copymode = ich.shutil.copymode
+
+    def spy(src, dst, *a, **kw):  # 放权限之前那一刻的临时文件权限
+        seen.append(stat.S_IMODE(os.lstat(dst).st_mode))
+        return real_copymode(src, dst, *a, **kw)
+
+    monkeypatch.setattr(ich.shutil, "copymode", spy)
+    old_umask = os.umask(0o022)
+    try:
+        assert ich.main([str(bot)]) == 0
+    finally:
+        os.umask(old_umask)
+    assert seen == [0o600]
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o640
+    assert [it["matcher"] for it in json.loads(target.read_text(encoding="utf-8"))["hooks"]["SessionStart"]] == \
+        [m for m, _ in FOUR]
+    assert not [n for n in os.listdir(target.parent) if ".tmp-" in n]
+
+
+@_posix_only
+def test_临时文件位置预先放了链接_不顺着写_退出5_原文件与链接目标都不变_链接不删(tmp_path):
+    bot, target = _bot_with_settings(tmp_path)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("别人的文件\n", encoding="utf-8")
+    trap = Path(f"{target}.tmp-{os.getpid()}")
+    trap.symlink_to(victim)
+    before = target.read_bytes()
+    assert ich.main([str(bot)]) == 5
+    assert victim.read_text(encoding="utf-8") == "别人的文件\n"
+    assert target.read_bytes() == before
+    assert trap.is_symlink()
+
