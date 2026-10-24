@@ -42,12 +42,14 @@ export function unescapeChannelWrapper(text: string): string {
 
 /**
  * `<channel>` 开标签的属性值转义（buildContent 的每个属性值都经过这里）：回车、换行各换成一个空格，
- * `<`、`>`、`"` 转成实体。属性值来自发送方（名字、文件名、MIME 等），不转义就能在值里伪造出第二个
- * 开标签、或让值跨行吃进正文，冒充私聊身份。开标签的边界只由换行、尖括号、引号决定，解析方取值后不会再按标签
- * 解析，所以 `&` 原样保留：本机路径里的 `&`（Windows 用户名允许）转成 `&amp;`，模型照抄路径就读不到文件。
+ * `&`、`<`、`>`、`"` 转成实体。属性值来自发送方（名字、文件名、MIME 等），不转义就能在值里伪造出第二个
+ * 开标签、或让值跨行吃进正文，冒充私聊身份。`&` 必须转、而且最先转：解析方取值后按实体还原（html.unescape），
+ * `&` 不转的话，属性里字面的 `&lt;`、`&quot;` 会被还原成真的 `<`、`"`，转义与还原不再互逆。
+ * 代价：本机路径里的 `&`（Windows 用户名允许）在模型眼里是 `&amp;`，照抄路径可能读不到文件（README 已知限制）。
  */
 export function escapeChannelAttr(value: string): string {
-  return String(value).replace(/[\r\n]/g, ' ').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  return String(value).replace(/[\r\n]/g, ' ').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 // MIME 白名单：类型/子类型，两段都只许字母数字与 !#$&^_.+-，各 1 到 64 个字符；带参数（; 之后的部分）的不收。
