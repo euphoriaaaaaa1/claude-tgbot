@@ -130,7 +130,8 @@ def _strip_channel_wrapper(text: str) -> str:
       1. 有 voice_text 属性 → 用 voice_text（语音转写）
       2. 否则 <channel>...</channel> 中间的 BODY（普通文字消息）
       3. 都没有 → 原样返回
-    voice_text 是开标签里的属性值：dispatcher 把其中的 < > " 转成了实体，这里按实体还原，对话片段里不出现 &lt; 这类写法。
+    voice_text 是开标签里的属性值：dispatcher 把其中的 & < > " 转成了实体，这里按实体还原，对话片段里不出现 &lt; 这类写法；
+    还原后再把 < > 换成全角（与 compact_private_context 的渲染同口径），旧数据里字面的 &lt; 还原出来也拼不出标签。
     """
     global _VOICE_TEXT_RE, _CHANNEL_BODY_RE
     if _VOICE_TEXT_RE is None:
@@ -141,7 +142,7 @@ def _strip_channel_wrapper(text: str) -> str:
         return text
     # voice_text 优先（语音消息）
     m = _VOICE_TEXT_RE.search(text)
-    voice = html.unescape(m.group(1)).strip() if m else ""
+    voice = html.unescape(m.group(1)).replace("<", "＜").replace(">", "＞").strip() if m else ""
     if voice:
         return voice
     # 普通文字消息：取 <channel ...>...</channel> 中间的 body
