@@ -14,7 +14,7 @@
  */
 
 import {
-  closeSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync,
+  closeSync, type Dir, lstatSync, mkdirSync, opendirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync,
   renameSync, rmdirSync, statSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'fs'
 import { dirname, isAbsolute, join, resolve } from 'path'
@@ -280,22 +280,42 @@ function frontmatterName(file: string): string | null {
   return null
 }
 
-// 命令目录递归收 .md 文件名（扩展名不分大小写）；跟随链接，按真实路径去重防环；某一层读不出只跳过那一层
-function collectCommandNames(dir: string, names: Set<string>, seen: Set<string>): void {
-  let real: string
-  let entries: string[]
-  try { real = realpathSync(dir); entries = readdirSync(dir) } catch { return }
-  if (seen.has(real)) return
-  seen.add(real)
-  for (const e of entries) {
-    const p = join(dir, e)
-    if (isDirectory(p)) collectCommandNames(p, names, seen)
-    else if (e.length > 3 && e.slice(-3).toLowerCase() === '.md' && isRegularFile(p)) names.add(e.slice(0, -3))
+const COMMAND_SCAN_MAX_DEPTH = 5        // 命令目录本身算第 1 层，最多读到第 5 层目录
+const COMMAND_SCAN_MAX_ENTRIES = 2000   // 一次收集访问的目录条目合计上限（文件与子目录都算）
+
+// 命令目录递归收 .md 文件名（扩展名不分大小写）；跟随链接，按真实路径去重防环；某一层读不出只跳过那一层。
+// 准备步骤在每次拉起时同步执行，所以深度与条目数都设上限：碰到指向大目录树的链接也不卡住，超了就停，已收到的照用。
+function commandNames(root: string): Set<string> {
+  const names = new Set<string>()
+  const seen = new Set<string>()
+  let budget = COMMAND_SCAN_MAX_ENTRIES
+  const walk = (dir: string, depth: number): void => {
+    if (budget <= 0) return
+    let real: string
+    try { real = realpathSync(dir) } catch { return }
+    if (seen.has(real)) return
+    seen.add(real)
+    let handle: Dir
+    try { handle = opendirSync(dir) } catch { return }
+    try {
+      // 逐条读，不一次列出整个目录；Bun 的打开错误要到第一次读才报，同样落进下面的 catch
+      for (let e = handle.readSync(); e !== null && budget > 0; e = handle.readSync()) {
+        budget--
+        const p = join(dir, e.name)
+        if (isDirectory(p)) { if (depth < COMMAND_SCAN_MAX_DEPTH) walk(p, depth + 1) }
+        else if (e.name.length > 3 && e.name.slice(-3).toLowerCase() === '.md' && isRegularFile(p)) names.add(e.name.slice(0, -3))
+      }
+    } catch { /* 读到一半出错：这一层到此为止 */ } finally {
+      try { handle.closeSync() } catch { /* 打开就失败的句柄关不了，不管 */ }
+    }
   }
+  try { walk(root, 1) } catch { /* 意外异常：已收到的照用 */ }
+  return names
 }
 
 // 用户级个人技能（<home>/.claude/skills/<目录>/SKILL.md，目录名 + frontmatter name）与个人命令（<home>/.claude/commands/**.md）的名字。
-// 两个目录各读各的；任何读错都只是少几个名字，不抛错、不记 note。生图引擎与 bot 自己 .claude/skills/ 下同名子目录的名字不收。
+// 两个目录各读各的；任何读错都只是少几个名字，不抛错、不记 note。不收：生图引擎；bot 自己 .claude/skills/ 下同名子目录的名字；
+// bot 自己 .claude/commands/ 下的命令名（同样递归、同样上限），免得把 bot 自己的命令一起关掉。
 function personalOverrideNames(home: string, botDir: string): string[] {
   const names = new Set<string>()
   const skillsDir = join(home, '.claude', 'skills')
@@ -308,8 +328,8 @@ function personalOverrideNames(home: string, botDir: string): string[] {
       if (fmName !== null) names.add(fmName)
     }
   } catch { /* 读不出就不收个人技能 */ }
-  try { collectCommandNames(join(home, '.claude', 'commands'), names, new Set()) } catch { /* 同上 */ }
-  const botOwn = new Set<string>()
+  for (const n of commandNames(join(home, '.claude', 'commands'))) names.add(n)
+  const botOwn = commandNames(join(botDir, '.claude', 'commands'))
   const botSkillsDir = join(botDir, '.claude', 'skills')
   try { for (const e of readdirSync(botSkillsDir)) if (isDirectory(join(botSkillsDir, e))) botOwn.add(e) } catch { /* 没有就不排除 */ }
   return [...names].filter(n => n !== SHARED_ENGINE && !botOwn.has(n))
