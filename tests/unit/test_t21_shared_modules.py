@@ -143,6 +143,28 @@ def test_chat_history线程尾巴按chat过滤且只收真回复(tmp_path, monke
     assert "群里的原话" not in texts and "群回复" not in texts
 
 
+def test_chat_history语音转写按实体还原_and号原样():
+    tag = '【私聊】<channel chat_id="p1" scene="private" voice_text="A&B &lt;tag&gt; &quot;引号&quot;">'
+    assert chat_history._strip_channel_wrapper(tag + "\n(voice message)\n</channel>") == 'A&B <tag> "引号"'
+    old = '<channel chat_id="p1" voice_text="他说&quot;好&quot;">\n(voice message)\n</channel>'
+    assert chat_history._strip_channel_wrapper(old) == '他说"好"'
+    blank = '<channel chat_id="p1" voice_text="&#32;">\n正文\n</channel>'
+    assert chat_history._strip_channel_wrapper(blank) == "正文"          # 还原后是空白：照旧退回正文
+
+
+def test_chat_history线程尾巴里的语音转写不带实体写法(tmp_path, monkeypatch):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    line = _session_line(now, '【私聊】<channel chat_id="p1" scene="private" '
+                              'voice_text="R&D 说 &lt;明天&gt; &quot;见&quot;">\n(voice message)\n</channel>')
+    (proj / "s.jsonl").write_text(line, encoding="utf-8")
+    monkeypatch.setattr(chat_history, "_project_dir", lambda _d: str(proj))
+    monkeypatch.setenv("BOT_NAMESPACE", str(uuid.uuid4()))
+    texts = [t for _r, t, _ts in chat_history.get_thread_tail(str(tmp_path), chat_id="p1", bot_name="b")]
+    assert texts == ['R&D 说 <明天> "见"']
+
+
 # ─── formatter：CBL 新报头（本地时间 + 周几 + 自然句） ───────────────────────
 
 def test_formatter新报头与身份():
