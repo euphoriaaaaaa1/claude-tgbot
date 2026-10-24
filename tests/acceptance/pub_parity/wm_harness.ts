@@ -5,47 +5,57 @@
 // 接缝假设（接口文件只写了「deps.spawn」，没有写构造/拉起的调用形态，这里是唯一需要与实现对齐的地方）：
 //   S1 new WorkerManager({ spawn }) 接受含 spawn 的依赖对象（同时用 mock.module 兜住 node:child_process 的 spawn）
 //   S2 await manager.spawnWorker() 执行一次完整拉起（既有测试里被桩掉的就是这个方法）
-//   S3 spawn 以 spawn(标签字符串, { file, args, opts:{ env, cwd, ... } }) 调用（运行时实测的调用形态）；返回 Bun Subprocess 形态（pid、stdin.write、stdout 流、exited）
+//   S3 spawn 以 spawn(标签字符串, { file, args, opts:{ env, cwd, ... } }) 调用（运行时实测的调用形态）；返回 Node child_process.spawn 形态的句柄：
+//      EventEmitter（on('exit', (code, signal)) / on('error')）、stdout/stderr 可读流（on('data', chunk)）、stdin 可写（write / end）、kill(signal)、pid
 //   S4 拉起日志经 console.error / process.stderr 输出
 import { mock } from 'bun:test'
 import * as realCp from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PassThrough, Writable } from 'node:stream'
 
 export const FAKE_BOT_TOKEN = 'FAKE-TELEGRAM-TOKEN-DO-NOT-LEAK'
 export const FAKE_AUTH = 'FAKE-ANTHROPIC-AUTH-DO-NOT-LEAK'
 export const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
-export class FakeChild {
+/**
+ * Node child_process.spawn 句柄的仿制：EventEmitter + stdout/stderr 的 PassThrough + 可写的 stdin。
+ * WorkerManager 只通过 on('exit'|'error')、stdout/stderr.on('data')、stdin.write/end、kill()、pid 使用它。
+ */
+export class FakeChild extends EventEmitter {
   pid: number
   exitCode: number | null = null; signalCode: string | null = null; killed = false
-  stdin: any; stdout: ReadableStream<Uint8Array>; stderr: ReadableStream<Uint8Array>
-  exited: Promise<number>; written: string[] = []
-  private outCtl!: ReadableStreamDefaultController<Uint8Array>
-  private errCtl!: ReadableStreamDefaultController<Uint8Array>
-  private resolveExit!: (c: number) => void
-  constructor(pid: number, private onExitCb?: (...a: any[]) => void) {
+  stdin: Writable; stdout: PassThrough; stderr: PassThrough
+  written: string[] = []                 // stdin 收到的每次写入（解码成字符串，write 调用时同步记录）
+  private ended = false
+  constructor(pid: number) {
+    super()
     this.pid = pid
-    this.stdout = new ReadableStream({ start: c => { this.outCtl = c } })
-    this.stderr = new ReadableStream({ start: c => { this.errCtl = c } })
-    this.stdin = {
-      write: (d: any) => { this.written.push(typeof d === 'string' ? d : new TextDecoder().decode(d)); return typeof d === 'string' ? d.length : d.byteLength },
-      flush: () => 0, end: () => 0, ref() {}, unref() {},
-    }
-    this.exited = new Promise(r => { this.resolveExit = r })
+    this.stdout = new PassThrough(); this.stderr = new PassThrough()
+    // stdin 只需"收写并记录"，用 Writable：_write 在 write() 当场同步执行，written 立刻可见（PassThrough 要等下一拍才把数据转出来）
+    this.stdin = new Writable({
+      decodeStrings: false,
+      write: (chunk: any, _enc, done) => { this.written.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')); done() },
+    })
+    this.stdin.on('error', () => { /* 子进程退出后再写 stdin：真实句柄也只是发 error，别让它变成未捕获异常 */ })
   }
-  kill(_sig?: unknown) { this.killed = true; setTimeout(() => this.exit(143, 'SIGTERM'), 5) }
+  kill(_sig?: unknown): boolean { this.killed = true; setTimeout(() => this.exit(143, 'SIGTERM'), 5); return true }
   ref() {} unref() {}
-  /** 喂一行 stream-json 事件（如 init）。 */
-  emitLine(obj: unknown) { this.outCtl.enqueue(new TextEncoder().encode(JSON.stringify(obj) + '\n')) }
+  /** 喂一行 stream-json 事件（如 init）：往 stdout 写一行 JSON。 */
+  emitLine(obj: unknown) {
+    if (this.ended) throw new Error('FakeChild 已退出，不能再往 stdout 喂事件')
+    this.stdout.write(JSON.stringify(obj) + '\n')
+  }
+  /** 子进程退出：关掉 stdout/stderr，随后 emit 'exit'(code, signal) 与 'close'(code, signal)。 */
   exit(code: number | null, signal: string | null = null) {
-    if (this.exitCode !== null) return
-    this.exitCode = code ?? -1; this.signalCode = signal
-    try { this.outCtl.close() } catch { /* ignore */ }
-    try { this.errCtl.close() } catch { /* ignore */ }
-    this.resolveExit(this.exitCode)
-    this.onExitCb?.(this, this.exitCode, signal, undefined)
+    if (this.ended) return
+    this.ended = true
+    this.exitCode = code; this.signalCode = signal
+    this.stdout.end(); this.stderr.end()
+    // 延后一拍再 emit：此前写进 stdout 的事件（如 init）先送达监听方，之后才见到 exit，次序与真实子进程"先出数据、后退出"一致
+    setImmediate(() => { this.emit('exit', code, signal); this.emit('close', code, signal) })
   }
 }
 
@@ -88,7 +98,7 @@ export async function boot() {
     if (typeof a === 'string' && b && typeof b === 'object' && 'file' in b) { file = String(b.file); args = b.args ?? []; opts = b.opts ?? {} }
     else if (Array.isArray(a)) { file = String(a[0]); args = a.slice(1); opts = b ?? {} }
     else { file = String(a); args = Array.isArray(b) ? b : []; opts = (Array.isArray(b) ? c : b) ?? {} }
-    const child = new FakeChild(pidSeq++, opts.onExit)
+    const child = new FakeChild(pidSeq++)
     calls.push({ file, args: args.map(String), env: { ...(opts.env ?? {}) }, cwd: opts.cwd, child })
     return child
   }
