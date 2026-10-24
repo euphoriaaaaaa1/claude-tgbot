@@ -1191,8 +1191,7 @@ export class WorkerManager {
 
   // 绑定子进程事件。假件句柄没有 stdout/stderr/stdin → 一律可选链跳过（测试不真起进程）。
   private wireProc(handle: any): void {
-    if (!handle) return
-    if (typeof handle.on !== 'function') { this.wireStreamProc(handle); return }
+    if (!handle || typeof handle.on !== 'function') return
     try { handle.stdout?.on?.('data', (chunk: Buffer) => this.onStdout(chunk)) } catch {}
     try {
       handle.stderr?.on?.('data', (chunk: Buffer) => {
@@ -1205,35 +1204,8 @@ export class WorkerManager {
     handle.on('exit', (code: number) => this.onExit(code ?? 0, handle))
   }
 
-  // 注入的 spawn 也可返回 Bun.spawn 形态的句柄：stdout/stderr 是 Web ReadableStream，退出经 exited Promise 告知。
-  // 没有这些字段的假件（只有 pid）照旧什么都不绑。
-  private wireStreamProc(handle: any): void {
-    const drain = (stream: any, onText: (s: string) => void) => {
-      if (!stream || typeof stream.getReader !== 'function') return
-      void (async () => {
-        const reader = stream.getReader()
-        const dec = new TextDecoder()
-        try {
-          for (;;) {
-            const { value, done } = await reader.read()
-            if (done) break
-            if (value) onText(dec.decode(value, { stream: true }))
-          }
-        } catch {}
-      })()
-    }
-    drain(handle.stdout, s => this.onStdout(s))
-    drain(handle.stderr, s => { const t = s.trim(); if (t) logStream({ type: '_stderr', text: t.slice(0, 2000) }) })
-    if (handle.exited && typeof handle.exited.then === 'function') {
-      handle.exited.then(
-        (code: unknown) => this.onExit(typeof code === 'number' ? code : 0, handle),
-        () => this.onExit(-1, handle),
-      )
-    }
-  }
-
   // ── stdout 事件流 ─────────────────────────────────────────────────
-  private onStdout(chunk: Buffer | string): void {
+  private onStdout(chunk: Buffer): void {
     this.lastEventAt = (this.now ?? Date.now)()   // 任何 stdout 数据都算"worker 还活着"，重置卡死计时
     this.stdoutBuf += chunk.toString()
     let nl: number
