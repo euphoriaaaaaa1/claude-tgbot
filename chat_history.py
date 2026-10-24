@@ -8,6 +8,7 @@ slug 算法（与 Claude Code 一致，已实测）：
 """
 import os
 import glob
+import html
 import json
 import re
 import time
@@ -129,6 +130,7 @@ def _strip_channel_wrapper(text: str) -> str:
       1. 有 voice_text 属性 → 用 voice_text（语音转写）
       2. 否则 <channel>...</channel> 中间的 BODY（普通文字消息）
       3. 都没有 → 原样返回
+    voice_text 是开标签里的属性值：dispatcher 把其中的 < > " 转成了实体，这里按实体还原，对话片段里不出现 &lt; 这类写法。
     """
     global _VOICE_TEXT_RE, _CHANNEL_BODY_RE
     if _VOICE_TEXT_RE is None:
@@ -139,8 +141,9 @@ def _strip_channel_wrapper(text: str) -> str:
         return text
     # voice_text 优先（语音消息）
     m = _VOICE_TEXT_RE.search(text)
-    if m and m.group(1).strip():
-        return m.group(1).strip()
+    voice = html.unescape(m.group(1)).strip() if m else ""
+    if voice:
+        return voice
     # 普通文字消息：取 <channel ...>...</channel> 中间的 body
     m = _CHANNEL_BODY_RE.search(text)
     if m and m.group(1).strip():
@@ -431,7 +434,7 @@ def get_thread_tail(bot_dir: str, chat_id: str = None,
                     raw = _extract_text(content) if typ == "user" else ""
                     m = _CHAT_ID_ATTR_RE.search(raw) if raw else None
                     if m:
-                        cur_chat = m.group(1).strip()   # 归属在时间窗之外也要跟上，内部注入同样算入站
+                        cur_chat = html.unescape(m.group(1)).strip()   # 属性值按实体还原；归属在时间窗之外也要跟上，内部注入同样算入站
                     ts = _parse_iso_safe(o.get("timestamp", ""))
                     if not ts or ts < cutoff:
                         continue
