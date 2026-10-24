@@ -11,8 +11,8 @@
         Windows 一律加双引号——解释器默认装在 %LOCALAPPDATA%\\Programs\\Python 下（含用户名），用户名或仓路径
         含空格时裸拼接会被按空格切开；Windows 宿主用 cmd.exe 还是 Git Bash 跑 hook 未坐实，双引号两者都认，
         而不加引号的反斜杠路径在 POSIX shell 下会被吃成 C:Usersx。不含特殊字符的路径形态不变。
-规则    幂等，四条同一套：按（matcher，脚本文件名）认同一项。"已装"指只有一条，它的脚本路径（去引号、解析链接）等于本仓
-        脚本，且第一段（解释器）是存在的文件——解释器不同但都存在不算变化（新建 bot 用适配器进程的解释器、补装用 shell 里的
+规则    幂等，四条同一套：按（matcher，脚本文件名）认同一项。"已装"指只有一条，命令拆开后恰好两段（解释器 + 脚本，
+        多出参数或外层包装都不算），脚本路径（去引号、解析链接）等于本仓脚本，且第一段（解释器）是存在的文件——解释器不同但都存在不算变化（新建 bot 用适配器进程的解释器、补装用 shell 里的
         python，逐字比较会每跑一次就替换、备份一次）；否则替换成当前解释器加本仓路径（多条并成一条）；没有就追加。
         模板 bot 自带的 `python3 "$CLAUDEBOTLIFE_REPO/scripts/compact_group_context.py"` 也按此认作同一项并替换成绝对路径；
         仓库挪了位置重跑一次即修好。只动 hooks.SessionStart，其它顶层键与其它事件原样保留。
@@ -131,12 +131,12 @@ def _our_command(item: dict):
 
 
 def _is_current(cmd: str, script: str) -> bool:
-    """已装：脚本那段是绝对路径、解析链接后等于本仓脚本，且第一段（解释器）是存在的文件。"""
+    """已装：命令恰好两段（解释器 + 脚本），脚本那段是绝对路径、解析链接后等于本仓脚本，且第一段（解释器）是存在的文件。
+    多出参数或外层包装（如 `/bin/sh -c '…' <本仓脚本>`）一律不算已装，交给调用方替换成标准写法，免得改过的命令一直留着。"""
     toks = _tokens(cmd)
-    hits = [i for i, tok in enumerate(toks) if os.path.basename(tok) == script]
-    if not hits or hits[-1] == 0:
+    if len(toks) != 2 or os.path.basename(toks[1]) != script:
         return False
-    tok = toks[hits[-1]]
+    tok = toks[1]
     if not os.path.isabs(tok):
         return False
     same = os.path.normcase(os.path.realpath(tok)) == os.path.normcase(os.path.realpath(script_path(script)))
@@ -268,21 +268,28 @@ def main(argv=None) -> int:
         return 0
 
     tmp = f"{target}.tmp-{os.getpid()}"
+    made_tmp = False
     try:
         if args.recall:  # 先布防后写 settings：标记写失败时 settings 与备份都还没动
             _write_marker(marker)
             print(f"recall armed: {marker}")
         bak = _backup_path(target)
         shutil.copy2(target, bak)  # 连权限位一起拷：0600 的配置备份出来不能变成人人可读
-        with open(tmp, "w", encoding="utf-8") as f:
+        # 临时文件一律新建：O_EXCL 不复用已有文件，O_NOFOLLOW 不顺着预先放好的链接写；0600 起步，写满前别的账户读不到
+        # （settings 里可能有令牌）。O_BINARY 只在 Windows 有：让换行照旧只由文本层转换一次。
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_BINARY", 0), 0o600)
+        made_tmp = True
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(_dump(new) + "\n")
         shutil.copymode(target, tmp)  # 新文件沿用原权限位，不按 umask 放宽
         os.replace(tmp, target)
     except OSError as e:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        if made_tmp:  # 只清自己建的；同名路径上原有的文件或链接不是本次建的，不动
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
         print(f"write failed: {type(e).__name__}")
         return 5
     print(f"backup: {bak}")
