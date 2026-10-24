@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from datetime import datetime
 
 HEAD = ("【私聊记忆：你与对方的对话原文，其中 我: 是你自己说过的话。这些是你亲历、已经处理过的事，"
@@ -41,7 +42,9 @@ NATIVE_PREFIXES = ("Continue from where you left off.", "[Request interrupted by
                    "This session is being continued", "Base directory for this skill", "<command-name>",
                    "<command-message>", "<command-args>", "<local-command-")
 _SYNTH_RE = re.compile(r"\[[a-z][a-z0-9_-]{1,31}\]")  # 通用兜底：以后新增的 [xxx-due] 这类前缀不用同步也挡住
-_TAG_ATTR_RE = re.compile(r'\s+([A-Za-z_][\w.:-]*)="([^"]*)"')  # 开标签里的一个属性：空白 + 名="值"
+# 开标签里的一个属性：空白 + 名="值"。值不能跨行：否则属性里伪造的开标签能借真标签的收尾引号把值一路吃进正文，
+# 再在正文里补齐 chat_id 等属性冒充私聊（审查重要-1；dispatcher 已把属性值里的换行换成空格）
+_TAG_ATTR_RE = re.compile(r'\s+([A-Za-z_][\w.:-]*)="([^"\n]*)"')
 _TAG_END_RE = re.compile(r"\s*>")
 # 开标签结束后第一行里的属性碎片（" 名= 或 ">）：说明属性值里的 "> 把真标签提前截断了，剩下的真属性落进了正文
 _FRAGMENT_RE = re.compile(r'[^\n]*?"\s*(?:[A-Za-z_][\w.:-]*\s*=|>)')
@@ -94,8 +97,11 @@ def cut(s: str, limit: int, ellipsis: str = "") -> str:
 
 
 def display_name(user) -> str:
-    """名字：规整 → 冒号换 · → 截到 20 码元（不加 …）→ 空或恰为"我"时用"对方"，防止一行里伪造出"我:"。"""
-    name = norm(user if isinstance(user, str) else "").replace(":", "·").replace("：", "·")
+    """名字：去掉 Cf 类字符（零宽字符、方向控制符等，看不见却能让"​我"不等于"我"）→ 规整 → 冒号换 · →
+    截到 20 码元（不加 …）→ 空或恰为"我"时用"对方"，防止一行里伪造出"我:"。"""
+    raw = user if isinstance(user, str) else ""
+    raw = "".join(ch for ch in raw if unicodedata.category(ch) != "Cf")
+    name = norm(raw).replace(":", "·").replace("：", "·")
     name = cut(name, MAX_NAME)
     return "对方" if name in ("", "我") else name
 
@@ -181,7 +187,7 @@ def _inbound(content):
     标注为 "private" 或 "group"。正文不做实体解码。
     规则：去尾部空白后以 </channel> 结尾；取最后一个 <channel 作开标签（正文里的 <channel 已被 dispatcher 转义，
     外壳里即使出现也在它前面）；开标签之前必须紧贴【私聊】或【群聊】，否则整条不采用。
-    开标签严格解析（堵"显示名里伪造 `">` 提前闭合开标签"的绕过）：从 <channel 起逐个 `名="值"`（值里不含 "），
+    开标签严格解析（堵"显示名里伪造 `">` 提前闭合开标签"的绕过）：从 <channel 起逐个 `名="值"`（值里不含 " 与换行），
     之后只允许空白和 >；属性名不能重复；开标签后第一行残留 `" 名="`/`">` 属性碎片 → 伪造。"""
     if isinstance(content, list):
         content = "\n".join(b["text"] for b in content
