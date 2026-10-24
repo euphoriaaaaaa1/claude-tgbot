@@ -6,6 +6,7 @@ dispatcher 是回环上的假 HTTP 服务，端口由系统分配。
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import socket
@@ -343,6 +344,53 @@ def test_create省略features也写全关文件(home, monkeypatch):
     doc = json.loads((channel / "features.json").read_text(encoding="utf-8"))
     assert doc["version"] == 1 and doc["default"] is False
     assert all(v is False for v in doc["features"].values())
+
+
+def _install_compact_hook():
+    """与产品代码同一份钩子定义：按文件路径加载 scripts/install_compact_hook.py。"""
+    spec = importlib.util.spec_from_file_location("install_compact_hook_for_test",
+                                                  REPO_ROOT / "scripts" / "install_compact_hook.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _create_with_template_settings(home, monkeypatch, bot_id, template_settings=None):
+    make_templates(home)
+    if template_settings is not None:
+        (home["configs"] / "templates" / "claude" / "blank" / "settings.json").write_text(
+            json.dumps(template_settings), encoding="utf-8")
+    with FakeDispatcher(bot_id=bot_id, phase="running", allow_missing=True) as fake:
+        monkeypatch.setattr(claude_create, "allocate_port", lambda ctx: fake.port)
+        monkeypatch.setattr(claude_create, "_install_schedule", lambda *a, **k: "ok")
+        monkeypatch.setattr(claude_create, "_uninstall_schedule", lambda *a, **k: None)
+        monkeypatch.setattr(claude_create, "_ensure_dispatcher", lambda *a, **k: None)
+        ClaudeLocalAdapter().create(_spec(bot_id), SecretToken(TELEGRAM_TOKEN))
+    path = home["channels"] / bot_id / ".claude" / "settings.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_create新bot自带群聊压缩补回钩子(home, monkeypatch):
+    settings = _create_with_template_settings(home, monkeypatch, "newbotc")
+    compact = [it for it in settings["hooks"]["SessionStart"] if it.get("matcher") == "compact"]
+    assert compact == [_install_compact_hook().hook_item()]
+
+
+def test_create模板旧写法的压缩钩子换成绝对路径且只留一条(home, monkeypatch):
+    stop = {"hooks": [{"type": "command", "command": "true"}]}
+    template = {"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:1"},
+                "hooks": {"SessionStart": [{"matcher": "compact", "hooks": [
+                    {"type": "command", "command": 'python3 "$CLAUDEBOTLIFE_REPO/scripts/compact_group_context.py"'}]}],
+                    "Stop": [stop]}}
+    settings = _create_with_template_settings(home, monkeypatch, "newbotd", template)
+    assert "env" not in settings
+    assert settings["hooks"]["SessionStart"] == [_install_compact_hook().hook_item()]
+    assert settings["hooks"]["Stop"] == [stop]
+
+
+def test_create模板hooks结构不合预期时原样保留且新建成功(home, monkeypatch):
+    settings = _create_with_template_settings(home, monkeypatch, "newbote", {"hooks": "bad"})
+    assert settings["hooks"] == "bad"
 
 
 def test_create失败整单回滚且不残留令牌(home, monkeypatch, caplog, capsys):
