@@ -14,7 +14,7 @@
  */
 
 import {
-  closeSync, type Dir, lstatSync, mkdirSync, opendirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync,
+  closeSync, type Dir, lstatSync, mkdirSync, opendirSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync,
   renameSync, rmdirSync, statSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'fs'
 import { dirname, isAbsolute, join, resolve } from 'path'
@@ -263,9 +263,23 @@ function isDirectory(p: string): boolean {
 
 // SKILL.md 开头 frontmatter（首行 --- 到下一行 ---）里 name 的值；容忍 BOM、CRLF、值两端的引号与空白。
 // 读不出、没有结束线、没有 name 或值为空都返回 null（调用方照样写目录名）。
+// 只读开头 FRONTMATTER_READ_MAX 字节：每次拉起都同步读，SKILL.md 是指向大文件的链接也不整份读进来；结束线不在这一段里按没有算。
+const FRONTMATTER_READ_MAX = 8 * 1024
 function frontmatterName(file: string): string | null {
   let text: string
-  try { text = readFileSync(file, 'utf8') } catch { return null }
+  try {
+    const fd = openSync(file, 'r')
+    try {
+      const buf = Buffer.alloc(FRONTMATTER_READ_MAX)
+      let n = 0
+      while (n < buf.length) {
+        const got = readSync(fd, buf, n, buf.length - n, n)
+        if (got <= 0) break
+        n += got
+      }
+      text = buf.subarray(0, n).toString('utf8')
+    } finally { closeSync(fd) }
+  } catch { return null }
   const lines = text.replace(/^﻿/, '').split('\n').map(l => l.replace(/\r$/, ''))
   if (lines[0]?.trimEnd() !== '---') return null
   const end = lines.findIndex((l, i) => i > 0 && l.trimEnd() === '---')
@@ -314,9 +328,10 @@ function commandNames(root: string): Set<string> {
 }
 
 // 用户级个人技能（<home>/.claude/skills/<目录>/SKILL.md，目录名 + frontmatter name）与个人命令（<home>/.claude/commands/**.md）的名字。
-// 两个目录各读各的；任何读错都只是少几个名字，不抛错、不记 note。不收：生图引擎；bot 自己 .claude/skills/ 下同名子目录的名字；
+// 两个目录各读各的；任何读错都只是少几个名字，不抛错、不记 note。不收：生图引擎的目录名与它自己 SKILL.md 的 frontmatter name
+// （CLI 按哪个名字认它都不能写进 skillOverrides，否则引擎跟着关掉）；bot 自己 .claude/skills/ 下同名子目录的名字；
 // bot 自己 .claude/commands/ 下的命令名（同样递归、同样上限），免得把 bot 自己的命令一起关掉。
-function personalOverrideNames(home: string, botDir: string): string[] {
+function personalOverrideNames(home: string, botDir: string, engineDir: string): string[] {
   const names = new Set<string>()
   const skillsDir = join(home, '.claude', 'skills')
   try {
@@ -332,7 +347,11 @@ function personalOverrideNames(home: string, botDir: string): string[] {
   const botOwn = commandNames(join(botDir, '.claude', 'commands'))
   const botSkillsDir = join(botDir, '.claude', 'skills')
   try { for (const e of readdirSync(botSkillsDir)) if (isDirectory(join(botSkillsDir, e))) botOwn.add(e) } catch { /* 没有就不排除 */ }
-  return [...names].filter(n => n !== SHARED_ENGINE && !botOwn.has(n))
+  const engineNames = new Set([SHARED_ENGINE])
+  const engineSkill = join(engineDir, 'SKILL.md')
+  const engineFm = isRegularFile(engineSkill) ? frontmatterName(engineSkill) : null   // 不是普通文件（如管道）不去打开
+  if (engineFm !== null) engineNames.add(engineFm)
+  return [...names].filter(n => !engineNames.has(n) && !botOwn.has(n))
 }
 
 export function prepareWorkerIsolation(opts: { botDir: string; home: string; user: SettingsLayer; engineDir: string;
@@ -365,7 +384,7 @@ export function prepareWorkerIsolation(opts: { botDir: string; home: string; use
 
     // 5. flag 对象（键顺序固定）：隔离三键 → 透传组 → deny 并集。
     // skillOverrides = 三个自带项 + 个人技能与个人命令，合在一起按 JS 默认排序写出，同样的输入两次准备逐字相同
-    const overrideNames = [...new Set([...DISABLED_BUNDLED, ...personalOverrideNames(home, botDir)])].sort()
+    const overrideNames = [...new Set([...DISABLED_BUNDLED, ...personalOverrideNames(home, botDir, engineDir)])].sort()
     const flag: Record<string, unknown> = {
       claudeMdExcludes: claudeMdExcludes([botDir, join(home, '.claude', 'worker-shared')], win),
       disableBundledSkills: true,
