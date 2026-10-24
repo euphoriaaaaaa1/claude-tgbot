@@ -201,7 +201,13 @@ python3 platform_services.py start provider-web --repo "$PWD"
 - 人设：`/console` → 该 bot → 人设。空白模板只写了一句“在这里写下你的 bot 的角色、说话方式与边界”，**没有现成人设**。
 - 生活设定：作息、爱好、城市、生日、校历等可在 `/console` 的生活设定页填。
 - 语音：可填 TTS 音色编号；不填走默认音色。
-- 群聊压缩补回：对话上下文被压缩后，把所在群最近的聊天补回去。管理台新建的 bot 自动带上；更早建的 bot 跑一次 `python3 scripts/install_compact_hook.py ~/.claude/channels/<bot编号>` 补装（重复跑不会装出第二条；该 bot 目录下要已有 `.claude/settings.json`，内容是 `{}` 也行）。
+- 压缩与清空后的补回：四条 SessionStart 钩子，管理台新建的 bot 自动带齐。
+  - 压缩后补回群聊：对话上下文被压缩后，把所在群最近的聊天补回去；
+  - 压缩后补回私聊：把最近的私聊原文补回去；
+  - 一次性找回：布防后 72 小时内的下一次恢复会话，把更早压缩时丢掉的私聊补回，用一次即失效；没布防什么都不做；
+  - 清空后回顾：/clear 后的新会话里放进清空时写下的对话摘要全文，每次清空只放一次。
+
+  更早建的 bot 跑一次 `python3 scripts/install_compact_hook.py ~/.claude/channels/<bot编号>` 补齐四条（可重复跑，已装的不会再装、不会再备份；该 bot 目录下要已有 `.claude/settings.json`，内容是 `{}` 也行）；加 `--recall` 同时布防一次性找回。补装命令只打印 `hooks.SessionStart` 的变化，别的钩子显示为占位，settings 里的 env 等内容不会打到终端。
 - 启停：总览页的启用/停用。停用后不再收发消息。
 
 手动建（管理台不可用时）：
@@ -214,6 +220,32 @@ cp configs/_example.yml configs/mybot.yml
 # 编辑 ~/.claude/channels/mybot/access.json：allowFrom 填你的数字 user_id
 bash restart-bots.sh
 ```
+
+### 5.1 bot 与你的全局 Claude 设置
+
+bot 的 worker 默认只加载 bot 自己的项目设置与本地设置（`--setting-sources project,local`），你的用户级设置 `~/.claude/settings.json` 不再整份进 bot。
+
+- 不再给 bot 用的：用户级钩子、插件、`~/.claude/skills/` 下的个人技能、全局 `CLAUDE.md`，以及 Claude Code 自带的通用技能（代码审查、定时任务、调试之类）。bot 只剩它自己目录 `.claude/skills/` 里的技能和生图技能。
+- 依赖某个个人技能的，两条出路：把它放进 bot 目录的 `.claude/skills/`，或建下面的关闭标记。
+- 生图技能照常可用：dispatcher 在 `~/.claude/worker-shared/` 下建一个指向 `$NOVELAI_SKILL_ROOT`（默认 `~/.claude/skills/novelai-skill`）的链接挂给 bot；没装生图技能就不建。
+- 跟随全局的：bot 自己没配的供应商、模型、思考强度。全局 `settings.json` 的 `env` 段整段带进 worker 的进程环境（bot 自己 env 里已有的键不被覆盖）；`effortLevel` 与 `modelSettings`、`alwaysThinkingEnabled`、`switchModelsOnFlag`、顶层 `model` 在 bot 两份设置都没设时照搬。
+- 全局的禁止规则 `permissions.deny` 与 bot 自己的合并后照样带给 bot；要约束 bot 的规则，请写进 bot 自己的 `.claude/settings.json`。
+- /clear 时生成摘要的那次模型调用同样不加载用户级设置，模型与供应商仍跟随全局。
+
+关闭标记有两种，存在即生效（不读内容），下次拉起 worker 或下次 /clear 时生效，不用重启 dispatcher：
+
+- 只关这只 bot：`touch ~/.claude/channels/<bot编号>/.worker-isolation-off`
+- 关全部 bot（含之后新建的）：`touch ~/.claude/channels/.worker-isolation-off`，即所有 bot 目录的上一级目录下。
+
+关闭后这只 bot 的 worker 与 /clear 摘要都回到旧方式（加载用户级设置）。以下情形自动走旧方式，不用手动关：用户级设置里有 `apiKeyHelper`、`awsAuthRefresh`、`awsCredentialExport`、`gcpAuthRefresh`、`proxyAuthHelper` 任一，且 bot 自己没设同名键；准备步骤失败，例如共享链接建不成、`.worker-settings.json` 写不成；每次启动自查发现隔离设置没被 Claude Code 认出、生图技能没挂上、或 worker 在初始化前异常退出，这一次对话照常跑完，下次启动退回旧方式，dispatcher 重启后再试。用了上述名单之外的自定义登录方式的，请建关闭标记。
+
+说明与自检：
+
+- dispatcher 日志里每次拉起有一行 `WORKER-ISOLATION`：`mode=on status=ok` 表示已隔离；`status=degraded reason=<原因>` 表示这次走了旧方式；`mode=off` 表示关闭标记生效。
+- 想确认全局 `CLAUDE.md` 没进 bot：在全局 `CLAUDE.md` 里临时加一句只有你知道的话，下次 /clear 后问 bot 是否知道，确认后删掉。
+- 已在进行的会话要到下次压缩或 /clear 后才完全生效，此前会话里还留着旧的技能清单与全局说明。
+- 不支持 `CLAUDE_CONFIG_DIR`：dispatcher 与四条钩子都按 `~/.claude` 定位会话与设置。
+- Windows 上共享链接用目录联接（junction），这一套尚未在 Windows 真机上实测；遇到 bot 画不了图或行为异常，先建全局关闭标记。
 
 ---
 
@@ -337,6 +369,8 @@ python3 scripts/set_novelai_key.py --check   # 只输出 set: true|false
 
 落点：`$NOVELAI_SKILL_ROOT/.env.local`（默认 `~/.claude/skills/novelai-skill/.env.local`），权限 0600，已在 `.gitignore`。不要把令牌贴进 README、issue、日志或 `configs/`。
 
+bot 的 worker 不加载用户级设置，生图技能经共享目录 `~/.claude/worker-shared/` 挂给 bot（见 5.1），照常可用。
+
 ### 9.3 ComfyUI（可选）
 
 在 `configs/_global.yml` 的 `moments.image_generation` 里把 `provider` 改成 `comfyui`，填本机 `url`、workflow 路径和输出目录。默认仍可用 NovelAI；两者都只是生图后端，不影响聊天。
@@ -369,7 +403,8 @@ bash stop-bots.sh                     # 停止全部 bot
 bash scripts/watch-bot.sh mybot       # 跟踪某个 bot 的实时对话日志
 python3 -m bots_registry --format=sh  # 查看注册表：id / 端口 / namespace
 python3 -m bot_features --show mybot  # 查看八项开关
-python3 scripts/install_compact_hook.py ~/.claude/channels/mybot  # 给更早建的 bot 补装群聊压缩补回钩子（可重复跑）
+python3 scripts/install_compact_hook.py ~/.claude/channels/mybot  # 给更早建的 bot 补齐四条压缩与清空补回钩子（可重复跑）
+python3 scripts/install_compact_hook.py ~/.claude/channels/mybot --recall  # 同上，并布防一次性找回（下一次恢复会话补回更早丢掉的私聊）
 python3 platform_services.py status provider-web --repo "$PWD"
 python3 platform_services.py unregister autostart
 ```
@@ -400,6 +435,7 @@ python3 platform_services.py unregister autostart
 - 8767 默认只监听 `127.0.0.1`，非回环地址直接拒绝启动。
 - 口令只存哈希；会话 cookie 名 `cb_provider`，可在页面退出或 `POST /api/panel/logout_all` 全部撤销。
 - 密钥文件：`<channels>/<bot>/.env`、`configs/providers.json`、`~/.claude/secrets/moments-panel*.env`、`~/.claude/skills/novelai-skill/.env.local`，均按 0600 写入，且已在 `.gitignore`。
+- worker 隔离写在 bot 目录下的 `.worker-settings.json`（0600）只含隔离设置、透传的模型与思考设置和禁止规则，不含 env 与任何密钥；全局 `settings.json` 的 env 段（可能含供应商令牌）只进 worker 与摘要子进程的环境，不进日志、命令行和文件。
 - dsh 令牌只读，只进 `Authorization` 头；不进日志、异常文本或页面。
 - 日志与页面响应会对 token / key 做打码；但**不要主动把日志原文发到公开渠道**。
 - 不要把 8767 直接挂公网。必须远程访问时，用 SSH 隧道或带鉴权的反向代理，并确认 dsh 转发路径不会绕过登录门。
