@@ -8,6 +8,7 @@
 路径一律由 ``ctx``（claude_files.context）给的根拼出，写入前不跟随软链。
 """
 import contextlib
+import importlib.util
 import json
 import os
 import re
@@ -400,6 +401,21 @@ def _voice_view(voice) -> dict:
     return {out: voice[key] for key, out in mapping if isinstance(voice.get(key), str) and voice[key]}
 
 
+_COMPACT_HOOK_INSTALLER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                       "scripts", "install_compact_hook.py")
+
+
+def _with_compact_hook(settings):
+    """新 bot 的项目设置直接带上群聊压缩补回钩子，与 scripts/install_compact_hook.py 同一份定义、同样幂等合并。
+    按文件路径加载该脚本，不经 `scripts` 包名导入，免得用户环境里同名的包顶替；模板的 hooks 结构不合预期时原样保留。"""
+    spec = importlib.util.spec_from_file_location("_install_compact_hook", _COMPACT_HOOK_INSTALLER)
+    installer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(installer)
+    if installer.validate(settings):
+        return settings
+    return installer.merge(settings)[0]
+
+
 def _write_payload(payload: str, spec: dict, token: SecretToken, channel: str, ctx) -> None:
     os.makedirs(payload, mode=0o700, exist_ok=True)
     os.chmod(payload, 0o700)
@@ -421,6 +437,7 @@ def _write_payload(payload: str, spec: dict, token: SecretToken, channel: str, c
     os.makedirs(claude, mode=0o700, exist_ok=True)
     settings = _template_json(paths, "settings.json") if paths else {}
     settings.pop("env", None)
+    settings = _with_compact_hook(settings)
     _write_text(os.path.join(claude, "settings.json"),
                 json.dumps(settings, ensure_ascii=False, indent=2) + "\n", 0o600)
 
