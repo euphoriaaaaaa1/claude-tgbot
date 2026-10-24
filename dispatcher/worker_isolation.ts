@@ -7,12 +7,14 @@
  *   - 透传组（思考强度、模型等）在 bot 两份设置都没设时写进 flag 层 <bot目录>/.worker-settings.json（经 --settings 传入）；
  *   - 全局 permissions.deny 与 bot 的取并集写进 flag 层；
  *   - 生图技能经 ~/.claude/worker-shared/.claude/skills/novelai-skill 链接挂入（--add-dir）。
+ * bot 目录在家目录下时，CLI 从 cwd 逐级向上找 .claude/skills、.claude/commands，会把用户级个人技能与个人命令当上级项目的
+ * 读进来（--setting-sources 管不到），所以再把这些名字写进 flag 层 skillOverrides 关掉；个人子代理这样关不掉，不处理。
  * 准备失败一律降级成旧参数（参数与环境与改动前逐字相同），日志只拼代码常量。
  * 全部导出函数不抛错、不读模块级环境变量；令牌只许进子进程环境，不进返回值以外的任何地方。
  */
 
 import {
-  closeSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync,
+  closeSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync,
   renameSync, rmdirSync, statSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'fs'
 import { dirname, isAbsolute, join, resolve } from 'path'
@@ -255,6 +257,64 @@ function hasEnvModel(d: Record<string, unknown>): boolean {
   return isPlainObject(d.env) && typeof d.env.ANTHROPIC_MODEL === 'string' && d.env.ANTHROPIC_MODEL.length > 0
 }
 
+function isDirectory(p: string): boolean {
+  try { return statSync(p).isDirectory() } catch { return false }
+}
+
+// SKILL.md 开头 frontmatter（首行 --- 到下一行 ---）里 name 的值；容忍 BOM、CRLF、值两端的引号与空白。
+// 读不出、没有结束线、没有 name 或值为空都返回 null（调用方照样写目录名）。
+function frontmatterName(file: string): string | null {
+  let text: string
+  try { text = readFileSync(file, 'utf8') } catch { return null }
+  const lines = text.replace(/^﻿/, '').split('\n').map(l => l.replace(/\r$/, ''))
+  if (lines[0]?.trimEnd() !== '---') return null
+  const end = lines.findIndex((l, i) => i > 0 && l.trimEnd() === '---')
+  if (end < 0) return null
+  for (const line of lines.slice(1, end)) {
+    const m = /^name[ \t]*:(.*)$/.exec(line)
+    if (!m) continue
+    let v = m[1].trim()
+    if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v[v.length - 1] === v[0]) v = v.slice(1, -1).trim()
+    return v.length > 0 ? v : null
+  }
+  return null
+}
+
+// 命令目录递归收 .md 文件名（扩展名不分大小写）；跟随链接，按真实路径去重防环；某一层读不出只跳过那一层
+function collectCommandNames(dir: string, names: Set<string>, seen: Set<string>): void {
+  let real: string
+  let entries: string[]
+  try { real = realpathSync(dir); entries = readdirSync(dir) } catch { return }
+  if (seen.has(real)) return
+  seen.add(real)
+  for (const e of entries) {
+    const p = join(dir, e)
+    if (isDirectory(p)) collectCommandNames(p, names, seen)
+    else if (e.length > 3 && e.slice(-3).toLowerCase() === '.md' && isRegularFile(p)) names.add(e.slice(0, -3))
+  }
+}
+
+// 用户级个人技能（<home>/.claude/skills/<目录>/SKILL.md，目录名 + frontmatter name）与个人命令（<home>/.claude/commands/**.md）的名字。
+// 两个目录各读各的；任何读错都只是少几个名字，不抛错、不记 note。生图引擎与 bot 自己 .claude/skills/ 下同名子目录的名字不收。
+function personalOverrideNames(home: string, botDir: string): string[] {
+  const names = new Set<string>()
+  const skillsDir = join(home, '.claude', 'skills')
+  try {
+    for (const e of readdirSync(skillsDir)) {
+      const skillFile = join(skillsDir, e, 'SKILL.md')
+      if (!isRegularFile(skillFile)) continue                 // stat 跟随链接：技能目录与 SKILL.md 常是链接，与 CLI 加载口径一致
+      names.add(e)
+      const fmName = frontmatterName(skillFile)
+      if (fmName !== null) names.add(fmName)
+    }
+  } catch { /* 读不出就不收个人技能 */ }
+  try { collectCommandNames(join(home, '.claude', 'commands'), names, new Set()) } catch { /* 同上 */ }
+  const botOwn = new Set<string>()
+  const botSkillsDir = join(botDir, '.claude', 'skills')
+  try { for (const e of readdirSync(botSkillsDir)) if (isDirectory(join(botSkillsDir, e))) botOwn.add(e) } catch { /* 没有就不排除 */ }
+  return [...names].filter(n => n !== SHARED_ENGINE && !botOwn.has(n))
+}
+
 export function prepareWorkerIsolation(opts: { botDir: string; home: string; user: SettingsLayer; engineDir: string;
                                                platform?: NodeJS.Platform }): PrepareOk | PrepareDegraded {
   const notes: string[] = []
@@ -283,11 +343,13 @@ export function prepareWorkerIsolation(opts: { botDir: string; home: string; use
       if (sharedDir === null) return degraded('shared_unavailable')
     }
 
-    // 5. flag 对象（键顺序固定）：隔离三键 → 透传组 → deny 并集
+    // 5. flag 对象（键顺序固定）：隔离三键 → 透传组 → deny 并集。
+    // skillOverrides = 三个自带项 + 个人技能与个人命令，合在一起按 JS 默认排序写出，同样的输入两次准备逐字相同
+    const overrideNames = [...new Set([...DISABLED_BUNDLED, ...personalOverrideNames(home, botDir)])].sort()
     const flag: Record<string, unknown> = {
       claudeMdExcludes: claudeMdExcludes([botDir, join(home, '.claude', 'worker-shared')], win),
       disableBundledSkills: true,
-      skillOverrides: Object.fromEntries(DISABLED_BUNDLED.map(n => [n, 'off'])),
+      skillOverrides: Object.fromEntries(overrideNames.map(n => [n, 'off'])),
     }
     const botTop = new Set([...Object.keys(main.data), ...Object.keys(local.data)])
     for (const group of PASS_GROUPS) {
