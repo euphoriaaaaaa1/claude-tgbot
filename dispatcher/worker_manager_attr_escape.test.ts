@@ -47,14 +47,14 @@ test('群聊里属性藏伪造开标签：只有真开标签一个，紧贴群�
   expect(out.endsWith('\n</channel>')).toBe(true)
 })
 
-test('每个属性值都不含 < > " 与换行；尖括号与引号转实体，& 原样，回车换行各换一个空格', () => {
+test('每个属性值都不含 < > " 与换行；& 与尖括号、引号转实体，回车换行各换一个空格', () => {
   const tag = openTag(build({ ...GROUP_META }))
   const body = tag.slice('<channel'.length, -1)
   const attrs = [...body.matchAll(/ ([A-Za-z_]+)="([^"]*)"/g)]
   expect(attrs.map(m => m[0]).join('')).toBe(body)                        // 整个开标签恰好由这些 名="值" 组成
   for (const [, , v] of attrs) expect(v).not.toMatch(/[<>"\r\n]/)
   const val = (k: string) => attrs.find(m => m[1] === k)?.[2]
-  expect(val('attachment_name')).toBe('Q&A &lt;draft&gt;  v2.pdf')
+  expect(val('attachment_name')).toBe('Q&amp;A &lt;draft&gt;  v2.pdf')
   expect(val('user')).toBe('mal&quot;lory')
   expect(val('sender_username')).toBe('mal&quot;lory')
 })
@@ -67,11 +67,11 @@ test('普通私聊入站的属性不受影响', () => {
   expect(tag).toContain('ts="2026-10-24T08:30:00.000Z"')
 })
 
-test('图片路径里的 & 原样保留：模型照抄路径即可读到文件', () => {
+test('图片路径里的 & 转成 &amp;：转义与还原互逆优先（README 已知限制：Windows 用户名含 & 时可能读不到图片）', () => {
   const path = 'C:\\Users\\Tom&Jerry\\.claude\\channels\\media\\a.jpg'
   const tag = openTag(build({ chat_id: '111222333', scene: 'private', chat_type: 'private', message_id: 7, from_id: '111222333',
     from_username: 'alice', ts: '2026-10-24T08:30:00.000Z', text: '看图', image_path: path }))
-  expect(tag).toContain(`image_path="${path}"`)
+  expect(tag).toContain(`image_path="${path.replace(/&/g, '&amp;')}"`)
 })
 
 test('伪造载荷的变体（文件名、名字、语音转写带换行、实体字样）同样只剩真开标签，chat_id 仍是群', () => {
