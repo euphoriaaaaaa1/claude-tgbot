@@ -31,7 +31,7 @@ import { applyInboundMarks, loadInboundState, testModeCheck, escapeUserMarkers, 
 import { nextLastHuman, type LastHumanMessage } from './promise_plan'
 import { photoDeliveryKeyFromMeta } from './photo_mode'
 import { planInboxBatch, readInboxMeta } from './inbox_names'
-import { escapeChannelWrapper } from './channel_wrap'
+import { escapeChannelAttr, escapeChannelWrapper } from './channel_wrap'
 import { winCmdSpawnSpec, probeClaudeWin } from './win_cmd'
 import {
   globalSettingsEnv, isolationInitCheck, isolationLogLine, isolationSwitchOff, overlayEnv, prepareWorkerIsolation,
@@ -1751,10 +1751,11 @@ export class WorkerManager {
     // ponytail: 取不到一律空串，绝不阻断投递；worker 恰好死在这一刻时最多少带一次口吻。
     const late = takeHangArchive(CHANNEL_DIR, chatIdStr)
     // meta 以 <channel> 标签形态附在正文后（替代 channel notification 的 params.meta，
-    // 让 model 依旧能读到 chat_id/message_id/附件等字段）
+    // 让 model 依旧能读到 chat_id/message_id/附件等字段）。属性值多半来自发送方：一律经 escapeChannelAttr
+    // （换行换空格、& < > " 转实体），值里伪造不出第二个开标签，也跨不了行（审查重要-1）
     const metaAttrs = Object.entries(notifMeta)
       .filter(([, v]) => v != null && v !== '')
-      .map(([k, v]) => `${k}="${String(v).replace(/"/g, '&quot;')}"`)
+      .map(([k, v]) => `${k}="${escapeChannelAttr(String(v))}"`)
       .join(' ')
     // 场景标注必须紧贴 <channel>，注入的几行一律排在它前面（摘要按开标签一刀切）
     // H-27：正文里的 <channel / </channel 前缀先转义，别让它破坏包装结构（其余字符逐字保留）
