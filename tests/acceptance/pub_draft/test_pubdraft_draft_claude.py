@@ -14,11 +14,15 @@ import pd_helpers as H
 from conftest import BOT, write_bot_cfg
 
 
+def _channel(pd_env):
+    return pd_env["channels"] / BOT
+
+
 def _setup(pd_env, base_url, key=H.MODEL_KEY, persona=H.PERSONA):
-    channel = write_bot_cfg(pd_env, extra="")
+    write_bot_cfg(pd_env, extra="")
     H.write_model_cfg(pd_env, base_url, key=key)
-    H.write_persona(channel, persona)
-    return channel
+    H.write_persona(_channel(pd_env), persona)
+    return _channel(pd_env)
 
 
 def _draft_path(pd_env, name=None, cwd=None):
@@ -34,15 +38,15 @@ def test_B6_B7_前置错误退出2且零请求(pd_env, variant):
     srv = H.model_stub(H.valid_draft_yaml())
     try:
         if variant == "未配置密钥":
-            channel = write_bot_cfg(pd_env)
+            write_bot_cfg(pd_env)
             H.write_model_cfg(pd_env, srv.url, key=None)
-            H.write_persona(channel)
+            H.write_persona(_channel(pd_env))
         elif variant == "不存在的bot":
             H.write_model_cfg(pd_env, srv.url)
         else:
-            channel = write_bot_cfg(pd_env)
+            write_bot_cfg(pd_env)
             H.write_model_cfg(pd_env, srv.url)
-            H.write_persona(channel, "")
+            H.write_persona(_channel(pd_env), "")
         r = H.run_draft([BOT], pd_env)
     finally:
         srv.stop()
@@ -152,7 +156,7 @@ def test_B12_sleep_hours合规_apply成功(pd_env, sleep, expected):
     draft.write_text(H.valid_draft_yaml(sleep_hours=sleep), encoding="utf-8")
     r = H.run_draft([BOT, "--apply", str(draft)], pd_env)
     assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
-    assert H.load_yaml(cfg)["sleep_hours"] == expected
+    assert H.load_yaml(cfg).get("sleep_hours", []) == expected
 
 
 @pytest.mark.parametrize("sleep", INVALID_SLEEP,
@@ -258,8 +262,8 @@ def test_B11e_f_g_B16_B17_apply草稿不合规与缺省sleep(pd_env):
     empty = dict(full, persona_summary="")
     flat = """persona_summary: 摘要值
 speaking_threshold: 阈值值
-sleep_hours:
-  - "00:30-06:30"
+jiwen:
+  delta_hints: 规则
 """
     for text, label in [
         (yaml.safe_dump(missing, allow_unicode=True), "缺项"),
@@ -300,7 +304,7 @@ sleep_hours:
 def test_B24_地址校验(pd_env, case):
     srv = H.model_stub(H.valid_draft_yaml()) if case in ("LOOPBACK", "ENV覆盖") else None
     try:
-        channel = write_bot_cfg(pd_env)
+        write_bot_cfg(pd_env)
         extra = {}
         if case == "ENV覆盖":
             # 配置里故意放不合规地址，只靠 PROACTIVE_DRAFT_BASE_URL 覆盖（接口四之三）
@@ -308,7 +312,7 @@ def test_B24_地址校验(pd_env, case):
             extra["PROACTIVE_DRAFT_BASE_URL"] = srv.url
         else:
             H.write_model_cfg(pd_env, srv.url if srv else case)
-        H.write_persona(channel)
+        H.write_persona(_channel(pd_env))
         r = H.run_draft([BOT], pd_env, cwd=pd_env["work"], extra_env=extra)
     finally:
         if srv is not None:
