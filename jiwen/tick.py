@@ -252,6 +252,33 @@ def _attr(attrs: str, name: str) -> str:
     return m.group(1) if m else ""
 
 
+_ASCII_DIGITS_RE = re.compile(r"^[0-9]+$")
+_INITIATE_FUTURE_TOLERANCE_S = 60   # marker 比当前时刻超前超过这么多秒，按坏值处理
+
+
+def _marker_initiate_ts(bot_id: str, chat_id: str, now: int) -> int:
+    """读「主动消息真正送达」的 marker（self_initiate.py 在 inbox 落地成功后写），读不到/不合规一律 0。
+
+    只收纯 ASCII 数字：小数、正负号、空白、全角数字都不收。超前 now 超过 60 秒的按坏值
+    （时钟回拨或写坏）处理。密钥类内容不在这里；marker 文件名里有 chat_id，告警只带 bot_id 与类型名。
+    """
+    key = f"{bot_id}-{chat_id}".replace("/", "_")
+    path = os.path.join(os.path.expanduser(_MARKER_DIR), f"{key}.last-sent")
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = f.read().strip()
+    except FileNotFoundError:
+        return 0
+    except Exception as e:
+        print(f"[jiwen.tick] 警告: {bot_id} 的 last-sent marker 读取失败({type(e).__name__})，按缺失处理",
+              file=sys.stderr)
+        return 0
+    if not _ASCII_DIGITS_RE.match(raw):
+        return 0
+    ts = int(raw)
+    return ts if ts <= now + _INITIATE_FUTURE_TOLERANCE_S else 0
+
+
 def _iso_to_ts(s) -> int:
     """ISO-8601（尾部 Z 等价 +00:00）→ unix 秒。空/格式非法一律 0。"""
     if not s:
@@ -760,22 +787,27 @@ def tick_one_bot(bot_id: str, jiwen_cfg: dict, state_dir: str, dry_run: bool = F
         summary["actions"].append(f"drift {mins:.1f}min: connection {old_conn:.3f}→{state.connection:.3f}{_froze}")
 
     # 3.4 F-02：connection 的两条下行通道（此前只涨不落，bot 长期卡在"必须开口"）
-    #   ① bot 的主动消息真正送达（窗口里出现 bot 发出的回复）→ 回落固定量
-    #   ② 用户沉默超过 connection_decay_after_min → 按小步回落
+    #   ① bot 的主动消息真正送达（.last-sent：self_initiate 写进 inbox 成功后才写）→ 回落固定量
+    #   ② bot 主动找过、对方超过 connection_decay_after_min 没回 → 按小步积分回落
+    #   S 在下次投递前不变、P 每 tick 无条件推进到 now：送达只扣一次；未回按本轮增量积分（每条各扣一段，
+    #   不重复扣同一段）。不再用 .last（它的语义是随机间隔闸，不是送达）。
     try:
-        if msgs and any(m.get("role") == "assistant" for m in msgs):
+        _sent = _marker_initiate_ts(bot_id, chat_id, now)
+        if _sent > 0 and _sent > prev_tick_ts:
             _c0 = state.connection
             state = engine.apply_delta(state, {"connection": -rates.connection_reply_decay})
             summary["actions"].append(
                 f"主动消息送达 → connection {_c0:.3f}->{state.connection:.3f}")
-        _silence_min = ((now - state.last_user_msg_ts) / 60.0
-                        if state.last_user_msg_ts > 0 else 0.0)
-        if _silence_min > rates.connection_decay_after_min:
-            _c0 = state.connection
-            _step = rates.connection_silence_decay_per_min * min(mins, 60.0)
-            state = engine.apply_delta(state, {"connection": -_step})
-            summary["actions"].append(
-                f"久未开口 {_silence_min:.0f}min → connection {_c0:.3f}->{state.connection:.3f}")
+        _decay_start = _sent + rates.connection_decay_after_min * 60.0
+        if (_sent > 0 and _sent > state.last_user_msg_ts
+                and now > _decay_start and prev_tick_ts > 0):
+            _inc_min = max(0.0, min((now - max(prev_tick_ts, _decay_start)) / 60.0, 60.0))
+            if _inc_min > 0:
+                _c0 = state.connection
+                _step = rates.connection_silence_decay_per_min * _inc_min
+                state = engine.apply_delta(state, {"connection": -_step})
+                summary["actions"].append(
+                    f"主动找过 {int(_inc_min)}min 未回 → connection {_c0:.3f}->{state.connection:.3f}")
     except Exception as e:
         summary["actions"].append(f"connection 下行 skip: {type(e).__name__}")
 

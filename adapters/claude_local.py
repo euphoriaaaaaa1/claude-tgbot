@@ -104,6 +104,20 @@ def _files_ctx() -> dict:
     )
 
 
+# 生活设定的错误码 → HTTP 状态（life_settings.LifeSettingsError.code）；没登记的按 internal/500
+_LIFE_HTTP = {"invalid": 422, "unknown_bot": 404, "busy": 409, "internal": 500}
+
+
+def _life_error(e, fallback: str) -> AdapterError:
+    """life_settings 的异常 → AdapterError：码与状态按表，fields 原样带回，异常文字给人看。"""
+    code = getattr(e, "code", None)
+    if code not in _LIFE_HTTP:
+        code = "internal"
+    message = getattr(e, "message", None)
+    return AdapterError(code, _LIFE_HTTP[code], message if isinstance(message, str) and message else fallback,
+                        fields=getattr(e, "fields", None))
+
+
 def _ids() -> set:
     return {b["id"] for b in bots_registry.bots(include_disabled=True)}
 
@@ -366,20 +380,25 @@ class ClaudeLocalAdapter(BackendAdapter):
             raise AdapterUnavailable("unconfigured", "生活设定模块还没就绪") from None
         try:
             return ls.get_life(bot_id)
+        except AdapterUnavailable:
+            raise
         except Exception as e:
-            raise AdapterError("internal", 500, getattr(e, "message", "生活设定读不出来")) from None
+            raise _life_error(e, "生活设定读不出来") from None
 
     def set_life(self, bot_id: str, values: dict) -> dict:
         _require_bot(bot_id)
+        if not isinstance(values, dict):
+            raise AdapterError("invalid", 422, "values 必须是键值表")
         try:
             ls = importlib.import_module("life_settings")
         except ImportError:
             raise AdapterUnavailable("unconfigured", "生活设定模块还没就绪") from None
         try:
             return ls.set_life(bot_id, values)
+        except AdapterUnavailable:
+            raise
         except Exception as e:
-            raise AdapterError(getattr(e, "code", "internal"), 500,
-                               getattr(e, "message", "生活设定没写成")) from None
+            raise _life_error(e, "生活设定没写成") from None
 
     # ── 通知 ────────────────────────────────────────────────────────────────
     def notify(self, bot_id: str, source: str, text: str, key: str) -> dict:

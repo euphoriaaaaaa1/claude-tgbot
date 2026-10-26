@@ -320,6 +320,14 @@ class DshHttpAdapter(BackendAdapter):
             raise AdapterUnavailable("error", "底层回的形状不对")
         return data
 
+    def get_persona_text(self, bot_id: str) -> str:
+        """只取人设正文（起草脚本用）：同 get_persona 走 GET /persona，只要求 text 是字符串、不看 version。
+        get_persona 仍要 version：管理台改人设靠它防覆盖。"""
+        text = self._request("GET", self._bot_path(bot_id, "/persona")).get("text")
+        if not isinstance(text, str):
+            raise AdapterUnavailable("error", "底层回的形状不对")
+        return text
+
     def set_persona(self, bot_id: str, body: dict) -> dict:
         if not isinstance(body, dict):
             raise AdapterError("invalid", 422, "请求体必须是键值表")
