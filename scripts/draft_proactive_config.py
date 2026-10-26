@@ -10,8 +10,8 @@ claude 后端（缺省，我们自己的 bot）起草四项：人设摘要 perso
   python3 scripts/draft_proactive_config.py <bot_id> [--backend claude|dsh] --apply <草稿路径>
       过目同意后把草稿写进这只 bot 的配置
 
-起草会把这只 bot 的人设全文发给配置的模型地址（claude：<bot_channel_path>/CLAUDE.md，连同配置里的几项基本
-信息；dsh：适配器 GET /bots/<id>/persona 回的 text）。地址与模型取 _global.yml 的 jiwen.delta_llm，环境变量
+起草会把这只 bot 的人设全文发给配置的模型地址（claude：<bot_channel_path>/CLAUDE.md 全文；
+dsh：适配器 GET /bots/<id>/persona 回的 text），不发配置里的任何其他字段。地址与模型取 _global.yml 的 jiwen.delta_llm，环境变量
 PROACTIVE_DRAFT_BASE_URL 可覆盖地址（只许 https 或回环地址上的 http，不许含反斜杠、@、空白）；请求不跟随
 重定向，http 地址一律直连，https 地址按配置的 proxy 走。DeepSeek 密钥只经 config_loader.get_deepseek_api_key
 取、只进请求头；dsh 适配器的地址与令牌只经 adapters.dsh_http.DshHttpAdapter 取用。屏幕上只有状态、字数、段数
@@ -65,14 +65,12 @@ ITEMS = (("persona_summary", "persona_summary"), ("speaking_threshold", "speakin
          ("jiwen.delta_hints", "jiwen_delta_hints"))
 SLEEP_KEY = "sleep_hours"
 SLEEP_MAX_ITEMS = 6    # 接口：0 到 6 项；生活设定字段表与 dsh 的上限都是 6
-# 随人设一起发过去的本 bot 基本信息（只取这几项，不带注册用的键）
-BASICS_KEYS = ("display_name", "user_name", "user_address", "bio", "city", "sleep_hours", "speaking_threshold")
 _FENCE_RE = re.compile(r"```[ \t]*(?:ya?ml)?[ \t]*\n(.*?)```", re.S | re.I)
 # 地址的 netloc 里出现方括号时只许这一种形状：方括号恰好包着 IPv6 字面量，后面只许跟端口
 _BRACKETED_NETLOC_RE = re.compile(r"\[([0-9A-Fa-f:.]+)\](?::[0-9]+)?")
 
 PROMPT = """你在给一个 Telegram 陪聊角色写四项配置。第 1、2、4 项给「要不要主动找对方说话」的判官用（角色睡着时不主动开口），第 3 项给判断角色情绪变化（思念值）的模型用。
-后面附有这个角色的基本信息与人设全文。除第 4 项在人设没写作息时可以推断外，只用人设里有的信息，不编造；前三项都不超过 4000 字。
+后面附有这个角色的人设全文。除第 4 项在人设没写作息时可以推断外，只用人设里有的信息，不编造；前三项都不超过 4000 字。
 
 1. persona_summary：200 到 400 字，概括性格、背景、与对方的关系、说话方式。
 2. speaking_threshold：判官可以直接使用的开口准则，写成一段完整的文字，不要只写一句，也不要写成列表。写清什么情况下主动找对方、什么时候别打扰（作息、对方在忙、刚聊过不久、对方一直没回时如何收敛），按真人的逻辑判断。书面化表述，不写示例句。
@@ -351,11 +349,6 @@ def _reply_values(reply: str, backend: str):
     return (texts, data[SLEEP_KEY]) if texts is not None else None
 
 
-def _basics(cfg: dict) -> str:
-    picked = {k: cfg[k] for k in BASICS_KEYS if cfg.get(k) not in (None, "", [], {})}
-    return yaml.safe_dump(picked, allow_unicode=True, sort_keys=False) if picked else "（配置里没有）\n"
-
-
 def _claude_persona(cfg: dict) -> str:
     channel = cfg.get("bot_channel_path")
     path = os.path.join(os.path.expanduser(channel), "CLAUDE.md") if isinstance(channel, str) and channel else ""
@@ -457,7 +450,7 @@ def draft(bot_id: str, backend: str, out, force: bool) -> None:
         persona = _claude_persona(cfg)
         _check_persona_size(persona, "这只 bot 的人设文件")
         llm = _llm_settings()
-        prompt = PROMPT + "\n【这个角色的基本信息】\n" + _basics(cfg) + "\n【这个角色的人设全文】\n" + persona
+        prompt = PROMPT + "\n【这个角色的人设全文】\n" + persona
     reply, stop_reason = _ask(prompt, *llm)
 
     parsed = None if stop_reason == "max_tokens" else _reply_values(reply, backend)
@@ -509,7 +502,7 @@ def apply_claude(bot_id: str, path: str) -> None:
             names = {field_key: name for name, field_key in ITEMS}
             detail = "；".join("%s %s" % (names.get(k, k), why) for k, why in sorted(e.fields.items()))
             raise _Fail(4, "草稿没通过校验（%s），配置没有改动" % detail)
-        raise _Fail(1, "写入失败：%s" % e.message)
+        raise   # busy/internal：契约规定退出 1 的 stderr 只有「出错了：<异常类名>」，交给 main 的统一兜底
     print("已写入 %s" % bot_id)
 
 
