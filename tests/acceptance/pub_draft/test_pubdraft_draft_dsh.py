@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """pub-draft 起草脚本（dsh 后端）验收：B18/B19。
 
-dsh 是回环假适配器（/adapter/v1 形状）；令牌只放临时文件。
+dsh 是回环假适配器（/adapter/v1 形状）；模型也是回环假服务；
+令牌只放临时文件。
 """
 import os
 import stat
@@ -12,23 +13,35 @@ import yaml
 import pd_helpers as H
 from conftest import BOT, CHAT, write_bot_cfg
 
+DSH_DRAFT = yaml.safe_dump({"sleep_hours": ["00:30-06:30"]}, allow_unicode=True)
 
-def _setup_dsh(pd_env, base_url=None, with_token=True, persona=H.PERSONA):
-    channel = write_bot_cfg(pd_env, extra="")
-    (channel / "access.json").write_text('{"allowFrom": ["%s"]}' % CHAT, encoding="utf-8")
-    H.write_persona(channel, persona)
+
+def _channel(pd_env):
+    return pd_env["channels"] / BOT
+
+
+def _setup_dsh(pd_env, base_url, with_token=True, persona=H.PERSONA):
+    """写 bot 配置 + 模型配置 + 密钥；起模型假服务。返回 (额外 env, 模型假服务)。"""
+    write_bot_cfg(pd_env, extra="")
+    (_channel(pd_env) / "access.json").write_text(
+        '{"allowFrom": ["%s"]}' % CHAT, encoding="utf-8")
+    H.write_persona(_channel(pd_env), persona)
     token_path = pd_env["home"] / ".config" / "claude-dsh-console" / "adapter.token"
     token_path.parent.mkdir(parents=True, exist_ok=True)
     if with_token:
         token_path.write_text(H.DSH_TOKEN, encoding="utf-8")
         token_path.chmod(0o600)
-    cfg = {"jiwen": {"tick_interval_min": 5},
+    model_srv = H.model_stub(DSH_DRAFT)
+    cfg = {"jiwen": {"tick_interval_min": 5,
+                     "delta_llm": {"base_url": model_srv.url,
+                                   "model": "deepseek-test", "api_key": H.MODEL_KEY}},
            "console": {"dsh_adapter_url": base_url or ""}}
     H.dump_yaml(cfg, pd_env["configs"] / "_global.yml")
+    H.dump_yaml({"deepseek": {"api_key": H.MODEL_KEY}}, pd_env["configs"] / "_secrets.yml")
     extra = {"CONSOLE_DSH_ADAPTER_URL": base_url or "", "DSH_ADAPTER_URL": base_url or ""}
     if with_token:
         extra["CONSOLE_ADAPTER_TOKEN_FILE"] = str(token_path)
-    return channel, extra
+    return extra, model_srv
 
 
 def _run(pd_env, args, extra):
@@ -41,13 +54,12 @@ def _mode(path):
 
 def test_B18a_dsh起草成功_只含sleep_hours_单行输出(pd_env):
     srv, _puts = H.dsh_stub()
+    extra, msrv = _setup_dsh(pd_env, srv.url)
     try:
-        _setup_dsh(pd_env, srv.url)
-        extra = {"CONSOLE_DSH_ADAPTER_URL": srv.url, "DSH_ADAPTER_URL": srv.url,
-                 "CONSOLE_ADAPTER_TOKEN_FILE": str(pd_env["home"] / ".config" / "claude-dsh-console" / "adapter.token")}
         r = _run(pd_env, [BOT, "--backend", "dsh"], extra)
     finally:
         srv.stop()
+        msrv.stop()
     assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
     path = pd_env["work"] / ("dsh-%s-proactive-draft.yml" % BOT)
     assert path.is_file()
@@ -70,17 +82,16 @@ def test_B18a_dsh起草成功_只含sleep_hours_单行输出(pd_env):
 
 def test_B18b_dsh_apply多余键丢弃_只写sleep_hours(pd_env):
     srv, puts = H.dsh_stub()
+    extra, msrv = _setup_dsh(pd_env, srv.url)
     try:
-        _setup_dsh(pd_env, srv.url)
         draft = pd_env["work"] / "d.yml"
         draft.write_text(yaml.safe_dump(
             {"sleep_hours": ["00:30-06:30"], "persona_summary": "多余"},
             allow_unicode=True), encoding="utf-8")
-        extra = {"CONSOLE_DSH_ADAPTER_URL": srv.url, "DSH_ADAPTER_URL": srv.url,
-                 "CONSOLE_ADAPTER_TOKEN_FILE": str(pd_env["home"] / ".config" / "claude-dsh-console" / "adapter.token")}
         r = _run(pd_env, [BOT, "--backend", "dsh", "--apply", str(draft)], extra)
     finally:
         srv.stop()
+        msrv.stop()
     assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
     assert len(puts) == 1, puts
     body = puts[0]
@@ -100,17 +111,13 @@ def test_B18b_dsh_apply多余键丢弃_只写sleep_hours(pd_env):
         "5xx", "回包形状不对"])
 def test_B19_dsh错误契约(pd_env, mode, args_kind):
     srv = None
+    if mode == "refused":
+        base, with_token = H.dead_url(), True
+    else:
+        srv, _puts = H.dsh_stub(mode="ok" if mode == "token_missing" else mode)
+        base, with_token = srv.url, mode != "token_missing"
+    extra, msrv = _setup_dsh(pd_env, base, with_token=with_token)
     try:
-        if mode == "refused":
-            base, with_token = H.dead_url(), True
-        else:
-            srv, _puts = H.dsh_stub(mode="ok" if mode == "token_missing" else mode)
-            base, with_token = srv.url, mode != "token_missing"
-        _setup_dsh(pd_env, base, with_token=with_token)
-        extra = {"CONSOLE_DSH_ADAPTER_URL": base, "DSH_ADAPTER_URL": base}
-        token_path = pd_env["home"] / ".config" / "claude-dsh-console" / "adapter.token"
-        if with_token:
-            extra["CONSOLE_ADAPTER_TOKEN_FILE"] = str(token_path)
         args = [BOT, "--backend", "dsh"]
         if args_kind == "apply":
             draft = pd_env["work"] / "d.yml"
@@ -118,9 +125,9 @@ def test_B19_dsh错误契约(pd_env, mode, args_kind):
                                             allow_unicode=True), encoding="utf-8")
             args += ["--apply", str(draft)]
         r = _run(pd_env, args, extra)
-        if srv is not None:
-            hits = list(srv.hits)
+        hits = list(srv.hits) if srv is not None else None
     finally:
+        msrv.stop()
         if srv is not None:
             srv.stop()
     expect = {"token_missing": 2, "bot_missing": 2, "life_missing": 2,
