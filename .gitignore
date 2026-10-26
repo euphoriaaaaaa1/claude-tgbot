@@ -66,3 +66,6 @@ stop-bots.sh
 
 # 项目开发账本：只在本地用，不公开（2026-09-30 用户裁定）
 PROJECT.md
+
+# 起草脚本的草稿（落点在仓内时自动生成，不进 git）
+*-proactive-draft.yml
