@@ -150,7 +150,7 @@ def _jiwen_setup(pd_env, last_user_msg_ts):
         "enabled": True,
         "tick_interval_min": 5,
         "state_dir": str(state_dir),
-        "rates": {"connection_per_min": 0},
+        "rates": {"connection_per_min": 0, "connection_relief_per_min": 0},
         "delta_llm": {"base_url": H.dead_url(), "api_key": H.MODEL_KEY,
                       "model": "deepseek-test", "timeout": 1},
     }}, pd_env["configs"] / "_global.yml")
