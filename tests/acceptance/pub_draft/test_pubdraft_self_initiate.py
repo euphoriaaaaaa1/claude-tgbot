@@ -23,11 +23,13 @@ T0 = int(NOW)
 SELF_INITIATE = H.REPO / "scripts" / "self_initiate.py"
 TICK = H.REPO / "jiwen" / "tick.py"
 
-SITECUSTOMIZE = """import os, subprocess, sys
+SITECUSTOMIZE = """import os, subprocess, sys, time
 sys.path.insert(0, os.environ['PD_REPO'])
 import db
 db.DB_PATH = os.environ['PD_DB']
 db.init()
+if os.environ.get('PD_NOW'):
+    time.time = lambda: float(os.environ['PD_NOW'])
 _real = subprocess.run
 def _run(cmd, *a, **k):
     s = ' '.join(cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
@@ -139,11 +141,13 @@ def test_B20b_未送达_无收件箱无last_sent(pd_env, case):
 
 def _jiwen_setup(pd_env, last_user_msg_ts):
     from conftest import STATE_REL, write_bot_cfg
-    channel = write_bot_cfg(pd_env)
+    write_bot_cfg(pd_env)
+    channel = pd_env["channels"] / BOT
     (channel / "access.json").write_text('{"allowFrom": ["%s"]}' % CHAT, encoding="utf-8")
     state_dir = pd_env["home"] / ".claude" / "dispatcher" / ".jiwen-state"
     state_dir.mkdir(parents=True, exist_ok=True)
     H.dump_yaml({"jiwen": {
+        "enabled": True,
         "tick_interval_min": 5,
         "state_dir": str(state_dir),
         "rates": {"connection_per_min": 0},
@@ -159,12 +163,14 @@ def _jiwen_setup(pd_env, last_user_msg_ts):
     markers.mkdir(parents=True, exist_ok=True)
     (markers / ("%s-%s.interval" % (BOT, CHAT))).write_text("0", encoding="utf-8")
     (markers / ("%s-%s.last" % (BOT, CHAT))).write_text(str(T0 - 1000), encoding="utf-8")
+    (markers / ("%s-%s.last-user" % (BOT, CHAT))).write_text(str(last_user_msg_ts), encoding="utf-8")
     return state_file
 
 
 def _run_tick(pd_env, now):
     assert TICK.is_file(), "实现缺失：jiwen/tick.py"
     env = _base_env(pd_env, now=now)
+    env["PD_NOW"] = str(int(now))
     return subprocess.run([sys.executable, str(TICK)], cwd=str(H.REPO), env=env,
                           capture_output=True, text=True, timeout=60)
 
@@ -179,7 +185,7 @@ SCENARIOS = {
     "a_送达扣一次": (str(T0), T0 - 100000, [(T0 + 300, 0.45), (T0 + 600, 0.45)]),
     "b_未回每5分钟积分": (str(T0), T0 - 100000, [(T0 + 14700, 0.44), (T0 + 15000, 0.43),
                                                 (T0 + 15300, 0.42)]),
-    "d_用户已回只扣送达": (str(T0), T0 + 100, [(T0 + 300, 0.45), (T0 + 600, 0.45)]),
+    "d_用户已回只扣送达": (str(T0), T0 + 1, [(T0 + 300, 0.45), (T0 + 600, 0.45)]),
     "c_无marker": (None, T0 - 100000, [(T0 + 300, 0.5), (T0 + 600, 0.5)]),
     "c_坏marker": ("12.3", T0 - 100000, [(T0 + 300, 0.5), (T0 + 600, 0.5)]),
     "c_未来超过60秒": (str(T0 + 3600), T0 - 100000, [(T0 + 300, 0.5), (T0 + 600, 0.5)]),
@@ -200,4 +206,6 @@ def test_B21a_b_c_d_送达与未回计分(pd_env, name):
     for now, expected in steps:
         r = _run_tick(pd_env, now)
         assert r.returncode == 0, (name, now, r.returncode, r.stdout, r.stderr)
-        assert _connection(pd_env, state_file) == expected, (name, now)
+        assert _connection(pd_env, state_file) == expected, (
+            name, now, state_file.read_text(encoding="utf-8"),
+            "OUT=" + (r.stdout or "") + " ERR=" + (r.stderr or ""))
