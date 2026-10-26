@@ -38,6 +38,21 @@ CJK_CHAR_PATTERN = re.compile(
     "㐀-䶿一-鿿ꥠ-꥿가-퟿豈-﫿ｦ-ￜ"
     "\U00020000-\U0003134f]"
 )
+# 分角色提示词（novelai-characters 方案 2.1，接口 4.1-4.5）。
+MAX_CHARACTERS = 6
+POSITION_MODES = ("auto", "manual")
+CHARACTERS_REASON_LIMIT = 10  # 报错首行最多列几条原因
+SHOWN_VALUE_LIMIT = 40  # 原因里回显的值（repr）最多几个字符
+# 带数字的人数词（1girl、2boys、6+others）：只该写在 prompt 里，出现在角色段时软提示。
+COUNT_TAG_PATTERN = re.compile(r"(?<![A-Za-z0-9_])\d+\+?(?:girls?|boys?|others?)(?![A-Za-z0-9_])", re.IGNORECASE)
+CHARACTERS_GUIDE = "写法见 novelai-skill SKILL.md「角色分段（characters）」"
+REASON_ABSENT = "没有 characters"
+REASON_LEGACY = "characters 是旧的 tags/traits 写法"
+REASON_NO_PREVIOUS = "修改模式没写 characters，上一张也没有可沿用的角色"
+REASON_PREVIOUS_INVALID = "上一张记录里的 characters 不合法"
+REASON_REVISE_NEW_PROMPT = "修改模式写了新提示词但没写 characters"
+# 这三种 bot 照着能改，stderr 带写法指引；没写 characters 等其余情形不写，免得旧规则会话乱改。
+GUIDED_REASONS = (REASON_LEGACY, REASON_PREVIOUS_INVALID, REASON_REVISE_NEW_PROMPT)
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -370,6 +385,157 @@ def normalize_intermediate(intermediate: dict[str, Any] | str) -> dict[str, Any]
     return normalized
 
 
+class CharactersError(ValueError):
+    """intermediate 的 position_mode 或 characters 不合法；reasons 是全部原因，顺序见接口 4.2。"""
+
+    def __init__(self, reasons: list[str]) -> None:
+        self.reasons = list(reasons)
+        shown = "；".join(self.reasons[:CHARACTERS_REASON_LIMIT])
+        if len(self.reasons) > CHARACTERS_REASON_LIMIT:
+            shown += f"；另有 {len(self.reasons) - CHARACTERS_REASON_LIMIT} 处"
+        super().__init__(f"characters 不合法：{shown}")
+
+
+def _shown(value: Any) -> str:
+    text = repr(value)
+    return text if len(text) <= SHOWN_VALUE_LIMIT else text[:SHOWN_VALUE_LIMIT] + "…"
+
+
+def classify_characters(source: Any) -> str:
+    """characters 的新旧写法判定：absent（没有这个键）、legacy（旧的 tags/traits 写法）、new（其余一律按新写法校验）。
+
+    source 是本次 intermediate 或上一张的 normalized_intermediate；字符串 intermediate 没有这个键。
+    旧写法只认"非空列表，且每项都是含 tags 或 traits、不含 positive 的对象"，字符串项与新旧混用都算新写法。
+    """
+    if not isinstance(source, dict) or "characters" not in source:
+        return "absent"
+    value = source["characters"]
+    if isinstance(value, list) and value and all(
+        isinstance(item, dict) and ("tags" in item or "traits" in item) and "positive" not in item
+        for item in value
+    ):
+        return "legacy"
+    return "new"
+
+
+def _is_unit_number(value: Any) -> bool:
+    # bool 不算数；NaN 与正负无穷在区间比较里都是 False，不用另判。
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
+
+
+def validate_characters(raw: Any, position_mode: str) -> list[dict[str, Any]]:
+    """校验新写法的 characters：一次查完再抛 CharactersError，通过则返回规范化列表。
+
+    规范化后每项只有 positive（去首尾空白），manual 且角色 ≥ 2 时另有 float 坐标的 center，其余键忽略。
+    不是列表或多于 MAX_CHARACTERS 项时只报这一条，不再逐项查。
+    """
+    if not isinstance(raw, list):
+        raise CharactersError([f"characters 必须是列表，收到 {type(raw).__name__}"])
+    if len(raw) > MAX_CHARACTERS:
+        raise CharactersError([f"角色最多 {MAX_CHARACTERS} 个，收到 {len(raw)} 个"])
+    with_center = position_mode == "manual" and len(raw) >= 2
+    reasons: list[str] = []
+    characters: list[dict[str, Any]] = []
+    for index, item in enumerate(raw, 1):
+        if not isinstance(item, dict):
+            reasons.append(f"第 {index} 个角色必须是对象，收到 {type(item).__name__}")
+            continue
+        positive = item.get("positive")
+        if positive is None or (isinstance(positive, str) and not positive.strip()):
+            reasons.append(f"第 {index} 个角色缺少 positive，或 positive 为空")
+        elif not isinstance(positive, str):
+            reasons.append(f"第 {index} 个角色的 positive 必须是字符串，收到 {type(positive).__name__}")
+        character: dict[str, Any] = {"positive": positive.strip() if isinstance(positive, str) else ""}
+        if with_center:
+            center = item.get("center")
+            if center is None:
+                reasons.append(f"position_mode 为 manual 时第 {index} 个角色缺少 center")
+            elif not isinstance(center, dict) or "x" not in center or "y" not in center:
+                reasons.append(f"第 {index} 个角色的 center 必须是含 x、y 的对象")
+            else:
+                bad_axes = [axis for axis in ("x", "y") if not _is_unit_number(center[axis])]
+                reasons.extend(
+                    f"第 {index} 个角色的 center.{axis} 必须是 0 到 1 之间的数，收到 {_shown(center[axis])}"
+                    for axis in bad_axes
+                )
+                if not bad_axes:
+                    character["center"] = {"x": float(center["x"]), "y": float(center["y"])}
+        characters.append(character)
+    if reasons:
+        raise CharactersError(reasons)
+    return characters
+
+
+def check_characters(source: Any) -> tuple[list[dict[str, Any]] | None, str]:
+    """校验 source 的 position_mode 与 characters，不合法抛 CharactersError，一次列全原因。
+
+    返回 (规范化角色列表, 生效的 position_mode)：没有 characters 键或是旧写法时列表为 None；
+    角色不足 2 个时生效的是 auto。position_mode 键存在就校验取值，不论有没有 characters。
+    """
+    if not isinstance(source, dict):
+        return None, "auto"
+    reasons: list[str] = []
+    position_mode = "auto"
+    if "position_mode" in source:
+        value = source["position_mode"]
+        if isinstance(value, str) and value in POSITION_MODES:
+            position_mode = value
+        else:
+            reasons.append(f"position_mode 只能是 auto 或 manual，收到 {_shown(value)}")
+    characters = None
+    if classify_characters(source) == "new":
+        try:
+            characters = validate_characters(source["characters"], position_mode)
+        except CharactersError as exc:
+            reasons.extend(exc.reasons)
+    if reasons:
+        raise CharactersError(reasons)
+    if characters is None or len(characters) < 2:
+        position_mode = "auto"
+    return characters, position_mode
+
+
+def resolve_characters(
+    intermediate: dict[str, Any] | str,
+    normalized: dict[str, Any],
+    previous_state: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """定本张发哪些角色（方案 2.1）：本次写了新写法就用本次的，修改模式没写时按规则沿用上一张，其余降级。
+
+    返回 characters（生效列表，没有为 None）、position_mode、use_coords、degraded、degraded_reason。
+    本次输入不合法抛 CharactersError；上一张记录不合法只降级（错的不是本次输入）。
+    修改模式写了新提示词就不沿用上一张的角色：新画面配旧角色会互相矛盾。
+    """
+    characters, position_mode = check_characters(intermediate)
+    reason = ""
+    kind = classify_characters(intermediate)
+    if kind == "legacy":
+        reason = REASON_LEGACY
+    elif kind == "absent":
+        if normalized.get("mode") != "revise":
+            reason = REASON_ABSENT
+        elif normalized.get("new_prompt_written"):
+            reason = REASON_REVISE_NEW_PROMPT
+        else:
+            previous = (previous_state or {}).get("normalized_intermediate")
+            if classify_characters(previous) != "new":
+                reason = REASON_NO_PREVIOUS
+            else:
+                try:
+                    characters, position_mode = check_characters(previous)
+                except CharactersError:
+                    reason = REASON_PREVIOUS_INVALID
+    if reason:
+        characters, position_mode = None, "auto"
+    return {
+        "characters": characters,
+        "position_mode": position_mode,
+        "use_coords": position_mode == "manual" and len(characters or []) >= 2,
+        "degraded": bool(reason),
+        "degraded_reason": reason,
+    }
+
+
 def build_reply_text(intermediate: dict[str, Any]) -> str:
     reply_text = normalize_text(str(intermediate.get("reply_text", "")))
     if reply_text:
@@ -383,7 +549,9 @@ def build_prompts(
     config: dict[str, Any],
     intermediate: dict[str, Any] | str,
     previous_state: dict[str, Any] | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
+    # 角色字段不合法时最先报出，先于下面的提示与"缺少 prompt"（接口 4.2：stderr 首行固定）。
+    check_characters(intermediate)
     # 放在最开头：之后无论正文为空、缺令牌还是上游报错，这行线索都已经输出。
     if isinstance(intermediate, dict):
         for key in RETIRED_NSFW_KEYS:
@@ -402,6 +570,27 @@ def build_prompts(
             "修改模式下写了新提示词只按新提示词出图\n"
         )
     previous_state = previous_state or {}
+
+    # 角色只走 char_captions，不进正文：守卫、画风前缀与 nsfw 判定都只看 base（方案 2.1）。
+    # 生效的角色记进 normalized，last_request 留下本张实际用的角色，下一张 revise 才能链式沿用。
+    roles = resolve_characters(intermediate, normalized, previous_state)
+    if roles["characters"] is not None:
+        normalized["characters"] = roles["characters"]
+        normalized["position_mode"] = roles["position_mode"]
+    if roles["degraded_reason"] in GUIDED_REASONS:
+        sys.stderr.write(
+            f"[novelai] 提示：{roles['degraded_reason']}，本张按整段提示词出图。{CHARACTERS_GUIDE}\n"
+        )
+    if classify_characters(intermediate) == "new" and roles["characters"]:
+        if intermediate.get("position_mode") == "manual" and len(roles["characters"]) == 1:
+            sys.stderr.write("[novelai] 提示：只有 1 个角色，不发坐标，按 auto 处理\n")
+        for index, character in enumerate(roles["characters"], 1):
+            count_tag = COUNT_TAG_PATTERN.search(character["positive"])
+            if count_tag:
+                sys.stderr.write(
+                    f"[novelai] 提示：第 {index} 个角色的 positive 含带数字的人数词 {count_tag.group(0)}，"
+                    "人数词只写在 prompt 里，角色段用 girl、boy、other\n"
+                )
 
     positive_prefix = normalize_text(str(config.get("positive_prefix", "")))
     negative_prefix = normalize_text(str(config.get("negative_prefix", "")))
@@ -454,6 +643,11 @@ def build_prompts(
         "mode": normalized.get("mode", "new"),
         "nsfw_enabled": "true" if nsfw_enabled else "false",
         "normalized_intermediate": normalized,
+        "characters": roles["characters"],
+        "position_mode": roles["position_mode"],
+        "use_coords": roles["use_coords"],
+        "degraded": roles["degraded"],
+        "degraded_reason": roles["degraded_reason"],
     }
 
 

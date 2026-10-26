@@ -43,13 +43,11 @@ compatibility:
 - **不要启动后台轮询**：调用生图脚本时优先一次等到完成，不要把脚本结果拆成“先 running 再 process 轮询再收尾”这种多段对外流程
 - **禁止假装已完成**：没有真实 toolCall、没有真实脚本返回时，不要输出“拍好了”“发你了”这类完成态内容，也不要在没有真实发送的情况下假装已发图
 - **禁止编造**：不要自己编 `/staged/...jpg`、`choice.png`、时间戳文件名或任何图片绝对路径，路径只能来自脚本返回结果
-- **Telegram 路径要求**：如果最终需要给 Telegram 发送本地图片，图片必须真实生成在 OpenClaw 当前允许的本地媒体目录内。当前 skill 的唯一默认最终目录是 `~/resource/media/<agent>/<session>/...`。
-- **禁止旧坏路径**：不要把 `~/resource/media/<agent>/<session>/...` 之外的旧目录（例如 `~/.openclaw/agents/<agent>/images/...`、任何 `workspace-*/outputs/...`、任何 `workspace-*/generated/...`） 当作 reply files 的图片路径。
+- **Telegram 路径要求**：如果最终需要给 Telegram 发送本地图片，图片必须真实生成在 OpenClaw 当前允许的本地媒体目录内。当前 skill 的唯一默认最终目录是 `~/resource/media/<agent>/chat_<chat_id>/...`。
+- **禁止旧坏路径**：不要把 `~/resource/media/<agent>/chat_<chat_id>/...` 之外的旧目录（例如 `~/.openclaw/agents/<agent>/images/...`、任何 `workspace-*/outputs/...`、任何 `workspace-*/generated/...`） 当作 reply files 的图片路径。
 
 ## 中间稿要求
-真正要交给脚本的核心只有两样：
-- 正面提示词主体
-- 可选的一句回复
+交给脚本的核心有三样。`prompt` 用英文写整个画面；`characters` 为画面里每个可见角色写一项，同样用英文；`reply_text` 可选，写一句回复。
 
 ## 语言要求：
 - prompt主体必须是英文
@@ -61,22 +59,19 @@ compatibility:
 - 如果用户没有指定具体场景，要创造多样化的场景（不同地点、姿势、服装、视角）
 - 避免重复使用相同的提示词模板
 
-中间稿最少只要保证：
-- `prompt`
-
-可选字段：
-- `reply_text`
-- `mode`
-- `revision_instruction`
-- `override_full_prompt`
+中间稿最少要有 `prompt`。可选字段为 `characters`、`position_mode`、`reply_text`、`mode`、`revision_instruction`、`override_full_prompt`。
 
 推荐结构：
 
 ```json
 {
-  "prompt": "low angle shot, mature woman taking a mirror selfie in bedroom, standing by the bed, warm lamp light | 1girl, mature beautiful woman, 1.3::black long wavy hair::, fair skin, 2::wearing silk nightgown::, 1.7::looking_at_viewer::",
-  "reply_text": "这次给你换一张。",
-  "mode": "new"
+  "mode": "new",
+  "prompt": "Wide shot at eye level, a woman pouring tea for a man at a cafe window seat, warm afternoon light, 1girl, 1boy, both fully visible",
+  "position_mode": "manual",
+  "characters": [
+    {"positive": "girl, long black hair, white blouse, pouring tea, smiling", "center": {"x": 0.3, "y": 0.55}},
+    {"positive": "boy, short brown hair, navy hoodie, holding a cup, looking at her", "center": {"x": 0.7, "y": 0.55}}
+  ]
 }
 ```
 
@@ -92,7 +87,7 @@ compatibility:
 
 ## Prompt 主体的撰写规则
 ### 基本约束
-- `max_tokens`: `512`
+- `prompt` 与全部角色 `positive` 合计约 512 token，角色最多 6 个。
 - `tag_separator`: `,`
 - NSFW 场景前缀：`nsfw,`
 
@@ -100,15 +95,13 @@ compatibility:
 - 标签必须和这一次的具体人物、动作、场景、镜头贴合
 - 用 danbooru 风格 tag 写，但不要写成一盘散沙，必须有层次
 - `prompt` 必须是英文；禁止把中文人物设定、中文动作描述、中文场景句子直接提交给 NovelAI
-- **正文按此三段顺序写**（硬结构；第 1、2 段必写，第 3 段可选）：
-  1. **一句话画面描述（放最前，不加权重）**：`镜头视角 + 角色动作 + 场景 + 位置 + 灯光`。**本段及整条正文一律不得出现质量标签**（`best quality` / `masterpiece` / `year 2025` / `4k` / 画师名——脚本已注入，写了会把画面描述挤到最后）
-  2. **每个角色一段**：段首是该角色的人数/性别标签（`1girl` / `1boy` / `2boys` …），随后是该角色的外貌特征、服装、表情、动作
-  3. **可选：细节/氛围**（光影质感、场景小物等）
+- `prompt` 只写整个画面，顺序为镜头视角、角色动作、场景、位置、灯光，随后是人数标签、构图约束、环境与氛围。景别词、镜头词、动感词与 `nsfw` 标签都写在 `prompt` 里。`prompt` 不写任何角色的外貌与服装，也不写质量标签。
+- 每个可见角色在 `characters` 里写一项，`positive` 以不带数字的 `girl`、`boy` 或 `other` 开头，随后写该角色在本镜头里可见的完整外貌、服装、表情与动作。每一项在每一张里都完整写出，不用同上或编号指代。
 - **正文不得以质量标签开头，也不得在正文里堆叠质量/画风标签**：`best quality` / `masterpiece` / `absurdres` / `very aesthetic` / 画师名等由脚本前缀自动注入，正文再抄一遍等于把画面描述挤到最后
 - 只写一个瞬间，不写连续过程，不写“接下来”“然后”“正在一步步”
 - 只写正面内容，不写负面词
 - 不要把固定正面前缀里的内容重复抄一遍
-- 如果是 NSFW 场景，当轮正文必须含 `nsfw,`（这是唯一的色图开关）；续图（revise）时写在 `revision_instruction` 或新 `prompt` 的开头，否则这张按正常图出（只写 `revision_instruction` 时会沿用上一张正文，上一张里的 `nsfw` 也会一起带上；要转回正常图就写新 `prompt`）
+- 如果是 NSFW 场景，当轮 `prompt` 必须含 `nsfw,`（这是唯一的色图开关）；续图（revise）时写在 `revision_instruction` 或新 `prompt` 的开头，否则这张按正常图出（只写 `revision_instruction` 时会沿用上一张正文，上一张里的 `nsfw` 也会一起带上；要转回正常图就写新 `prompt`）。`nsfw` 不写在角色的 `positive` 里。
 
 ### 权重规则
 - 可用范围：`0.5 - 3`
@@ -128,21 +121,20 @@ compatibility:
 - 强调：`1.5::rain, night::`
 - 弱化：`0.5::coat::`
 
-不要把所有 tag 都加权，但**画面里每一个出场角色都必须给权重**——不允许任何角色裸写（不加权）：
-- **每个角色的身份和外观**：主角（自己）用 `2`，同框的其他角色（尤其"用户"）**同样必须给**，从 `minor_character` 档（`1.2 - 1.3`）起步；模型按权重分配画面注意力，**没权重的角色会被裁出画面或只留局部**（实测：同框的"用户"消失，就是只给主角加权造成的）
+不要把所有 tag 都加权，但每个角色的 `positive` 都要给权重，不允许任何角色裸写。需要加权的有以下几类。
+- **每个角色的身份和外观**：写在各自的 `positive` 里，主角从 `2` 起，同框的其他角色从 `1.2 - 1.3` 起；模型按权重分配画面注意力，**没权重的角色会被裁出画面或只留局部**（实测：同框的"用户"消失，就是只给主角加权造成的）
 - 主动作和关键姿势
 - 主场景
 - 关键镜头和关键细节
 
-### 多角色结构
-多角色必须采用 `|` 分隔符结构，段序与上面的「正文三段」完全一致：
-
-`画面描述 | 角色1 | 角色2 | 角色3 ...`
-
-- **第 1 段 = 一句话画面描述**：`镜头视角 + 角色动作 + 场景 + 位置 + 灯光`；可一并带 NSFW 前缀（如适用）、人物总数标签（`2girls` / `1boy, 1girl` …）、环境、时间、场景氛围。**不写质量标签**（脚本前缀已注入）。
-- **之后每段 = 一个角色**：段首写该角色的性别标签（`1girl` / `1boy`），随后该角色外貌、服装、表情、动作。
-- **单角色同样按此段序**：画面描述句在前，角色段在后（即使不分段，也保持这个先后）。
-- **多角色防裁切（硬要求）**：画面描述句里必须写**正面式**构图约束（`both fully visible` / `full body of both`——不写 `no cropping` 这类否定词，与"不写负面词"规则冲突），并避免 `close-up` / `upper body` 这类会把镜头锁死在单人的词；**每个角色的段里都要给权重**（见上「权重规则」——没有任何角色可以裸写）。
+### 角色分段（characters）
+- 画面里每个可见角色写一项，单人画面也写一项；画面里没有人时写 `"characters": []`。
+- 人数标签只写在 `prompt` 里，`positive` 以不带数字的 `girl`、`boy` 或 `other` 开头。
+- 角色按画面从左到右的顺序排列。
+- 两人及以上需要固定站位时写 `"position_mode": "manual"`，并给每个角色写 `center`。`x` 与 `y` 取 0 到 1，`x` 从左到右增大，`y` 从上到下增大。同时在 `prompt` 里用自然语言写出位置关系。站位只是倾向，不保证精确。不需要固定站位时省略 `position_mode` 与 `center`。
+- 多人画面在 `prompt` 里写正面式构图约束，避免把镜头锁在单人身上的景别词。
+- `characters` 只对 NovelAI 有效。ComfyUI 仍按 comfyui-skill 写整段提示词，两套语法不得混用。
+- 脚本以退出码 3 停下时，按报错指出的角色与字段改好 intermediate 再重跑。没写 `characters` 时脚本按整段提示词出图，角色容易串色或缺失。
 
 镜头视角示例：
 - `POV`
@@ -153,6 +145,8 @@ compatibility:
 - `Over-the-shoulder shot`
 - `Bird's eye view`
 - `Dutch angle`
+- `Fisheye lens` / `wide-angle lens` / `telephoto lens`
+- `From front` / `from behind` / `side view`（第三人称的正面 / 背面 / 侧面）
 - `Wide shot`
 - `Medium shot`
 
@@ -214,9 +208,7 @@ compatibility:
 - `fantasy_atmosphere`
 
 ### 角色段规则
-每个 `|` 后面的角色段，第一项必须是角色性别标签：
-- `1girl`
-- `1boy`
+每个角色的 `positive` 第一项是不带数字的 `girl`、`boy` 或 `other`。
 
 高权重外貌示例：
 - `2::long_silver_hair::`
@@ -224,7 +216,7 @@ compatibility:
 - `1.3::curvy::`
 - `1.55::small_breasts::`
 - `large_breasts`
-- `2::matured female::`
+- `2::mature female::`
 - `1.5::teenager::`
 
 服装示例：
@@ -265,7 +257,7 @@ compatibility:
 
 角色互动写法（**必须写清"谁对谁做"**，这是最容易画反的地方）：
 
-- 语法：`<角色是谁>#<动作>`，**同一个动作两边各标一次**，分别写进各自角色的段里：
+- 语法：`<角色是谁>#<动作>`，**同一个动作两边各标一次**，分别写进各自角色的 `positive`：
   - `source#动作` = 这个角色是动作的**发起方**（他/她在做）
   - `target#动作` = 这个角色是动作的**承受方**（动作落在他/她身上）
   - `mutual#动作` = 双方对等（接吻、拥抱、互相抚摸）
@@ -273,45 +265,33 @@ compatibility:
   - `2.0::source#princess carry::`（这段的角色是抱人那个）
   - `2.0::target#vaginal_penetration::`（这段的角色是被进入那个）
   - `mutual#kissing` / `mutual#hugging`
-  - **`mutual#` 的完整写法 = 同样两边各写一次**（对等动作，各自段里写自己那一半的身体归属，绝不只写一边）：
-    - 接吻：`角色段：1.8::mutual#kissing:: the girl's lips pressed against the boy's lips` ＋ `用户段：1.8::mutual#kissing:: the boy's lips meeting the girl's lips, the boy's hand cupping the girl's cheek`
-    - 拥抱：`角色段：2.0::mutual#hugging:: the girl's arms wrapped around the boy's back` ＋ `用户段：2.0::mutual#hugging:: the boy's arms holding the girl's waist, her cheek against his chest`
+  - **`mutual#` 的完整写法 = 同样两边各写一次**（对等动作，各自的 `positive` 里写自己那一半的身体归属，绝不只写一边）：
+    - 接吻：`角色的 positive：1.8::mutual#kissing:: the girl's lips pressed against the boy's lips` ＋ `用户的 positive：1.8::mutual#kissing:: the boy's lips meeting the girl's lips, the boy's hand cupping the girl's cheek`
+    - 拥抱：`角色的 positive：2.0::mutual#hugging:: the girl's arms wrapped around the boy's back` ＋ `用户的 positive：2.0::mutual#hugging:: the boy's arms holding the girl's waist, her cheek against his chest`
 
 **三道防线（缺一就容易画反，三道都要做）：**
 
-1. **动作写进"做动作那个角色"的段里**，不要只写在开头那句话面描述段。三段结构里第②段是"每个角色一段"，动作写在谁的段里，模型就更可能认为是谁在动。
+1. **动作写进"做动作那个角色"的 `positive` 里**，不要只写在 `prompt` 里。动作写在谁的 `positive` 里，模型就更可能认为是谁在动。
 2. **身体部位必须带归属**：写 `girl's nipples` / `boy's nipples` / `the woman's neck`，**绝不写裸的 `nipples` / `mouth` / `hand`**——不带归属时模型会自己挑一边，往往挑错。
 3. **禁止主语不明的裸动名词**：只写 `licking nipples` / `sucking` / `caressing` 而不写谁对谁做，模型默认按"被画面主体做"来画，最容易与用户意图相反。
 
 **按用户原话的施受关系写，不要按画面惯例猜：**
 
-- 用户说「**我来**舔她 / 我服侍她 / 我摸她」→ **用户段**标 `source#`，**角色段**标 `target#`
-  `角色段：2.0::target#nipple_licking:: the girl's nipples` + `用户段：2.0::source#nipple_licking::`
-- 用户说「**让她**舔我 / 她服侍我 / 她摸我」→ 反过来：**角色段**标 `source#`，**用户段**标 `target#`
-  `用户段：2.0::target#nipple_licking:: the boy's nipples` + `角色段：2.0::source#nipple_licking::`
+- 用户说「**我来**舔她 / 我服侍她 / 我摸她」→ **用户的 positive** 标 `source#`，**角色的 positive** 标 `target#`
+  `角色的 positive：2.0::target#nipple_licking:: the girl's nipples` + `用户的 positive：2.0::source#nipple_licking::`
+- 用户说「**让她**舔我 / 她服侍我 / 她摸我」→ 反过来：**角色的 positive** 标 `source#`，**用户的 positive** 标 `target#`
+  `用户的 positive：2.0::target#nipple_licking:: the boy's nipples` + `角色的 positive：2.0::source#nipple_licking::`
 
 **写完自检一句**：把 prompt 读一遍，问自己"这段里到底是谁在动？"——与用户原话对不上就重写，不要指望模型自己纠正。
 
 
 ### Prompt 顺序
-每个 prompt 推荐按这个顺序组织：
-1. 画面简述
-2. NSFW 前缀（如适用）
-3. 人物总数标签
-4. 角色识别
-5. 风格标签
-6. 构图
-7. 环境
-8. 光照
-9. 配色
-10. 详细描述
-
-标签顺序很重要，越靠前影响越强。
+`prompt` 按此顺序：画面简述、NSFW 前缀（如适用）、人数标签、风格标签、构图、环境、光照、配色。角色识别与详细描述写进各自的 `characters` 项。标签越靠前影响越强。
 
 语言示例：
-- 正确：`medium shot, mature woman taking a mirror selfie in bedroom, standing by bed, warm morning light, 1woman, floral midi dress, shy expression`
-- 正确：`close-up selfie, sleepy young woman lying in bed, messy hair, soft bedside lamp, cozy bedroom`
-- 错误：`成熟女性，站在卧室床边自拍`（中文写法，模型认不出）
+- 正确：`prompt` 写 `medium shot, taking a mirror selfie in bedroom, standing by bed, warm morning light, 1girl`，`characters[0].positive` 写 `girl, 2::mature female::, floral midi dress, shy expression`
+- 正确：`prompt` 写 `close-up selfie, lying in bed, cozy bedroom, soft bedside lamp, 1girl`，`characters[0].positive` 写 `girl, 2::messy hair::, sleepy expression`
+- 错误：`温雅，42岁成熟人妻，站在卧室床边自拍`
 - 错误：`mature woman 在卧室自拍，表情羞涩`
 
 ## 工作流
@@ -363,6 +343,7 @@ compatibility:
 
 **(2) `intermediate.json` 里 `mode=revise`（prompt 层）**
 - 自动把上一次的 `prompt_body` 沿用过来，再追加你这次的修改指令到 `revision_instruction`
+- `characters` 与 `position_mode` 也自动沿用；本次写了新 `prompt` 时要连同 `characters` 一起写，否则按整段提示词出图；要改站位或换人，也连同 `characters` 一起写
 - 比 AI 自己重新写一遍 prompt 一致性高得多
 
 ### 何时用什么
@@ -379,7 +360,7 @@ compatibility:
 
 **新场景（mode=new）**：完整描述场景。
 ```json
-{ "prompt": "lying on bed, white sheets, ..." }
+{ "prompt": "lying on bed, white sheets, ...", "characters": [{"positive": "girl, ..."}] }
 ```
 
 **同场景续图（mode=revise）**：只写要改的部分，环境会自动从上次沿用。
@@ -398,7 +379,7 @@ python3 ~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py \
   --config ~/.claude/skills/novelai-skill/assets/default_config.json \
   --ratio <portrait|landscape|square|wide> \
   --agent-name <当前agent名> \
-  --session-name <当前session名>
+  --chat-id <当前聊天的chat_id>
 
 # 同场景续图（房间/床/灯光要保持一致）
 python3 ~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py \
@@ -407,39 +388,35 @@ python3 ~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py \
   --ratio <portrait|landscape|square|wide> \
   --reuse-seed \
   --agent-name <当前agent名> \
-  --session-name <当前session名>
+  --chat-id <当前聊天的chat_id>
 ```
 
-**一轮要出多张图（mode=new）——不同场景/不同动作的多张，用一条命令并行生成；但"同一动作不同视角"的两张是例外，见下**：
-每张图的提示词互不依赖（**同一时刻同一动作、仅视角不同**——正文除"视角/镜头那段"外逐字相同；该段**仅指第 1 段开头的镜头短语本身**，同一句里的构图约束/动作/场景/灯光一律逐字照抄，一开始就能全部想好），所以把“写 N 份
-intermediate + 并行跑 N 次脚本”合进同一条 Bash 命令，间隔 0.6 秒起一路。
-同账号并发单张请求不撞锁（免费条件是“每次请求一张”，并发的每一路都满足），
-总耗时 ≈ 最慢一张，比串行快一倍以上。
-
-**例外——同一动作不同视角的两张必须串行 + 同 seed**：这时**不能并行**。图A 正常跑（定下 seed），**图B 带 `--reuse-seed` 串行跑**（并行时图B 读不到图A 的 `last_request.json`，会拿到随机 seed）。原理：视角由提示词决定，而床、灯光、房间、皮肤纹理等细节由 seed 主导——**seed 不同则这些全部重抽，两张会像两个不同的场景**。代价是慢一张的时间，换来"同一个世界换机位"。
+**一轮要出多张图（mode=new）**：多张一律串行，一张跑完再跑下一张。同一动作只换视角的几张用同一个种子，第一张正常跑，其余各张加 `--reuse-seed`；想要构图不同就各用随机种子，不加 `--reuse-seed`。
+每张图的提示词互不依赖（**同一时刻同一动作、仅视角不同**——正文除"视角/镜头那段"外逐字相同；该段**仅指 `prompt` 开头的镜头视角短语本身**（`prompt` 的顺序见「基本要求」），同一句里的构图约束/动作/场景/灯光一律逐字照抄，一开始就能全部想好），所以把"写 N 份 intermediate + 依次跑 N 次脚本"合进同一条 Bash 命令。
+同账号可能撞并发锁（HTTP 429 Concurrent generation is locked；几只 bot 加朋友圈共用一个账号）。脚本遇到会自动排队重试（等 5/10/15/20/30 秒、共 6 次），排队约 80 秒仍撞锁就按原始那次的错误报失败。
+视角由提示词决定，而床、灯光、房间、皮肤纹理等细节由 seed 主导，seed 不同则这些全部重抽，两张会像两个不同的场景。后一张要读前一张记下的 seed，所以同 seed 的几张必须串行。
 
 ```bash
 W=~/resource/workspace/<agent>
 G=~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py
 C=~/.claude/skills/novelai-skill/assets/default_config.json
 cat > "$W/im_1.json" <<'EOF'
-{"mode":"new","prompt":"<图A 完整提示词>"}
+{"mode":"new","prompt":"<画面描述>","characters":[<角色>]}
 EOF
 cat > "$W/im_2.json" <<'EOF'
-{"mode":"new","prompt":"<图B 完整提示词>"}
+{"mode":"new","prompt":"<画面描述>","characters":[<角色>]}
 EOF
+rm -f "$W"/r*.json
 python3 "$G" --intermediate "$W/im_1.json" --config "$C" --ratio portrait \
-  --agent-name <agent> --session-name <session> > "$W/r1.json" 2>&1 &
-sleep 0.6
-python3 "$G" --intermediate "$W/im_2.json" --config "$C" --ratio portrait \
-  --agent-name <agent> --session-name <session> > "$W/r2.json" 2>&1 &
-wait
-cat "$W/r1.json" "$W/r2.json"
+  --agent-name <agent> --chat-id <chat_id> > "$W/r1.json" 2>&1; rc=$?; printf '\nexit=%s\n' "$rc" >> "$W/r1.json"
+grep -q '^exit=0$' "$W/r1.json" && { python3 "$G" --intermediate "$W/im_2.json" --config "$C" --ratio portrait --reuse-seed \
+  --agent-name <agent> --chat-id <chat_id> > "$W/r2.json" 2>&1; rc=$?; printf '\nexit=%s\n' "$rc" >> "$W/r2.json"; }
+cat "$W/r1.json" "$W/r2.json" 2>/dev/null
 ```
 
-- 命令 timeout 给足 300 秒（并行总时长 ≈ 最慢一张 + 服务端 5xx 重试）
-- 某一路 HTTP 500 挂掉是服务端老毛病、与并发无关：成功的照常发，挂的那张要么补跑一次、要么本轮少发一张，**不要因为一张挂了就整轮不发图**
-- **续图/修图（mode=revise 或 --reuse-seed）不并行**，仍然单独串行跑——revise 依赖上一次的落盘状态，并行会互相踩
+- 构图不同的几张不带 `--reuse-seed`，彼此互不依赖，仍逐张串行运行，但后一张不以前一张成功为条件。
+- 命令 timeout 按每张约 150 秒给足（含服务端 5xx 重试与撞锁排队）。
+- 某一张因 HTTP 500 失败多为服务端偶发故障。同一种子的几张中第一张失败时，先补跑第一张，成功后再跑后面几张；补跑仍失败时，这一轮按失败处理，做法同各 bot 生图共享规则中的失败处理。其余情况下某一张失败时补跑一次，或本轮少发一张，已成功的照常发出。
 
 调用要求：
 - 不要为了展示过程去读出旧 intermediate.json
@@ -455,22 +432,20 @@ python3 ~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py \
   --config ~/.claude/skills/novelai-skill/assets/default_config.json \
   --ratio portrait \
   --agent-name <agent> \
-  --session-name telegram-<你的user_id>
+  --chat-id <chat_id>
 ```
 
 当前建议：
 - 图片的实际中转位置和最终可发送路径由 `generate_novelai_image.py` 负责处理
 - agent 只使用脚本返回结果完成发送，不要自己假设下载目录，不要自己拼接旧路径
-- reply files 只接受位于 `~/resource/media/<agent>/<session>/...` 的真实文件；如果脚本返回路径不在这个目录模式内，视为失败，不要发送
+- reply files 只接受位于 `~/resource/media/<agent>/chat_<chat_id>/...` 的真实文件；如果脚本返回路径不在这个目录模式内，视为失败，不要发送
 
 推荐约定：
 - OpenClaw 用 `openclaw`
 
-会话名优先顺序：
-1. `--session-name`
-2. `NOVELAI_SESSION_NAME`
-3. 平台自带的会话 id 环境变量
-4. `default-session`
+记录文件夹的定法：
+- 一律传 `--chat-id <当前聊天的chat_id>`（只许可选负号加数字，不合规脚本会报中文错误退出）。传了它，同一聊天的记录固定落在 `chat_<chat_id>` 文件夹，`--session-name` 和各会话环境变量都被忽略；不要再自己起会话名。
+- 没传 `--chat-id` 时才按旧的会话名顺序定文件夹（仅为兼容）：`--session-name` → `NOVELAI_SESSION_NAME` → 平台自带的会话 id 环境变量 → `default-session`。
 
 ## 返回给用户的内容
 生成成功后：

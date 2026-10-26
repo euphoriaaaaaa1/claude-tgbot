@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import io
 import json
 import os
@@ -21,11 +22,27 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from prompt_builder import build_prompts, load_json  # noqa: E402
+from prompt_builder import CharactersError, build_prompts, check_characters, load_json  # noqa: E402
+
+# 分角色的四个新键（接口 4.4）：返回 JSON、last_request 与 history 都有，取值以最终成功的请求体为准。
+CHARACTER_RESULT_KEYS = ("characters_used", "use_coords", "degraded", "degraded_reason")
+CHARACTERS_OFF_REASON = "分角色已关闭"
+FLAT_400_REASON = "主请求被拒（HTTP 400），按整段提示词重试"
+FLAT_5XX_REASON = "主请求连续 5xx，按整段提示词重试"
 
 
 def skill_root() -> Path:
     return SCRIPT_DIR.parent
+
+
+def characters_switched_off() -> bool:
+    """开关文件 <skill 根>/assets/characters_off 存在即关闭分角色（接口 4.8），只看在不在、不读内容。
+
+    skill 根与 styles.json 同一个接缝（NOVELAI_SKILL_ROOT 优先）。用途是线上出问题时不换回旧脚本也能
+    把角色并回整段提示词出图；文件只在需要时经用户同意创建。
+    """
+    root = Path(os.environ.get("NOVELAI_SKILL_ROOT") or skill_root())
+    return (root / "assets" / "characters_off").exists()
 
 
 def sanitize_agent_name(value: str) -> str:
@@ -63,6 +80,20 @@ def resolve_session_name(cli_value: str | None = None) -> str:
         if env_value:
             return sanitize_session_name(env_value)
     return "default-session"
+
+
+_CHAT_ID_PATTERN = re.compile(r"-?[0-9]+")
+
+
+def resolve_bucket_name(chat_id: str | None, session_name_cli: str | None) -> str:
+    """定记录文件夹名：给了 --chat-id 就固定为 chat_<chat_id>（同一聊天永远落同一个文件夹，
+    --session-name 与各会话环境变量一律忽略）；没给则维持原来按会话名的做法。
+    chat_id 只许可选负号加 ASCII 数字（不 strip、不收全角），不合规抛 ValueError。"""
+    if chat_id is None:
+        return resolve_session_name(session_name_cli)
+    if not _CHAT_ID_PATTERN.fullmatch(chat_id):
+        raise ValueError(f"--chat-id 必须是整数（可带负号），收到：{chat_id!r}")
+    return f"chat_{chat_id}"
 
 
 def default_output_dir(agent_name: str, session_name: str) -> Path:
@@ -215,9 +246,9 @@ def apply_active_style(config: dict[str, Any], agent_name: str | None = None) ->
     return apply_style_params(config, style.get("params") or {})
 
 
-# 三个守卫（景别 / 角度 / 动感）都只在"当轮正文漏写"时补；其中景别守卫按用户拍板
-# 默认强制全身，只有"明确局部词"才放行。非全身词（medium shot / upper body 等）不再
-# 视为"用户已指定景别"，必须从最终提示词中剥离并强制注入全身。
+# 三个守卫（景别 / 角度 / 动感）都只在"当轮正文漏写"时补。景别：正文明确写了任何一种景别
+# （全身、半身、中景、七分身、特写、肖像……）就照它来，不删、不改回全身；完全没写才补默认全身。
+# 镜头：正文写了任何镜头/视角词就尊重；漏写时补的角度由 seed 决定，同 seed 永远同角度。
 #
 # 判定域是 prompt_body_used（当轮正文），不是 final_positive_prompt：后者含 style 的
 # positive_prefix，画师串里本来就常有 portrait / from above 这类词，拿它判定会让守卫
@@ -231,21 +262,22 @@ _FULL_BODY_WORDS = (
 _EXPLICIT_LOCAL_WORDS = (
     "close-up", "closeup", "close up", "extreme close-up", "extreme closeup",
     "extreme close up", "face focus", "headshot", "portrait",
-    "特写", "脸部特写", "拍脸", "大头照",
+    "特写", "脸部特写", "拍脸", "大头照", "肖像", "头像",
 )
 _NON_FULL_BODY_WORDS = (
-    "medium shot", "upper body", "upper-body", "upper_body", "cowboy shot",
-    "waist up", "bust shot", "knee shot", "between_legs", "lower body",
-    "lower_body", "low body", "中景", "近景", "半身", "上半身",
+    "medium shot", "mid shot", "medium close-up", "upper body", "upper-body", "upper_body",
+    "half body", "cowboy shot", "three-quarter shot", "waist up", "bust shot", "knee shot",
+    "thigh up", "between_legs", "lower body", "lower_body", "low body",
+    "中景", "近景", "半身", "上半身", "下半身", "七分身", "三分身", "膝上", "腰上",
 )
-# 兼容旧名：仍表示"景别/镜头词"并集，供历史引用方使用。
+# 景别词并集（旧名 _SHOT_WORDS 保留给历史引用方）；命中任一个就视为"正文已写景别"。
 _SHOT_WORDS = tuple(dict.fromkeys(
     _FULL_BODY_WORDS + _EXPLICIT_LOCAL_WORDS + _NON_FULL_BODY_WORDS + ("from far away",)
 ))
 
 
 def _phrase_pattern(term: str) -> str:
-    """把可能带空格/连字符/下划线的英文短语变成宽松匹配，覆盖 Upper-body / upper_body 等写法。"""
+    """把可能带空格/连字符/下划线的英文短语变成宽松匹配，覆盖 Upper-body / upper_body / FROM-ABOVE 等写法。"""
     parts = re.split(r"[\s_-]+", term.strip().lower())
     if len(parts) == 1:
         return re.escape(parts[0])
@@ -253,85 +285,46 @@ def _phrase_pattern(term: str) -> str:
 
 
 def _compile_word_pattern(words: tuple[str, ...]) -> re.Pattern[str]:
-    # 长词优先，避免"上半身"被"半身"先吃掉；英文短语的连字符/下划线由 _phrase_pattern 统一覆盖。
+    # 长词优先，避免"上半身"被"半身"先吃掉；英文短语的连字符/下划线/多余空白由 _phrase_pattern 统一覆盖。
     unique = tuple(dict.fromkeys(words))
     pattern = "|".join(_phrase_pattern(w) for w in sorted(unique, key=len, reverse=True))
     return re.compile(pattern, re.IGNORECASE)
 
 
-_FULL_BODY_PATTERN = _compile_word_pattern(_FULL_BODY_WORDS)
-_EXPLICIT_LOCAL_PATTERN = _compile_word_pattern(_EXPLICIT_LOCAL_WORDS)
-_NON_FULL_BODY_PATTERN = _compile_word_pattern(_NON_FULL_BODY_WORDS)
+_SHOT_PATTERN = _compile_word_pattern(_SHOT_WORDS)
 
 # 默认景别锁死为全身（呆板出在平视/站定/居中，不出在全身，那三维交给角度与动感守卫）。
 # detailed face：竖版全身叠极端广角容易糊脸，这是"全身"的真实代价，一并写死。
 _DEFAULT_SHOT = "full body, head to toe visible, detailed face"
 
 
-def _clean_prompt_text(value: str) -> str:
-    """清理剥离非全身词后可能留下的双逗号/多余空格，不把普通空白改成逗号。"""
-    value = value.replace("，", ",")
-    value = re.sub(r"(?:\s*,\s*)+", ", ", value)
-    value = re.sub(r"\s+", " ", value)
-    return value.strip(" ,")
-
-
-def _find_body_segment(final: str, body: str) -> str | None:
-    """在 final_positive_prompt 里定位"当轮正文"片段。
-
-    build_prompts 会把正文中的中文逗号规范化为英文逗号，因此不能只用 prompt_body_used
-    原文做子串查找；这里同时准备一个已按同样规则轻量规范化的候选。
-    """
-    if not body:
-        return None
-    candidates = [body]
-    normalized_body = re.sub(r"\s*，\s*", ", ", body)
-    normalized_body = re.sub(r"\s+", " ", normalized_body)
-    normalized_body = normalized_body.strip(" ,")
-    if normalized_body and normalized_body != body:
-        candidates.append(normalized_body)
-    for candidate in candidates:
-        if candidate and candidate in final:
-            return candidate
-    return None
-
-
 def ensure_shot_size(prompts: dict[str, str]) -> dict[str, str]:
     body = prompts.get("prompt_body_used", "") or ""
-    final = prompts.get("final_positive_prompt", "") or ""
-
-    # 1. 正文命中明确局部词：尊重原样，不注入全身、不剥离。
-    if _EXPLICIT_LOCAL_PATTERN.search(body):
-        return prompts
-
-    # 2. 正文命中全身词：已经达标，不重复堆叠。
-    if _FULL_BODY_PATTERN.search(body):
-        return prompts
-
-    # 3. 其他情况（无景别词，或只出现非全身词）：从最终提示词中剥离"正文里出现"的
-    #    非全身词，再在最前面注入默认全身。prompt_body_used 保留原文供排查。
-    body_segment = _find_body_segment(final, body)
-    if body_segment is not None:
-        cleaned_body = _NON_FULL_BODY_PATTERN.sub("", body_segment)
-        cleaned_body = _clean_prompt_text(cleaned_body)
-        final = final.replace(body_segment, cleaned_body)
-    else:
-        # 极端兜底：定位不到正文片段时也只在最后手段整体清理，避免漏掉非全身词。
-        final = _NON_FULL_BODY_PATTERN.sub("", final)
-    final = _clean_prompt_text(final)
-
-    # 若剥离后 final 已空（正文仅是非全身词），只保留默认全身即可，不出现前导逗号。
-    injected = f"{_DEFAULT_SHOT}, {final}" if final else _DEFAULT_SHOT
-    prompts["final_positive_prompt"] = injected
+    if _SHOT_PATTERN.search(body):
+        return prompts  # 正文已明确写了景别（任何一种），照它来，不删不改
+    fp = prompts.get("final_positive_prompt", "") or ""
+    prompts["final_positive_prompt"] = f"{_DEFAULT_SHOT}, {fp}" if fp else _DEFAULT_SHOT
     return prompts
 
 
+# 镜头/视角词表：整理自 SKILL.md 的镜头示例与原守卫词表，归一规则与景别守卫相同。
 _CAMERA_WORDS = (
-    "pov", "first-person", "first person", "high angle", "low angle",
-    "from above", "from below", "from side", "over-the-shoulder", "over the shoulder",
-    "dutch angle", "bird's-eye", "birds-eye", "worm's-eye", "eye-level", "eye level",
-    "profile view", "top-down", "overhead", "from behind", "rear view", "back view",
+    # 第一 / 第三人称
+    "pov", "first-person", "first person", "third-person", "third person",
+    # 俯仰与高度
+    "high angle", "low angle", "from above", "from below", "eye-level", "eye level",
+    "bird's-eye", "birds-eye", "bird's eye", "worm's-eye", "worms-eye", "worm's eye",
+    "top-down", "overhead", "dutch angle",
+    # 正面 / 背面 / 侧面
+    "from front", "from the front", "front view", "frontal view",
+    "from side", "from the side", "side view", "profile view",
+    "from behind", "from the back", "rear view", "back view",
+    "over-the-shoulder", "over the shoulder",
+    # 镜头焦段
+    "fisheye", "fish-eye", "fish eye", "wide-angle", "wide angle", "ultra wide",
+    "telephoto",
 )
+_CAMERA_PATTERN = _compile_word_pattern(_CAMERA_WORDS)
 _CAMERA_POOL = [
     "from above, high angle shot", "from below, low angle shot",
     "from side, profile view", "over-the-shoulder shot",
@@ -341,11 +334,14 @@ _CAMERA_POOL = [
 ]
 
 
-def ensure_camera_angle(prompts: dict[str, str]) -> dict[str, str]:
+def ensure_camera_angle(prompts: dict[str, str], seed: int | None = None) -> dict[str, str]:
     fp = prompts.get("final_positive_prompt", "")
-    if any(w in prompts.get("prompt_body_used", "").lower() for w in _CAMERA_WORDS):
+    if _CAMERA_PATTERN.search(prompts.get("prompt_body_used", "") or ""):
         return prompts  # 当轮正文已指定镜头（含 POV），尊重不动
-    angle = random.SystemRandom().choice(_CAMERA_POOL)
+    if seed is None:
+        angle = random.SystemRandom().choice(_CAMERA_POOL)
+    else:
+        angle = _CAMERA_POOL[seed % len(_CAMERA_POOL)]  # 同 seed 永远补同一个角度
     prompts["final_positive_prompt"] = f"{angle}, {fp}"
     return prompts
 
@@ -440,6 +436,27 @@ def build_payload(config: dict[str, Any], prompts: dict[str, str]) -> dict[str, 
     if raw_params.get("skip_cfg_above_sigma") is not None:
         params["skip_cfg_above_sigma"] = raw_params["skip_cfg_above_sigma"]
 
+    # 分角色（接口 4.3）：只在有效角色 ≥ 1 时给已有键赋值，键与键序不变；没有角色时与改造前逐字节相同。
+    characters = prompts.get("characters") or []
+    if characters:
+        use_coords = bool(prompts.get("use_coords"))
+        centers = [
+            {"x": float(c["center"]["x"]), "y": float(c["center"]["y"])}
+            if use_coords and c.get("center") else {"x": 0.5, "y": 0.5}
+            for c in characters
+        ]
+        params["use_coords"] = use_coords
+        # 实测只证明了"characterPrompts 为 [] 加 char_captions"被接受，配置里非空时会同时发出两套角色。
+        params["characterPrompts"] = []
+        params["v4_prompt"]["caption"]["char_captions"] = [
+            {"char_caption": c["positive"], "centers": [center]} for c, center in zip(characters, centers)
+        ]
+        params["v4_prompt"]["use_coords"] = use_coords
+        # 负面各槽固定空串、坐标与正面相同；负面词照旧由配置拼在 base。
+        params["v4_negative_prompt"]["caption"]["char_captions"] = [
+            {"char_caption": "", "centers": [dict(center)]} for center in centers
+        ]
+
     return {
         "input": prompts["final_positive_prompt"],
         "model": config["model"],
@@ -447,6 +464,19 @@ def build_payload(config: dict[str, Any], prompts: dict[str, str]) -> dict[str, 
         "use_new_shared_trial": True,
         "parameters": params,
     }
+
+
+def flatten_characters(prompts: dict[str, Any]) -> dict[str, Any]:
+    """把角色并回整段提示词：返回副本，final_positive_prompt 为 base 与各角色 positive 依序以 ", " 连接，角色清空。
+
+    只给 400 平铺重发、5xx 精简请求体、开关文件三处用；交给 build_payload 得到的就是改造前的生产主请求形状。
+    """
+    flat = dict(prompts)
+    positives = [c["positive"] for c in prompts.get("characters") or []]
+    flat["final_positive_prompt"] = ", ".join([prompts["final_positive_prompt"], *positives])
+    flat["characters"] = []
+    flat["use_coords"] = False
+    return flat
 
 
 def build_fallback_payload(
@@ -553,12 +583,20 @@ def describe_http_error(exc: error.HTTPError) -> str:
 
 
 _RETRY_DELAYS = (3, 5, 8)
+# 撞并发锁是排队信号：几只 bot 加朋友圈共用一个账号，前面可能排着好几张（每张几十秒），
+# 等待窗口要盖得住两三张的时间，共 80 秒；5xx 是偶发故障，仍用上面的短退避。
+_LOCK_RETRY_DELAYS = (5, 10, 15, 20, 30)
+_LOCK_DETAIL = "Concurrent generation is locked"
+
+
+def _is_lock_error(code: int, detail: str) -> bool:
+    return code == 429 and _LOCK_DETAIL in detail
 
 
 def _is_retryable(code: int, detail: str) -> bool:
     """值得重试的只有两类：5xx 是 NovelAI 侧偶发故障（V5 Full 实测约一半概率 500），
     429 + 并发锁是排队信号。其余 4xx 是请求本身不合法，重试只是等量重复同一个错误。"""
-    return code >= 500 or (code == 429 and "Concurrent generation is locked" in detail)
+    return code >= 500 or _is_lock_error(code, detail)
 
 
 def request_with_retry(
@@ -566,38 +604,95 @@ def request_with_retry(
     headers: dict[str, str],
     payload: dict[str, Any],
     delays: tuple[int, ...] = _RETRY_DELAYS,
-) -> tuple[bytes | None, str | None, bool]:
-    """发一次请求，可重试的错误按 delays 退避重发。
+    lock_delays: tuple[int, ...] = _LOCK_RETRY_DELAYS,
+) -> tuple[bytes | None, str | None, bool, str | None]:
+    """发一次请求，可重试的错误退避重发：5xx 按 delays，撞并发锁按 lock_delays，两边各自计数。
 
-    返回 (响应体, 错误说明, 是否属于可重试类错误)；响应体非 None 即成功。
+    返回 (响应体, 错误说明, 是否属于可重试类错误, 失败类别)；响应体非 None 即成功，失败类别为 None。
+    失败类别按最后一次请求定：server（5xx 或 2xx 空响应）、lock（429 并发锁）、bad_request（400）、
+    other（其余 4xx、网络不通、读响应中断）。有角色时 generate_image 按类别分开处理（接口 4.6）。
     """
     last_error: str | None = None
     retryable = False
-    for attempt in range(len(delays) + 1):
+    failure: str | None = None
+    server_attempt = lock_attempt = 0
+    while True:
+        locked = False
         try:
             status_code, body = request_image(endpoint, headers, payload)
             if status_code < 400 and body:
-                return body, None, False
+                return body, None, False, None
             # 走到这里是 2xx 空响应（服务端异常），或 urlopen 没抛异常的 4xx/5xx
             last_error = f"NovelAI 请求失败：HTTP {status_code}"
             retryable = status_code >= 500 or status_code < 400
+            failure = "server" if retryable else ("bad_request" if status_code == 400 else "other")
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore").strip() or str(exc.reason)
             last_error = format_http_error(exc.code, detail)
             retryable = _is_retryable(exc.code, detail)
+            locked = _is_lock_error(exc.code, detail)
+            if locked:
+                failure = "lock"
+            elif exc.code >= 500:
+                failure = "server"
+            else:
+                failure = "bad_request" if exc.code == 400 else "other"
         except error.URLError as exc:
             # 网络没通：换个请求体也一样不通，不值得再退避空转
-            return None, f"NovelAI 请求失败，网络没通：{exc.reason}", False
-        if not retryable or attempt >= len(delays):
+            return None, f"NovelAI 请求失败，网络没通：{exc.reason}", False, "other"
+        except (http.client.HTTPException, OSError) as exc:
+            # 请求已经发出去但响应没收全（读超时、连接被重置、响应体被截断）：
+            # NovelAI 那边可能已经生成并计了费，结果未知，不盲目重发。
+            # URLError 也是 OSError，但上面已先接住，这里只剩 urlopen 之后的读阶段错误。
+            return None, f"请求中途断了，结果未知（{type(exc).__name__}: {exc}）", False, "other"
+        if not retryable:
             break
-        time.sleep(delays[attempt])
-    return None, last_error, retryable
+        if locked:
+            if lock_attempt >= len(lock_delays):
+                break
+            time.sleep(lock_delays[lock_attempt])
+            lock_attempt += 1
+        else:
+            if server_attempt >= len(delays):
+                break
+            time.sleep(delays[server_attempt])
+            server_attempt += 1
+    return None, last_error, retryable, failure
 
 def load_previous_state(output_dir: Path) -> dict[str, Any] | None:
+    """读上一张的记录。文件不存在、读不了、不是合法 JSON、不是对象，一律按"没有上一张"处理，
+    只在 stderr 记一行：否则一次半写就会让这个桶之后每次生图都失败，直到有人手工删文件。"""
     last_request_path = output_dir / "last_request.json"
     if not last_request_path.exists():
         return None
-    return load_json(last_request_path)
+    try:
+        state = load_json(last_request_path)
+    except (OSError, ValueError) as exc:
+        sys.stderr.write(
+            f"[novelai] 上一张的记录读不了，按没有上一张处理：{last_request_path}（{exc}）\n"
+        )
+        return None
+    if not isinstance(state, dict):
+        sys.stderr.write(
+            f"[novelai] 上一张的记录不是对象，按没有上一张处理：{last_request_path}\n"
+        )
+        return None
+    return state
+
+
+def _write_json_atomic(path: Path, record: dict[str, Any]) -> None:
+    """同目录临时文件 + 原子改名：进程中途被杀也不会留下半个 JSON。"""
+    data = json.dumps(record, ensure_ascii=False, indent=2) + "\n"
+    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def save_generation_state(
@@ -624,14 +719,10 @@ def save_generation_state(
         "source_request_path": result.get("source_request_path", ""),
         "generated_at": timestamp,
     }
+    record.update({key: result[key] for key in CHARACTER_RESULT_KEYS if key in result})
     history_path = history_dir / f"{timestamp}_{uuid.uuid4().hex[:8]}.json"
-    history_path.write_text(
-        json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    (state_dir / "last_request.json").write_text(
-        json.dumps(record, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    _write_json_atomic(history_path, record)
+    _write_json_atomic(state_dir / "last_request.json", record)
     return record
 
 
@@ -644,30 +735,73 @@ def generate_image(
     state_dir: Path | None = None,
     agent_name: str | None = None,
 ) -> dict[str, Any]:
+    # 角色字段不合法时最先报出：早于画风参数告警等一切 stderr，也早于读令牌、发请求、写文件（接口 4.2）。
+    check_characters(intermediate)
     actual_state_dir = state_dir or output_dir
     previous_state = load_previous_state(actual_state_dir)
     config = apply_active_style(config, agent_name)
+    # 先把 seed 定下来：镜头守卫按它选角度，主请求体与精简重试也都用这同一个。
+    config["seed"] = resolve_seed(config)
     prompts = build_prompts(config, intermediate, previous_state=previous_state)
-    prompts = ensure_shot_size(prompts)     # 强制每张有景别，默认全身（漏写才补，尊重特写）
-    prompts = ensure_camera_angle(prompts)  # 强制每张有具体镜头角度（漏写才补，尊重 POV）
+    prompts = ensure_shot_size(prompts)     # 每张有景别：正文写了照它来，漏写才补全身
+    prompts = ensure_camera_angle(prompts, seed=config["seed"])  # 漏写才补，角度由 seed 定
     prompts = ensure_dynamic_feel(prompts)  # 强制每张有动态感（漏写才补，治僵硬静态图）
     token = read_token()
     endpoint = os.getenv(
         "NOVELAI_IMAGE_ENDPOINT", "https://image.novelai.net/ai/generate-image"
     )
     headers = build_browser_headers(token)
-    payload = build_payload(config, prompts)
-    response_body, last_error, retryable = request_with_retry(endpoint, headers, payload)
-    if response_body is None and retryable:
+    # 有效角色 ≥ 1 时才有开关、400 平铺重发与撞锁原样再发；没有角色时每一步都与改造前相同（接口 4.6）。
+    # 降级原因：开关、400、5xx 三种只在有角色时出现且互斥，此时 prompt_builder 不给原因；其余取它的结果。
+    sent = prompts
+    degraded_reason = str(prompts.get("degraded_reason") or "")
+    if prompts.get("characters") and characters_switched_off():
+        sent, degraded_reason = flatten_characters(prompts), CHARACTERS_OFF_REASON
+    with_roles = bool(sent.get("characters"))
+    payload = build_payload(config, sent)
+    response_body, last_error, retryable, failure = request_with_retry(endpoint, headers, payload)
+    if response_body is None and with_roles and failure == "bad_request":
+        # 400 不出图、不扣额度：把角色并回整段，按主请求形状（char_captions 为空）重发一次。
+        payload = build_payload(config, flatten_characters(sent))
+        response_body, flat_error, _, _ = request_with_retry(
+            endpoint, headers, payload, delays=(), lock_delays=()
+        )
+        if response_body is None:
+            sys.stderr.write(f"[novelai] 整段提示词重试也失败：{flat_error}\n")
+        else:
+            degraded_reason = FLAT_400_REASON
+    elif response_body is None and with_roles and failure == "lock":
+        # 撞锁是并发冲突，与角色字段无关：原请求体（保留角色）再发一次，次数同"耗尽后再试一次"。
+        response_body, again_error, _, _ = request_with_retry(
+            endpoint, headers, payload, delays=(), lock_delays=()
+        )
+        if response_body is None and again_error:
+            sys.stderr.write(f"[novelai] 原请求体再发一次也失败：{again_error}\n")
+    elif response_body is None and retryable:
         # 主请求体是 5xx / 并发锁挂的，换精简请求体再试一次（只一次，别把偶发 500 放大成限流）。
         # 4xx 不走这里：请求本身不合法，再发一次只会等量重复同一个错误。
-        payload = build_fallback_payload(config, prompts)
-        response_body, fallback_error, _ = request_with_retry(
-            endpoint, headers, payload, delays=()
+        # 有角色时精简请求体用平铺后的整段（精简请求体没有 v4 字段，装不下分角色）。
+        payload = build_fallback_payload(config, flatten_characters(sent) if with_roles else sent)
+        response_body, fallback_error, _, _ = request_with_retry(
+            endpoint, headers, payload, delays=(), lock_delays=()
         )
-        last_error = fallback_error or last_error
+        if response_body is None and fallback_error:
+            # 报给 bot 的仍是原始那次的错误：真正的故障原因在主请求那边，
+            # 精简请求体被拒（多半是 400）只是备用路径的事，记一行 stderr 就够。
+            sys.stderr.write(f"[novelai] 精简请求体重试也失败：{fallback_error}\n")
+        elif with_roles:
+            degraded_reason = FLAT_5XX_REASON
     if response_body is None:
         raise RuntimeError(last_error or "NovelAI 请求失败。")
+    if degraded_reason in (FLAT_400_REASON, FLAT_5XX_REASON):
+        sys.stderr.write(f"[novelai] 提示：{degraded_reason}，本张按整段提示词出图\n")
+    v4_prompt = payload["parameters"].get("v4_prompt")  # 精简请求体没有 v4 字段
+    character_fields = {
+        "characters_used": len(v4_prompt["caption"]["char_captions"]) if isinstance(v4_prompt, dict) else 0,
+        "use_coords": bool(v4_prompt.get("use_coords")) if isinstance(v4_prompt, dict) else False,
+        "degraded": bool(degraded_reason),
+        "degraded_reason": degraded_reason,
+    }
 
     output_dir.mkdir(parents=True, exist_ok=True)
     actual_state_dir.mkdir(parents=True, exist_ok=True)
@@ -683,6 +817,7 @@ def generate_image(
             "request_payload": payload,
             "mode": prompts.get("mode", "new"),
             "source_request_path": source_request_path,
+            **character_fields,
         },
         prompts,
         source_request,
@@ -708,6 +843,7 @@ def generate_image(
             )
         ),
         "saved_state": state,
+        **character_fields,
     }
 
 
@@ -726,6 +862,14 @@ def main() -> None:
         help=(
             "Session name bucket for output storage. Default: NOVELAI_SESSION_NAME, "
             "platform session id vars, or default-session"
+        ),
+    )
+    parser.add_argument(
+        "--chat-id",
+        help=(
+            "Chat id of the current conversation (optional minus sign + digits). "
+            "When given, records go to the fixed bucket chat_<chat_id> and "
+            "--session-name is ignored"
         ),
     )
     parser.add_argument(
@@ -768,6 +912,14 @@ def main() -> None:
     args = parser.parse_args()
 
     load_local_env()
+    # .env.local 里的 NOVELAI_AGENT_NAME/NOVELAI_SESSION_NAME 要先进环境再定文件夹；
+    # chat_id 不合规就一行中文退出，不读输入、不发请求。
+    try:
+        agent_name = resolve_agent_name(args.agent_name)
+        session_name = resolve_bucket_name(args.chat_id, args.session_name)
+    except ValueError as exc:
+        sys.stderr.write(f"[novelai] {exc}\n")
+        sys.exit(2)
     intermediate_path = Path(args.intermediate)
     # 防御：父目录可能不存在（worker 用 Bash 重定向写 intermediate 时不会自动建目录），
     # 先建好，让上游下一次写入不再 ENOENT；本次仍缺失则给一行清晰报错而非红栈。
@@ -813,14 +965,12 @@ def main() -> None:
     # 读不到（首次生成 / 文件损坏）→ 静默 fallback 到 config 默认（-1 = 随机）
     if args.reuse_seed:
         try:
-            agent_name_resolved = resolve_agent_name(args.agent_name)
-            session_name_resolved = resolve_session_name(args.session_name)
             if args.state_dir:
                 state_dir_for_seed = Path(args.state_dir).expanduser()
             elif args.output_dir:
-                state_dir_for_seed = Path(args.output_dir).expanduser() / agent_name_resolved / session_name_resolved
+                state_dir_for_seed = Path(args.output_dir).expanduser() / agent_name / session_name
             else:
-                state_dir_for_seed = default_output_dir(agent_name_resolved, session_name_resolved)
+                state_dir_for_seed = default_output_dir(agent_name, session_name)
             last_request_path = state_dir_for_seed / "last_request.json"
             if last_request_path.exists():
                 last = load_json(last_request_path)
@@ -834,8 +984,6 @@ def main() -> None:
         except Exception:
             # seed 复用失败不影响生图；fallback 到默认随机
             pass
-    agent_name = resolve_agent_name(args.agent_name)
-    session_name = resolve_session_name(args.session_name)
     if args.output_dir:
         output_dir = Path(args.output_dir).expanduser() / agent_name / session_name
     else:
@@ -852,6 +1000,18 @@ def main() -> None:
             state_dir=Path(args.state_dir).expanduser() if args.state_dir else None,
             agent_name=agent_name,
         )
+    except CharactersError as exc:
+        # 退出码 3 专指"intermediate 的角色字段写错，按首行改了重跑"（1 = 生图失败，2 = 参数或文件问题）。
+        # 第二行给一段可照抄的正确写法：dsh 网关把这段 stderr 原文（限 600 字）转给模型，示例只在这里维护一份。
+        sys.stderr.write(f"[novelai] {exc}\n")
+        sys.stderr.write(
+            '[novelai] 正确写法示例：{"position_mode": "manual", "characters": ['
+            '{"positive": "girl, long hair, red dress", "center": {"x": 0.3, "y": 0.5}}, '
+            '{"positive": "boy, short hair, suit", "center": {"x": 0.7, "y": 0.5}}]}。'
+            "manual 时每个角色都要有 center，x、y 取 0 到 1（x 从左到右、y 从上到下）；"
+            "不想指定站位就把 position_mode 写成 auto，不写 center。\n"
+        )
+        sys.exit(3)
     except (ValueError, RuntimeError) as exc:
         # 可预期的失败（提示词为空、缺令牌、NovelAI 返回错误）给一行中文说明就够了。
         # 红栈对上游 worker 只是噪声，还会把请求头/令牌一类内容带进日志。
