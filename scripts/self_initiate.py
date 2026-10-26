@@ -24,7 +24,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE_DIR = os.path.expanduser("~/.claude/dispatcher/.self-initiate-state")
 
 sys.path.insert(0, REPO_ROOT)
-import config_loader  # noqa: E402  频道根目录走公开接缝 CLAUDEBOT_CHANNELS_ROOT
+import config_loader  # noqa: E402  读 bot 配置里的 bot_channel_path
+from bots_registry import default_channel_dir  # noqa: E402  频道目录的缺省约定
 from bots_registry import disabled_ids_safe  # noqa: E402  停用判定唯一入口（fail-open 在它内部）
 from bots_registry import read_dispatcher_token  # noqa: E402  H-15：本机 dispatcher 口令
 
@@ -37,6 +38,19 @@ def _bot_port(bot: str) -> str | None:
         return os.environ[env_key]
     # 默认单 bot 部署：17801
     return "17801"
+
+
+def _channel_dir(bot: str) -> str:
+    """这只 bot 的频道目录：配置里的 bot_channel_path 优先，没有就用 ``~/.claude/channels/<bot>``
+    （与 worker 插件同一约定）。不能用 CLAUDEBOT_CHANNELS_ROOT：那个接缝是给管理台/面板扫目录的，
+    主动消息必须写到 worker 实际监听的目录。"""
+    try:
+        raw = config_loader.load_bot(bot).get("bot_channel_path")
+        if isinstance(raw, str) and raw.strip():
+            return os.path.expanduser(raw)
+    except Exception:
+        pass
+    return default_channel_dir(bot) or os.path.expanduser(os.path.join("~", ".claude", "channels", bot))
 
 
 def _write_sent_marker(state_dir: str, bot: str, chat: str, now) -> None:
@@ -86,7 +100,7 @@ def main() -> int:
     open(marker, "w", encoding="utf-8").write(str(now))
     open(interval_f, "w", encoding="utf-8").write(str(random.randint(COOLDOWN_MIN, COOLDOWN_MAX)))
 
-    bot_dir = os.path.join(config_loader.channels_dir(), bot)   # 缺省 ~/.claude/channels/<bot>
+    bot_dir = _channel_dir(bot)
     inbox = os.path.join(bot_dir, "inbox")
     os.makedirs(inbox, exist_ok=True)
 
@@ -152,7 +166,7 @@ def main() -> int:
     # ─── 拉起 worker（dispatcher /ensure_worker；不在也没事，inbox 会被 drain）───
     port = _bot_port(bot)
     if port:
-        # H-15：dispatcher 本机接口需口令；bot_dir 已在上文按频道根目录算好。
+        # H-15：dispatcher 本机接口需口令；bot_dir 已在上文按 bot 配置/缺省约定算好。
         # 读不到 → 记一行日志并【拒绝该次调用】（fail-closed），绝不放行无口令请求。
         token = read_dispatcher_token(bot, bot_dir)
         if not token:
