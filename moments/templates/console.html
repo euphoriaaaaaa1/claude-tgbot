@@ -206,6 +206,7 @@ dialog::backdrop { background:rgba(0,0,0,.45); }
     <section class="panel blk" id="blkProfile" data-block="profile" hidden>
       <h2>生活设定</h2>
       <div class="hint blk-msg" id="lifeMsg" role="status" hidden></div>
+      <div class="banner warn" id="lifeEmptyHint" role="status" hidden></div>
       <div id="lifeRows"></div>
       <div class="blk-foot" id="lifeFoot" hidden><button type="button" class="btn btn-primary" id="lifeSave" disabled>保存生活设定</button></div>
 
@@ -704,6 +705,54 @@ var LifecycleUX = (function () {
 if (typeof window !== 'undefined') window.LifecycleUX = LifecycleUX;
 </script>
 
+<script id="lifeHintsLogic">
+// 生活设定留空提示（pub-draft 接口第二节）：只看字段表里的 empty_hint，不认键名。
+// 文字/多行文字 trim 后为空算没填；null/undefined/[]/{} 算没填；列表填了任一项算已填；JSON 解析失败按已填处理。
+function lifeBlankValue(v) {
+  if (v === null || v === undefined) return true;
+  if (typeof v === 'string') return v.trim() === '';
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === 'object') return Object.keys(v).length === 0;
+  return false;
+}
+function lifeEmptyHints(fields, values) {
+  const out = [];
+  for (const raw of Array.isArray(fields) ? fields : []) {
+    const f = raw && typeof raw === 'object' ? raw : {};
+    const hint = typeof f.empty_hint === 'string' ? f.empty_hint : '';
+    if (!hint || !lifeBlankValue(values ? values[f.key] : undefined)) continue;
+    if (!out.includes(hint)) out.push(hint);
+  }
+  return out;
+}
+function lifeInputValue(el, type) {
+  const raw = el.value === undefined || el.value === null ? '' : String(el.value);
+  if (type === 'text' || type === 'textarea') return raw;
+  if (raw.trim() === '') return '';
+  if (type === 'number') return raw.trim() === '' ? null : Number(raw);
+  try { return JSON.parse(raw); } catch (e) { return raw; }
+}
+function refreshLifeHint() {
+  const bar = document.getElementById('lifeEmptyHint');
+  if (!bar) return;
+  const life = typeof PROF !== 'undefined' ? PROF.life : null;
+  if (!life) { bar.textContent = ''; bar.hidden = true; return; }
+  const fields = Array.isArray(life.fields) ? life.fields : [];
+  const stored = life.values && typeof life.values === 'object' ? life.values : {};
+  const values = {};
+  for (const raw of fields) {
+    const f = raw && typeof raw === 'object' ? raw : {};
+    if (!f.key) continue;
+    const el = document.getElementById('life-' + f.key);
+    values[f.key] = el ? lifeInputValue(el, f.type) : stored[f.key];
+  }
+  const hints = lifeEmptyHints(fields, values);
+  bar.textContent = hints.join('');
+  bar.hidden = hints.length === 0;
+}
+if (typeof window !== 'undefined') window.LifeHints = {lifeEmptyHints: lifeEmptyHints};
+</script>
+
 <script>
 const _origFetch = fetch;
 let DATA = null;
@@ -1101,7 +1150,7 @@ function renderProfileArea() {
   const caps = backend && bot ? profileCaps(backend) : {life: false, persona: false, voice: false};
   const on = !!(backend && bot && (caps.life || caps.persona || caps.voice));
   document.getElementById('blkProfile').hidden = !on;
-  if (!on) { PROF.on = false; PROF.loaded = ''; PROF.life = PROF.persona = PROF.voice = null; return; }
+  if (!on) { PROF.on = false; PROF.loaded = ''; PROF.life = PROF.persona = PROF.voice = null; refreshLifeHint(); return; }
   document.getElementById('lifeRows').closest('section').querySelector('h2').hidden = !caps.life;
   document.getElementById('personaText').hidden = !caps.persona;
   document.getElementById('voiceRow').hidden = !caps.voice;
@@ -1225,6 +1274,7 @@ function renderProfile() {
     document.getElementById(id).disabled = PROF.saving || BUSY || !caps.voice;
   }
   document.getElementById('voiceSave').disabled = PROF.saving || BUSY;
+  refreshLifeHint();
 }
 function lifeValues() {
   const out = {};
@@ -1827,6 +1877,7 @@ document.getElementById('featureRows').addEventListener('click', (e) => {
   if (row && !btn.disabled) toggleFeature(row.getAttribute('data-feature'));
 });
 document.getElementById('lifeSave').addEventListener('click', saveLife);
+document.getElementById('lifeRows').addEventListener('input', refreshLifeHint);
 document.getElementById('personaSave').addEventListener('click', savePersona);
 document.getElementById('voiceSave').addEventListener('click', saveVoice);
 document.getElementById('archiveBot').addEventListener('click', openArchiveDialog);
