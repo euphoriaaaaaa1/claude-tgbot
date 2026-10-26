@@ -31,6 +31,12 @@ SAVED_MESSAGE = "已保存，下次判断要不要主动说话时生效"
 LOCK_WAIT_SEC = 3.0
 LOCK_RETRY_SEC = 0.05
 BACKUP_KEEP = 2   # 用户 2026-10-15：备份一律只留 2 份
+# 字段表 empty_hint 的原文（pub-draft 接口第二节）：页面上带它的项没填就显示；页面只看 empty_hint，不认键名
+PROACTIVE_EMPTY_HINT = "人设摘要或「什么情况下主动说话」没填时，bot 会很少主动找你。"
+# 睡觉时段为空时 life-context 的睡眠拦截不起作用
+SLEEP_EMPTY_HINT = "睡觉时段没填时，bot 夜里也可能主动找你。"
+# 对应嵌套子键的字段：字段键 → (顶层键, 子键)。每个顶层键在这里最多出现一次（写回时按改前的配置算新块）
+NESTED_FIELDS = {"jiwen_delta_hints": ("jiwen", "delta_hints")}
 # 注册用的键：永远不写、请求里出现即 invalid（BRIEF §4.3）
 REGISTRATION_KEYS = frozenset({"id", "chat_id", "dispatcher_port", "bot_channel_path", "namespace_uuid",
                                "display_name", "enabled"})
@@ -117,11 +123,14 @@ def field_table() -> list:
         _f("city", "所在城市", "text", "这只 bot 住在哪座城市", max_len=40),
         _f("user_name", "怎么称呼用户（名字）", "text", "这只 bot 记得的用户名字", max_len=40),
         _f("user_address", "怎么称呼用户（称呼）", "text", "这只 bot 平时怎么叫用户", max_len=40),
-        _f("persona_summary", "人设摘要", "textarea", "性格、背景与说话方式的概括，会原样放进提示词", max_len=4000),
+        _f("persona_summary", "人设摘要", "textarea", "性格、背景与说话方式的概括，会原样放进提示词", max_len=4000,
+           empty_hint=PROACTIVE_EMPTY_HINT),
         _f("speaking_threshold", "什么情况下主动说话", "textarea", "写清楚什么时候该主动开口、什么时候别打扰",
-           max_len=4000),
+           max_len=4000, empty_hint=PROACTIVE_EMPTY_HINT),
+        _f("jiwen_delta_hints", "思念值变化规则", "textarea",
+           "这只 bot 的思念值在什么情形下升高、什么情形下回落，会原样放进判断思念值变化的提示词", max_len=4000),
         _f("sleep_hours", "睡觉时段", "string_list", "每项是一个起止时段，可以跨过午夜", placeholder="00:30-06:30",
-           max_items=6, max_len=11),
+           max_items=6, max_len=11, empty_hint=SLEEP_EMPTY_HINT),
         _f("interest_keywords", "关注的话题", "string_list", "平时关注的话题，每项一个", max_items=60, max_len=40),
         _f("rss_feeds", "订阅的新闻源", "string_list", "每项是一个新闻源的完整网址", placeholder="https://",
            max_items=30, max_len=500),
@@ -255,12 +264,21 @@ def _display_value(field: dict, raw):
     return raw
 
 
+def _raw_value(cfg: dict, key: str):
+    """字段在配置里的原值；嵌套字段取子键（父键不是键值表就当没有）。"""
+    if key not in NESTED_FIELDS:
+        return cfg.get(key)
+    top, sub = NESTED_FIELDS[key]
+    parent = cfg.get(top)
+    return parent.get(sub) if isinstance(parent, dict) else None
+
+
 def get_life(bot_id: str) -> dict:
     """``{"fields": [...], "values": {...}, "display_name": "..."}``；没有的键给该类型的空值。"""
     path = _config_path(bot_id)
     _text, cfg = _read(path)
     fields = field_table()
-    values = {f["key"]: _display_value(f, cfg.get(f["key"])) for f in fields}
+    values = {f["key"]: _display_value(f, _raw_value(cfg, f["key"])) for f in fields}
     name = cfg.get("display_name")
     return {"fields": fields, "values": values,
             "display_name": name if isinstance(name, str) and name else bot_id}
@@ -670,6 +688,104 @@ def _write_atomic(path: str, new_text: str, mode: int) -> None:
             os.close(dfd)
 
 
+def _nested_parent(cfg: dict, top: str, sub: str, value):
+    """子键 sub 改成 value（_REMOVE 即删掉）之后顶层键 top 应有的值：键值表；删完空了是 _REMOVE；本来就没有、
+    不用改是 None。top 原来是别的类型（列表、文字等）时不替人覆盖，抛 internal。"""
+    parent = cfg.get(top)
+    if value is _REMOVE:
+        if not isinstance(parent, dict) or sub not in parent:
+            return None
+        rest = {k: v for k, v in parent.items() if k != sub}
+        return rest if rest else _REMOVE
+    if parent is not None and not isinstance(parent, dict):
+        raise LifeSettingsError("internal", "配置里的 %s 不是键值表，请先手工修好" % top)
+    new = dict(parent or {})
+    new[sub] = value
+    return new
+
+
+def _splice_sub(text: str, top: str, sub: str, value):
+    """只替换顶层键 top 的块里子键 sub 那几行（value 为 _REMOVE 即删掉），块里其他行（含注释）原样；原来没有 sub
+    就接在块的最后一行内容之后。子键块的边界同 _key_spans：块尾的空行与注释行留在原处。块不是「键行 + 统一缩进的
+    子键」这种写法（值写在键行上、顶层键或子键重复、缩进不齐、用制表符缩进等）→ None。结果由调用方校验。"""
+    lines = text.split("\n")
+    spans = [(s, e) for k, s, e in _key_spans(lines) if k == top]
+    if len(spans) != 1:
+        return None
+    start, end = spans[0]
+    rest = lines[start][_KEY_LINE_RE.match(lines[start]).end():].strip()
+    if rest and not rest.startswith("#"):   # 值写在键行上：{...}、&锚点、null 等
+        return None
+    indent, subs = None, []   # subs：[(子键, 行号)]
+    for i in range(start + 1, end):
+        line = lines[i]
+        if _is_blank_or_comment(line):
+            continue
+        n = len(line) - len(line.lstrip(" "))
+        if indent is None:
+            indent = n
+        if n == 0 or n < indent or line[n] == "\t":
+            return None
+        if n == indent:
+            m = _KEY_LINE_RE.match(line[n:])
+            if not m:
+                return None   # 与子键同一缩进却不是键（如列表项）
+            subs.append((m.group(1).strip(), i))
+    hits = [j for j, (k, _i) in enumerate(subs) if k == sub]
+    if indent is None or len(hits) > 1:
+        return None
+    new = [] if value is _REMOVE else [
+        (" " * indent + ln) if ln else ln for ln in _render_block(sub, value).rstrip("\n").split("\n")]
+    if not hits:
+        return "\n".join(lines[:end] + new + lines[end:])
+    s_start = subs[hits[0]][1]
+    s_end = subs[hits[0] + 1][1] if hits[0] + 1 < len(subs) else end
+    while s_end > s_start + 1 and _is_blank_or_comment(lines[s_end - 1]):
+        s_end -= 1
+    return "\n".join(lines[:s_start] + new + lines[s_end:])
+
+
+def _block_comments(text: str, top: str) -> bool:
+    """顶层键 top 周围有没有人写的注释：键行尾注、块内注释行、紧贴在键行上方的空行/注释行里的注释。
+    写法认不出、要退回整块重写时，用它判断重写会不会把注释弄丢。"""
+    lines = text.split("\n")
+    spans = [(s, e) for k, s, e in _key_spans(lines) if k == top]
+    if not spans:
+        return False
+    start, end = spans[0]
+    m = _KEY_LINE_RE.match(lines[start])
+    if m and lines[start][m.end():].strip().startswith("#"):
+        return True
+    for line in lines[start + 1:end]:
+        if line.strip().startswith("#"):
+            return True
+    i = start - 1
+    while i >= 0 and _is_blank_or_comment(lines[i]):
+        if lines[i].strip().startswith("#"):
+            return True
+        i -= 1
+    return False
+
+
+def _rewrite_nested(text: str, cfg: dict, top: str, sub: str, value, parent) -> str:
+    """把顶层键 top 的块改成 parent（_REMOVE 即整块删掉）；text 要与 cfg 对应。top 原来就是键值表时先只改 sub 那几行，
+    保住块里的注释与其他子键的写法；认不出写法或改完校验不过时，块周围没有注释才退回整块重写（值不变，写法与
+    引号会重排），有注释就拒绝保存，宁可不改也不把用户的注释弄丢。"""
+    if parent is not _REMOVE and isinstance(cfg.get(top), dict):
+        spliced = _splice_sub(text, top, sub, value)
+        if spliced is not None:
+            try:
+                check_rewrite(spliced, cfg, {top: parent})
+            except LifeSettingsError:
+                pass
+            else:
+                return spliced
+        if _block_comments(text, top):
+            raise LifeSettingsError("internal", "%s 段的写法认不出且含注释，为避免丢注释没有改动" % top)
+        _log.info("%s 段的写法认不出，改为整块重写", top)
+    return rewrite(text, {top: parent})
+
+
 def set_life(bot_id: str, values: dict) -> dict:
     """校验 → 锁内按块写回。校验不过一个字都不写。返回 BRIEF §3.2 的成功形状。"""
     path = _config_path(bot_id)
@@ -679,10 +795,18 @@ def set_life(bot_id: str, values: dict) -> dict:
         return {"applied": True, "queued": False, "message": SAVED_MESSAGE}
     with _locked(path):
         text, cfg = _read(path)   # 锁内重读：锁外那次之后文件可能已被别人改过
-        effective = {k: v for k, v in changes.items() if not (v is _REMOVE and k not in cfg)}
-        if effective:
-            new_text = rewrite(text, effective)
-            check_rewrite(new_text, cfg, effective)
+        top_changes = {k: v for k, v in changes.items()
+                       if k not in NESTED_FIELDS and not (v is _REMOVE and k not in cfg)}
+        expected, new_text = dict(top_changes), text
+        # 嵌套子键先改（这时文字与 cfg 还对得上，逐行改完能单独校验），顶层键再按块替换；两边的顶层键不重叠
+        for key, (top, sub) in NESTED_FIELDS.items():
+            parent = _nested_parent(cfg, top, sub, changes[key]) if key in changes else None
+            if parent is not None:
+                new_text = _rewrite_nested(new_text, cfg, top, sub, changes[key], parent)
+                expected[top] = parent
+        if expected:
+            new_text = rewrite(new_text, top_changes)
+            check_rewrite(new_text, cfg, expected)
             try:
                 mode = stat.S_IMODE(os.stat(path).st_mode)
                 _backup(path, mode)
