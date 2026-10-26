@@ -49,13 +49,14 @@ def pd_env(tmp_path, monkeypatch):
 
 
 def write_bot_cfg(env, bot=BOT, extra="", enabled=True):
-    """给一只 bot 写最小配置（含 channel 路径与 chat_id）。"""
+    """给一只 bot 写最小配置（含 channel 路径与 chat_id）。返回配置文件路径。"""
     channel = env["channels"] / bot
     channel.mkdir(parents=True, exist_ok=True)
     text = "id: %s\nenabled: %s\nchat_id: \"%s\"\nbot_channel_path: %s\n%s" % (
         bot, "true" if enabled else "false", CHAT, channel, extra)
-    (env["configs"] / ("%s.yml" % bot)).write_text(text, encoding="utf-8")
-    return channel
+    path = env["configs"] / ("%s.yml" % bot)
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
 def write_life_cfg(configs, bot=BOT, body=None):
