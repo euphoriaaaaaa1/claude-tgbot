@@ -24,6 +24,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE_DIR = os.path.expanduser("~/.claude/dispatcher/.self-initiate-state")
 
 sys.path.insert(0, REPO_ROOT)
+import config_loader  # noqa: E402  频道根目录走公开接缝 CLAUDEBOT_CHANNELS_ROOT
 from bots_registry import disabled_ids_safe  # noqa: E402  停用判定唯一入口（fail-open 在它内部）
 from bots_registry import read_dispatcher_token  # noqa: E402  H-15：本机 dispatcher 口令
 
@@ -36,6 +37,19 @@ def _bot_port(bot: str) -> str | None:
         return os.environ[env_key]
     # 默认单 bot 部署：17801
     return "17801"
+
+
+def _write_sent_marker(state_dir: str, bot: str, chat: str, now) -> None:
+    """主动消息真的写进 inbox 之后记一笔送达时刻（整数 unix 秒），积温据它扣「bot 主动找过对方」的分。
+    尽力而为：写失败只在 stderr 告警，不影响投递。值先取整，marker 里只有 ASCII 数字。"""
+    path = os.path.join(state_dir, f"{bot}-{chat}.last-sent")
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(str(int(now)))
+        os.replace(tmp, path)
+    except (OSError, TypeError, ValueError) as e:
+        print(f"[self-initiate] 送达标记写失败：{type(e).__name__}", file=sys.stderr)
 
 
 def main() -> int:
@@ -72,7 +86,7 @@ def main() -> int:
     open(marker, "w", encoding="utf-8").write(str(now))
     open(interval_f, "w", encoding="utf-8").write(str(random.randint(COOLDOWN_MIN, COOLDOWN_MAX)))
 
-    bot_dir = os.path.expanduser(f"~/.claude/channels/{bot}")
+    bot_dir = os.path.join(config_loader.channels_dir(), bot)   # 缺省 ~/.claude/channels/<bot>
     inbox = os.path.join(bot_dir, "inbox")
     os.makedirs(inbox, exist_ok=True)
 
@@ -132,12 +146,13 @@ def main() -> int:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
     os.replace(tmp, fname)
+    _write_sent_marker(STATE_DIR, bot, chat, now)   # 只有真的写进 inbox 才算送达
     print(f"wrote {fname}", file=sys.stderr)
 
     # ─── 拉起 worker（dispatcher /ensure_worker；不在也没事，inbox 会被 drain）───
     port = _bot_port(bot)
     if port:
-        # H-15：dispatcher 本机接口需口令；bot_dir 已在上文按 ~/.claude/channels/<bot> 算好。
+        # H-15：dispatcher 本机接口需口令；bot_dir 已在上文按频道根目录算好。
         # 读不到 → 记一行日志并【拒绝该次调用】（fail-closed），绝不放行无口令请求。
         token = read_dispatcher_token(bot, bot_dir)
         if not token:
