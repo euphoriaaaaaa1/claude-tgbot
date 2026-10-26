@@ -51,7 +51,7 @@ def _fields_by_key(client, bot=BOT):
 
 
 def test_B1_B26_字段表顺序类型上限与提示文案(client, pd_env):
-    write_life_cfg(pd_env["configs"], BOT, "id: %s\nbio: 旧简介\n" % BOT)
+    write_life_cfg(pd_env["configs"], BOT, "id: %s\ndispatcher_port: 59999\nbio: 旧简介\n" % BOT)
     fields, by_key = _fields_by_key(client)
     keys = [f["key"] for f in fields]
     assert "jiwen_delta_hints" in keys and "speaking_threshold" in keys
@@ -68,6 +68,7 @@ def test_B1_B26_字段表顺序类型上限与提示文案(client, pd_env):
 
 NESTED_BODY = """id: pd_bot
 chat_id: "10001"
+dispatcher_port: 59999
 bio: 旧简介
 jiwen:
   # 积温注释必须保留
@@ -122,7 +123,8 @@ def test_B2_B29_嵌套写保留注释未知子键与其他顶层键(client, pd_e
 
 @pytest.mark.parametrize("bad", ["x" * 4001, 12345], ids=["4001字", "整数"])
 def test_B3_非法值422且配置不变(client, pd_env, bad):
-    path = write_life_cfg(pd_env["configs"], BOT, "id: %s\njiwen:\n  delta_hints: 旧\n" % BOT)
+    path = write_life_cfg(pd_env["configs"], BOT,
+                          "id: %s\ndispatcher_port: 59999\njiwen:\n  delta_hints: 旧\n" % BOT)
     before = H.sha256(path)
     r = client.put(_bot_url(), json={"values": {"jiwen_delta_hints": bad}})
     assert r.status_code == 422, r.get_data(as_text=True)
@@ -131,8 +133,8 @@ def test_B3_非法值422且配置不变(client, pd_env, bad):
 
 
 @pytest.mark.parametrize("body,expected", [
-    ("id: pd_bot\njiwen:\n  delta_hints: 已有规则\n", "已有规则"),
-    ("id: pd_bot\njiwen:\n  rates_override:\n    connection_per_min: 0.1\n", ""),
+    ("id: pd_bot\ndispatcher_port: 59999\njiwen:\n  delta_hints: 已有规则\n", "已有规则"),
+    ("id: pd_bot\ndispatcher_port: 59999\njiwen:\n  rates_override:\n    connection_per_min: 0.1\n", ""),
 ], ids=["有值", "无值为空串"])
 def test_B4_读回delta_hints(client, pd_env, body, expected):
     write_life_cfg(pd_env["configs"], BOT, body)
@@ -142,10 +144,12 @@ def test_B4_读回delta_hints(client, pd_env, body, expected):
 
 
 FLOW_BODY = """id: pd_bot
+dispatcher_port: 59999
 jiwen: {delta_hints: "旧", rates_override: {connection_per_min: 0.1}}
 """
 
 FLOW_WITH_COMMENT = """id: pd_bot
+dispatcher_port: 59999
 # 这行注释让改写必须失败
 jiwen: {delta_hints: "旧", rates_override: {connection_per_min: 0.1}}
 """
