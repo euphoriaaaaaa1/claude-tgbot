@@ -291,7 +291,7 @@ compatibility:
 语言示例：
 - 正确：`prompt` 写 `medium shot, taking a mirror selfie in bedroom, standing by bed, warm morning light, 1girl`，`characters[0].positive` 写 `girl, 2::mature female::, floral midi dress, shy expression`
 - 正确：`prompt` 写 `close-up selfie, lying in bed, cozy bedroom, soft bedside lamp, 1girl`，`characters[0].positive` 写 `girl, 2::messy hair::, sleepy expression`
-- 错误：`温雅，42岁成熟人妻，站在卧室床边自拍`
+- 错误：`某角色名，42岁成熟人妻，站在卧室床边自拍`
 - 错误：`mature woman 在卧室自拍，表情羞涩`
 
 ## 工作流
