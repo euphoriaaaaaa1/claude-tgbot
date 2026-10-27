@@ -39,20 +39,18 @@ jobs:
         working-directory: dispatcher
         run: bun install --frozen-lockfile
 
-      - name: Python tests
-        # 与 scripts/test-gate.sh 同样的范围：单元 + 验收；测试自身负责临时 HOME、
-        # 假 Telegram、mock 服务与端口 0，不连真实 Telegram / 模型 / dsh。
-        run: python -m pytest tests/unit tests/acceptance -q
+      - name: Python import smoke
+        # 本仓是发布模板，不带验收/单测套件；这里只验证所有随仓发布的模块能各自导入。
+        run: python scripts/import_smoke.py
 
       - name: Bun tests
-        # 每个测试文件单独一个进程：bun 测试在模块加载期改 process.env，
-        # 批量跑会让 CHANNEL_DIR/BOT_NAME 等互相污染（与 scripts/test-gate.sh 同口径）。
+        # 只跑与实现同目录的调度器单测；独立测试目录已随发布瘦身移除。
         run: |
           fail=0
           while IFS= read -r f; do
             echo "== $f"
             bun test "$f" --timeout 120000 || fail=1
-          done < <(find dispatcher tests/acceptance -name '*.test.ts' -type f \
+          done < <(find dispatcher -maxdepth 1 -name '*.test.ts' -type f \
                      -not -path '*/node_modules/*' | sort)
           exit $fail
 
