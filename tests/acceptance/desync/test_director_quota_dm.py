@@ -55,7 +55,7 @@ def test_gates_今日上限闸不过_不调quota_ok(director):
 
 # ---------- maybe_dm ----------
 def _hm(ts, text="合成"):
-    return {**human(ts, text), "from_id": "5331715732", "from_username": "u", "message_id": 2, "chat_id": CHAT}
+    return {**human(ts, text), "from_id": "1000000001", "from_username": "u", "message_id": 2, "chat_id": CHAT}
 
 
 def _setup(d, who="bot2", dm=True, count=0, last_ts=0, last_bot=None):
