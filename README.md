@@ -516,7 +516,8 @@ configs/         示例配置；真实 _global.yml 与 providers.json 不进仓
 dispatcher/      Telegram 调度器（TypeScript / Bun）
 jiwen/           情绪与关系数值
 moments/         8767 管理台
-scripts/         安装辅助、key 写入、脱敏扫描、导入自检
+scripts/         安装辅助、key 写入、脱敏扫描、门禁
+tests/           单元与验收测试（夹具均为假值）
 windows/         Windows 启动/注册/卸载脚本
 voicecall/       可选电话模块
 voice-bridge/    可选语音桥
