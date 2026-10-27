@@ -140,9 +140,9 @@ def test_越界bot_id不读旧标记(env, bad):
 def test_中文bot_id仍可读旧标记(env):
     """旧标记目录里出现过中文 bot 名；只拒绝路径语义，不拒绝字符集。"""
     cfg, dis = env
-    write_bot(cfg, "陈璐璐")
-    (dis / "陈璐璐").write_text("", encoding="utf-8")
-    assert bots_registry.legacy_disabled("陈璐璐") is True
+    write_bot(cfg, "测试角色甲")
+    (dis / "测试角色甲").write_text("", encoding="utf-8")
+    assert bots_registry.legacy_disabled("测试角色甲") is True
     assert bots_registry.bots() == []
 
 

@@ -87,8 +87,8 @@ def test_voicecall_ensure_worker_停用bot_不POST_stderr一行(iso, registry, s
 
 
 def test_voicecall_中文bot名停用_不写文件(iso, registry, server):
-    d = _cfg(iso, "陈璐璐", False, server.server_port)
-    assert _vc(registry)._write_inbox("陈璐璐", "合成", "voice-") is False and _inbox(d) == []
+    d = _cfg(iso, "测试角色甲", False, server.server_port)
+    assert _vc(registry)._write_inbox("测试角色甲", "合成", "voice-") is False and _inbox(d) == []
 
 
 # ---------- moments/web ----------

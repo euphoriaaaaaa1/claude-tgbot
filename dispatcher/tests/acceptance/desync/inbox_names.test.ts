@@ -29,7 +29,7 @@ test("前缀必须带连字符：selfie- / directory- / hangout- 不算", () => 
 test("空串 / 只有前缀 / 中文名 → 不抛，按 startsWith 判", () => {
   expect(isSyntheticName("")).toBe(false);
   expect(isSyntheticName("self-")).toBe(true);
-  expect(isSyntheticName("陈璐璐-1.json")).toBe(false);
+  expect(isSyntheticName("测试角色甲-1.json")).toBe(false);
 });
 
 test("只看 basename 语义：带目录的路径不应误判（调用方传 basename）", () => {

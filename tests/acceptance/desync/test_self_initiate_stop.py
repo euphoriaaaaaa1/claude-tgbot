@@ -104,9 +104,9 @@ def test_停用bot_重复运行两次_幂等_仍exit0(iso):
 
 
 def test_中文bot名停用_skip行含中文名(iso):
-    _prep(iso, "陈璐璐", "100", 1, enabled=False, last=int(NOW) - 100)
-    r = _run(iso, "陈璐璐", "100")
-    assert r.returncode == 0 and "skip: 陈璐璐 disabled" in r.stderr, r.stderr
+    _prep(iso, "测试角色甲", "100", 1, enabled=False, last=int(NOW) - 100)
+    r = _run(iso, "测试角色甲", "100")
+    assert r.returncode == 0 and "skip: 测试角色甲 disabled" in r.stderr, r.stderr
 
 
 def test_启用bot_无disabled跳过行_间隔闸拦住_不写inbox(iso):

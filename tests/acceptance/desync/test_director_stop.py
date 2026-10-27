@@ -122,8 +122,8 @@ def test_disabled_ids_safe_坏yml跳过_其它照常(registry, iso):
 
 
 def test_disabled_ids_safe_中文bot名_可判停止(registry, iso):
-    write_cfg(iso["cfg"], "陈璐璐", enabled=False)
-    assert registry.disabled_ids_safe() == {"陈璐璐"}
+    write_cfg(iso["cfg"], "测试角色甲", enabled=False)
+    assert registry.disabled_ids_safe() == {"测试角色甲"}
 
 
 def test_disabled_ids_safe_目录不可读_空集且stderr一次(registry, iso, capsys):

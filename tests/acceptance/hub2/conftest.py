@@ -357,7 +357,7 @@ def persona_template(channels_dir):
     """造一个可选的人设模板：`channels/<id>/CLAUDE.md`（§4.2 的可选值来源）。"""
     d = channels_dir / "chenlulu"
     d.mkdir(parents=True, exist_ok=True)
-    (d / "CLAUDE.md").write_text("我是陈璐璐模板正文。\n", encoding="utf-8")
+    (d / "CLAUDE.md").write_text("我是测试角色甲模板正文。\n", encoding="utf-8")
     return "chenlulu"
 
 
@@ -366,7 +366,7 @@ def existing_bot(configs_dir, channels_dir):
     """预置一个"已存在的 bot"：configs/<id>.yml + channels/<id>/。"""
     def _make(bot_id="chenlulu", port=17801, chat_id=111):
         (configs_dir / f"{bot_id}.yml").write_text(
-            f"id: {bot_id}\ndisplay_name: 陈璐璐\n"
+            f"id: {bot_id}\ndisplay_name: 测试角色甲\n"
             f"bot_channel_path: ~/.claude/channels/{bot_id}\n"
             f"chat_id: {chat_id}\ndispatcher_port: {port}\n"
             f"namespace_uuid: 11111111-2222-3333-4444-555555555555\n",

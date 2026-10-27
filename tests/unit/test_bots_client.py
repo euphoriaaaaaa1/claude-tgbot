@@ -65,10 +65,10 @@ def test_未设接缝时走真实配置(monkeypatch):
 
     def fake(include_disabled=False):
         seen["include_disabled"] = include_disabled
-        return [{"_bot_id": "chenlulu", "display_name": "陈璐璐"}]
+        return [{"_bot_id": "chenlulu", "display_name": "测试角色甲"}]
 
     monkeypatch.setattr("config_loader.list_enabled_bots", fake)
-    assert bots_client.list_bots() == [{"id": "chenlulu", "display_name": "陈璐璐"}]
+    assert bots_client.list_bots() == [{"id": "chenlulu", "display_name": "测试角色甲"}]
     assert seen["include_disabled"] is True
 
 

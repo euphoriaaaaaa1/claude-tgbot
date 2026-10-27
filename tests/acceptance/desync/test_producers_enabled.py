@@ -127,7 +127,7 @@ def test_write_moment_image_启用bot_返回路径_文件名moment_image前缀(i
 
 
 def test_write_moment_image_中文bot名停用_返回None(iso, registry):
-    d, port = cfg(iso, "陈璐璐", False)
-    bot_cfg = {"id": "陈璐璐", "bot_channel_path": d, "chat_id": "100", "dispatcher_port": port}
-    assert _post(registry)._write_moment_image("陈璐璐", bot_cfg, 1, "合成", "public") is None
+    d, port = cfg(iso, "测试角色甲", False)
+    bot_cfg = {"id": "测试角色甲", "bot_channel_path": d, "chat_id": "100", "dispatcher_port": port}
+    assert _post(registry)._write_moment_image("测试角色甲", bot_cfg, 1, "合成", "public") is None
     assert _files(d, "moment-image-") == []
