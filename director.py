@@ -90,7 +90,7 @@ LOOP_BACKOFF_BASE_SEC = 2     # run() 兜底异常后的轮询退避：2、4、8
 LOOP_BACKOFF_CAP_SEC = 300
 
 POLL_SEC = 2          # 主循环轮询间隔
-DEBOUNCE_SEC = 4      # 新消息后等一拍再决策（人可能连发几条）
+DEBOUNCE_SEC = 8      # 新消息后等一拍再决策（人可能连发几条）
 LOCK_MIN = 30         # 急停口令锁时长（分钟）
 INITIATE_MIN = 45     # 冷场多久后允许导演发起话题（分钟）
 HISTORY_N = 12        # 决策看最近几条
