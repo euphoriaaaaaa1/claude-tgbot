@@ -199,7 +199,10 @@ python3 platform_services.py start provider-web --repo "$PWD"
 新建后：
 
 - 人设：`/console` → 该 bot → 人设。空白模板只写了一句“在这里写下你的 bot 的角色、说话方式与边界”，**没有现成人设**。
-- 生活设定：作息、爱好、城市、生日、校历等可在 `/console` 的生活设定页填。
+- 生活设定：作息、爱好、城市、生日、校历、思念值变化规则等可在 `/console` 的生活设定页填。
+  - 「思念值变化规则」是嵌套在 `jiwen.delta_hints` 的一项，留空时页面会提示它影响 bot 主动找你的频率；保存只改这一个子键，`jiwen` 下其他设置和注释原样保留。
+  - 不想手填可以用起草脚本：`python3 scripts/draft_proactive_config.py <bot编号>` 会读这只 bot 的人设，调你在 `jiwen.delta_llm` 里配的模型地址起草「人设摘要」「什么情况下主动说话」「思念值变化规则」「睡觉时段」四项，写到 `<bot编号>-proactive-draft.yml`（0600）。**草稿只供你过目，不会自动写入**；确认后用 `--apply` 才写进配置，其他键不变、自动备份。要草拟 dsh 后端 bot 的睡觉时段用 `--backend dsh`。
+  - 人设全文会发给该模型地址（单份超过 256 KiB 会直接拒绝），地址只允许 https 或本机回环 http，不跟随重定向。
 - 语音：可填 TTS 音色编号；不填走默认音色。
 - 压缩与清空后的补回：四条 SessionStart 钩子，管理台新建的 bot 自动带齐。
   - 压缩后补回群聊：对话上下文被压缩后，把所在群最近的聊天补回去；
