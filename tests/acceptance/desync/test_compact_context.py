@@ -145,6 +145,6 @@ def test_大文件只读尾部_2秒内完成(iso):
 
 
 def test_cwd含中文与空格_照常输出(iso):
-    d = _bot_dir(iso, name="陈 璐璐 bot")
+    d = _bot_dir(iso, name="测试角色甲 bot")
     _write_gt(iso, "-1001", [_line(1, NOW - 5, "主人", "你好")])
     assert _run(_compact(d)).stdout.startswith(HEAD)

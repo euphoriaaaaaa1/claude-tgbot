@@ -115,7 +115,7 @@ def test_claude目录只读_exit5_write_failed_原文件字节不变(iso):
 
 # ---- 边界：中文+空格目录名照常安装（exit 0，恰一条 compact 项）----
 def test_bot目录名含中文与空格_照常安装_恰一条compact项(iso):
-    d, p = _bot(iso, json.dumps({"model": "haiku"}), name="陈 璐璐")
+    d, p = _bot(iso, json.dumps({"model": "haiku"}), name="测试角色甲")
     assert _run(d).returncode == 0
     with open(p, encoding="utf-8") as f:
         # pub-parity 接口 ①-7：matcher=compact 下现有群聊、私聊两条，这里只数群聊那一条（脚本名过滤）
