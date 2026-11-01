@@ -586,11 +586,12 @@ _RETRY_DELAYS = (3, 5, 8)
 # 撞并发锁是排队信号：几只 bot 加朋友圈共用一个账号，前面可能排着好几张（每张几十秒），
 # 等待窗口要盖得住两三张的时间，共 80 秒；5xx 是偶发故障，仍用上面的短退避。
 _LOCK_RETRY_DELAYS = (5, 10, 15, 20, 30)
-_LOCK_DETAIL = "Concurrent generation is locked"
+# 官方原文是英文；部分中转站把同一个并发锁回成中文
+_LOCK_DETAILS = ("Concurrent generation is locked", "你有正在进行的任务")
 
 
 def _is_lock_error(code: int, detail: str) -> bool:
-    return code == 429 and _LOCK_DETAIL in detail
+    return code == 429 and any(s in detail for s in _LOCK_DETAILS)
 
 
 def _is_retryable(code: int, detail: str) -> bool:
