@@ -1981,7 +1981,7 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
         return Response.json({ ok: true, running, spawned: !running, uuid: mgr.sessionUuid })
       }
       if (url.pathname === '/status') {
-        return Response.json({ ok: true, ...getManager().status() })
+        return Response.json({ ok: true, ...getManager().status(), last_poll_ok: Math.floor(lastPollOk / 1000) })
       }
 
       // 承诺登记/取消/查询：worker 侧 MCP tool 的底层通道。坏 JSON 的契约是 400，
