@@ -136,6 +136,8 @@ powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 powershell -ExecutionPolicy Bypass -File windows\unregister-tasks.ps1
 ```
 
+单只重启某一只 bot 的 dispatcher：`powershell -ExecutionPolicy Bypass -File windows\restart-bots.ps1 -Only <bot编号>`（管理台「重启」在主程序没响应时也走它；真机未测）。
+
 提示“禁止运行脚本”时，在命令前加 `-ExecutionPolicy Bypass`。中文路径、带空格路径已在脚本里处理；仍建议把仓库放在纯英文路径下。
 
 ---
@@ -207,11 +209,15 @@ python3 platform_services.py start provider-web --repo "$PWD"
 - 压缩与清空后的补回：四条 SessionStart 钩子，管理台新建的 bot 自动带齐。
   - 压缩后补回群聊：对话上下文被压缩后，把所在群最近的聊天补回去；
   - 压缩后补回私聊：把最近的私聊原文补回去；
-  - 一次性找回：布防后 72 小时内的下一次恢复会话，把更早压缩时丢掉的私聊补回，用一次即失效；没布防什么都不做；
+  - 一次性找回：布防后 72 小时内的下一次恢复会话，把更早压缩时丢掉的私聊补回；没布防什么都不做。守卫压缩丢了老对话后会自动布防，也可以手动 `--recall` 布防；在 bot 目录的 `.claude/` 下放一个 `compact-recall.auto-off` 文件可关掉自动布防。补回的私聊要等进了会话才算用掉（之后那一轮用户消息写进了会话文件，接口报错的那一轮也算）；bot 在收到下一条消息前被重启，下次恢复会话会再补，最多 5 次。删掉 `.claude/compact-recall.armed` 即取消这一次找回；
   - 清空后回顾：/clear 后的新会话里放进清空时写下的对话摘要全文，每次清空只放一次。
 
   更早建的 bot 跑一次 `python3 scripts/install_compact_hook.py ~/.claude/channels/<bot编号>` 补齐四条（可重复跑，已装的不会再装、不会再备份；该 bot 目录下要已有 `.claude/settings.json`，内容是 `{}` 也行）；加 `--recall` 同时布防一次性找回。补装命令只打印 `hooks.SessionStart` 的变化，别的钩子显示为占位，settings 里的 env 等内容不会打到终端。
 - 启停：总览页的启用/停用。停用后不再收发消息。
+- 重启：卡片上的「重启」。主程序正常时只重启 worker；主程序没响应时（卡片显示红色的「主程序没响应」）只把这一只 bot 的主程序连 worker 一起重启，通常十几秒，别的 bot 不受影响。
+  - 「主程序没响应」的判法：主程序的本机接口两次都没答上，或主程序在、但超过 300 秒没从 Telegram 成功拉到更新且线路判断没报断线。主程序刚启动或电脑刚唤醒的几秒里可能短暂出现，属正常。
+  - 单只重启在 macOS/Linux 上跑 `dispatcher/restart-one.sh <bot编号>`，Windows 上跑 `windows\restart-bots.ps1 -Only <bot编号>`（Windows 真机未测）。环境取管理台进程的环境，你在自己复制的 `restart-bots.sh` 里另加的变量（代理等）不会带上，要带就写进该 bot 的 `.env`；Windows 上只从 `.env` 读令牌，其余环境同样取管理台进程的。
+  - 关掉判活与整只重启：建空文件 `~/.claude-tgbot/dispatcher-check.off`（Windows 为 `%USERPROFILE%\.claude-tgbot\dispatcher-check.off`），立即生效，概览与重启回到只看 worker 的旧行为。关掉线路判断（`linkGateEnabled: false`）后断网也会显示「主程序没响应」，这时可以用它关掉。
 
 手动建（管理台不可用时）：
 
@@ -432,6 +438,7 @@ python3 platform_services.py unregister autostart
 | 路径含中文/空格导致 worker 起不来 | 把仓库移到纯英文、无空格路径；Windows 下不要用 `~` |
 | 生图报缺令牌 | 跑 `scripts/set_novelai_key.py`，或改用 ComfyUI |
 | 新 bot 加完没起来 | `restart-bots.sh` 读的是 `configs/*.yml`；确认 `enabled` 不是 `false`，并重新跑一次 |
+| 卡片显示「主程序没响应」 | 先看 `~/.claude-tgbot/logs/<bot>-dispatcher.log`，再点卡片上的「重启」；误报时见 §5 的关闭开关 |
 
 ### 13.1 Telegram 线路断开时
 
