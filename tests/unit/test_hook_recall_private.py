@@ -96,7 +96,7 @@ def test_布防标记_内容时刻与修改时刻都须在72小时内(tmp_path):
     assert not rp.marker_armed(str(tmp_path))
 
 
-def test_端到端_守卫压缩后补回被裁掉的私聊_标记用掉(tmp_path):
+def test_端到端_守卫压缩后补回被裁掉的私聊_落盘后才用掉标记(tmp_path):
     home, bot = tmp_path / "home", tmp_path / "bot"
     proj = home / ".claude" / "projects" / "-bot"
     proj.mkdir(parents=True)
@@ -108,9 +108,22 @@ def test_端到端_守卫压缩后补回被裁掉的私聊_标记用掉(tmp_path
     marker = _arm(bot, datetime.now())
     payload = {"source": "resume", "cwd": str(bot), "transcript_path": str(tpath)}
     env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "USERPROFILE": str(home), "TZ": "UTC"}
-    r = subprocess.run([sys.executable, str(_SCRIPT)], input=json.dumps(payload).encode(), capture_output=True,
-                       env=env, timeout=30)
+    def run():
+        return subprocess.run([sys.executable, str(_SCRIPT)], input=json.dumps(payload).encode(),
+                              capture_output=True, env=env, timeout=30)
+    r = run()
     out = r.stdout.decode("utf-8")
     assert r.returncode == 0 and "被裁掉的甲" in out and "回甲" in out and "保留区首条" not in out
-    assert not marker.exists() and len(list((bot / ".claude").glob("compact-recall.used-*"))) == 1
     assert r.stderr.decode().startswith("recall_private: ok ") and "被裁掉" not in r.stderr.decode()
+    # 第一次补回后标记还在，inflight 记了一次
+    inflight = json.loads((bot / ".claude" / "compact-recall.inflight").read_text(encoding="utf-8"))
+    assert marker.exists() and inflight["count"] == 1
+    # 补回随下一轮 user 行落盘之后再 resume → 用掉，不再输出
+    late = datetime.fromtimestamp(inflight["t"] + 10).astimezone().isoformat()
+    with open(tpath, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"type": "user", "uuid": "u2", "parentUuid": "a1", "timestamp": late,
+                            "message": {"role": "user", "content": "下一条"}}) + "\n")
+    r = run()
+    assert r.returncode == 0 and r.stdout == b""
+    assert "consumed attempts=1" in r.stderr.decode()
+    assert not marker.exists() and len(list((bot / ".claude").glob("compact-recall.used-*"))) == 1
