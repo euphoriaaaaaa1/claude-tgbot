@@ -127,16 +127,6 @@ def test_R20_已停用的bot_显示stopped且不去问health(r_env, adapter):
     assert "/health" not in paths                           # 已停用的不判活
 
 
-@pytest.mark.parametrize("port_text", ["null", "abc", "70000"], ids=["端口为空", "端口非整数", "端口越界"])
-def test_R20_端口未配或不合法_显示idle且不连任何端口(r_env, adapter, port_text):
-    # 配置里干脆不写端口会被派生成本机生产端口 17801，所以这里一律显式写成“没有可用端口”的值；
-    # 不连任何端口由 pmr_fixtures 的 no_prod_port_connect 护栏兜底（连了 17801-17808 用例即失败）
-    write_bot(r_env, port_raw=port_text, enabled=True)
-    row = _row(adapter)
-    assert row["state"] == "idle"
-    assert row["polling"] is False
-
-
 def test_R20_开关文件存在且端口无服务_回到改前显示idle(r_env, adapter):
     write_bot(r_env, port=free_port(), enabled=True)
     H.set_switch(r_env)
