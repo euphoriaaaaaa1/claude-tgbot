@@ -9,15 +9,21 @@
 - ``ensure_worker``：``POST /ensure_worker``，dispatcher 决定是否拉起 worker；
 - ``stop_worker``：按 ``/status`` 给出的 pid 结束 worker（dispatcher 本体不动），用于停用与重启；
 - ``restart_worker``：先停 worker 再 ensure，dispatcher 与 Telegram 连接不断。
+- ``dispatcher_down``：主程序没响应的判定（``/status`` 带回的 ``last_poll_ok`` 陈旧，或 ``/status`` 与
+  ``GET /health`` 两次都没答上）；``run_restart_one`` / ``wait_fresh``：只重启这一只 bot 的主程序并等它恢复。
+  开关文件 ``~/.claude-tgbot/dispatcher-check.off`` 存在时判活与整只重启都关。
 
 所有请求带 ``X-Api-Token``（读 ``<频道目录>/.api-token``）；令牌只出现在请求头里，
 不进日志、异常与返回值。HTTP 错误按 INTERFACE §9 映射成 ``DispatcherError.status``：
 ``unauthorized`` / ``down`` / ``error``。``_request``、``_signal``、``_sleep`` 是测试注入点，
 单测不连真实端口、不真杀进程、不真睡。
 """
+import http.client
 import json
 import logging
+import math
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -26,6 +32,7 @@ import urllib.error
 import urllib.request
 
 import bots_registry
+from .base import valid_bot_id
 
 _log = logging.getLogger(__name__)
 
@@ -38,6 +45,18 @@ _request = urllib.request.urlopen   # 注入点：单测替换成假 dispatcher
 _sleep = time.sleep                 # 注入点：单测不真睡
 _kill = os.kill                     # 注入点：单测不真杀
 _popen = subprocess.Popen           # 注入点：Windows taskkill
+_popen_restart = subprocess.Popen   # 注入点：单只整只重启入口
+
+HEALTH_TIMEOUT = 2.0        # 秒：GET /health 的超时
+HEALTH_MAX_AGE = 300        # 秒：last_poll_ok 距今超过它算陈旧（长轮询周期的 10 倍）
+HEALTH_MAX_BYTES = 4096     # /health 正文上限；超过说明端口上是别的程序
+LINK_STALE_SEC = 120        # 秒：线路状态文件 checked_at 距今在这个范围内才算“线路不通”
+SCRIPT_WAIT = 20.0          # 秒：等单只重启脚本退出的上限（不杀它）
+FULL_RESTART_WAIT = 60.0    # 秒：整只重启从调用起到主程序恢复的总上限
+FRESH_POLL_EVERY = 0.5      # 秒：等主程序恢复时的间隔
+CHECK_OFF_FILE = os.path.join("~", ".claude-tgbot", "dispatcher-check.off")
+_CHECKED_AT_RE = re.compile(r"(?:^|\s)checked_at=(\d{1,18})(?=\s|$)")
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class DispatcherError(Exception):
@@ -231,3 +250,141 @@ def restart_worker(bot_id: str, port=None, *, force: bool = False) -> dict:
 # 兼容旧调用点的名字（尚未移植的代码按它判活）。
 def alive(bot_id: str, port=None) -> bool:
     return polling(bot_id, port)
+
+
+# ── 主程序判活与整只重启 ─────────────────────────────────────────────────────
+
+def dispatcher_check_enabled() -> bool:
+    """开关：``~/.claude-tgbot/dispatcher-check.off`` 存在（文件、目录、链接都算）→ 关。每次现查。"""
+    return not os.path.lexists(os.path.expanduser(CHECK_OFF_FILE))
+
+
+def _health_get(port: int):
+    """GET /health 一次（免口令，不走代理）。→ ("down", None) 拒连/超时/重置/协议错；
+    ("other", None) 非 200、正文过大或不是 JSON 对象；("ok", dict)。"""
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=HEALTH_TIMEOUT)
+    try:
+        conn.request("GET", "/health", headers={"Accept": "application/json"})
+        resp = conn.getresponse()
+        code = resp.status
+        raw = resp.read(HEALTH_MAX_BYTES + 1)
+    except (OSError, http.client.HTTPException):
+        return "down", None
+    finally:
+        conn.close()
+    if code != 200 or len(raw) > HEALTH_MAX_BYTES:
+        return "other", None
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return "other", None
+    return ("ok", data) if isinstance(data, dict) else ("other", None)
+
+
+def _link_down(bot_id: str) -> bool:
+    """dispatcher 自己写的线路状态文件报“连不上 Telegram”（checked_at 距今 ±120 秒内）。
+    读不出、格式不对、过期 → False（按线路通处理）。"""
+    if not valid_bot_id(bot_id):
+        return False
+    root = os.environ.get("LINK_STATE_DIR") or os.path.join(os.path.expanduser("~"), ".claude", "dispatcher",
+                                                             ".link-state")
+    try:
+        with open(os.path.join(root, bot_id), "rb") as f:
+            raw = f.read(256)
+    except OSError:
+        return False
+    m = _CHECKED_AT_RE.search(raw.decode("utf-8", "replace"))
+    return bool(m) and abs(time.time() - int(m.group(1))) <= LINK_STALE_SEC
+
+
+def _poll_age_stale(bot_id: str, value) -> bool:
+    """last_poll_ok 合法且距今超过 300 秒、线路状态文件又没报断线 → True。缺失或不合法 → False。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    if not math.isfinite(value) or value <= 0:
+        return False
+    if time.time() - value <= HEALTH_MAX_AGE:
+        return False
+    return not _link_down(bot_id)
+
+
+def dispatcher_down(bot_id: str, port, st) -> bool:
+    """主程序没响应？``st`` 是 ``status()`` 成功时的字典，或 None（``status()`` 刚以 down 失败）。
+    不抛：任何内部异常按正常处理（返回 False，与改前一致）。"""
+    try:
+        if not dispatcher_check_enabled():
+            return False
+        value = _port_value(port)
+        if value is None:
+            return False
+        if st is not None:
+            return _poll_age_stale(bot_id, st.get("last_poll_ok") if isinstance(st, dict) else None)
+        kind, data = _health_get(value)
+        if kind == "down":
+            return True            # /status 与 /health 两次都没答上
+        if kind != "ok":
+            return False           # 端口上有别的程序在答，重启也解决不了
+        return _poll_age_stale(bot_id, data.get("last_poll_ok"))
+    except Exception:
+        return False
+
+
+def restart_one_argv(bot_id: str) -> list:
+    """单只整只重启入口的命令行。测试接缝：``CLAUDEBOT_TEST=1`` 且 ``CLAUDEBOT_RESTART_ONE_CMD`` 是非空字符串
+    数组的 JSON → 用它，末尾加 bot 编号。否则 POSIX 跑仓内 ``dispatcher/restart-one.sh``，Windows 跑
+    ``windows\\restart-bots.ps1 -Only``。"""
+    if os.environ.get("CLAUDEBOT_TEST") == "1":
+        raw = os.environ.get("CLAUDEBOT_RESTART_ONE_CMD")
+        if raw:
+            try:
+                cmd = json.loads(raw)
+            except ValueError:
+                cmd = None
+            if isinstance(cmd, list) and cmd and all(isinstance(x, str) and x for x in cmd):
+                return list(cmd) + [bot_id]
+    if os.name == "nt":   # pragma: no cover - Windows 条件测试
+        return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                os.path.join(_REPO, "windows", "restart-bots.ps1"), "-Only", bot_id]
+    return ["bash", os.path.join(_REPO, "dispatcher", "restart-one.sh"), bot_id]
+
+
+def run_restart_one(bot_id: str):
+    """跑单只入口并等它退出（至多 SCRIPT_WAIT 秒）。→ 退出码；没退出或起不来 → None。
+    脚本输出一律丢弃（可能含令牌）；超时不杀它（它可能正在停旧进程）。不抛。"""
+    argv = restart_one_argv(bot_id)
+    kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    try:
+        if os.name == "nt":   # pragma: no cover - Windows 条件测试
+            base = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            try:
+                proc = _popen_restart(argv, creationflags=base | subprocess.CREATE_BREAKAWAY_FROM_JOB, **kw)
+            except OSError:   # 作业对象不允许脱离：退回不带该标志
+                proc = _popen_restart(argv, creationflags=base, **kw)
+        else:
+            proc = _popen_restart(argv, start_new_session=True, **kw)
+    except (OSError, ValueError):
+        return None
+    try:
+        return proc.wait(timeout=SCRIPT_WAIT)
+    except subprocess.TimeoutExpired:
+        threading.Thread(target=proc.wait, daemon=True).start()   # 后台收尸，不留僵尸
+        return None
+    except Exception:
+        return None
+
+
+def wait_fresh(bot_id: str, port, deadline: float) -> bool:
+    """每 0.5 秒问一次 ``/status``：成功且主程序不陈旧 → True；到 ``deadline``（monotonic）→ False。不抛。"""
+    while True:
+        try:
+            st = status(bot_id, port)
+            if not dispatcher_down(bot_id, port, st):
+                return True
+        except DispatcherError:
+            pass
+        except Exception:
+            return False
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return False
+        _sleep(min(FRESH_POLL_EVERY, left))
