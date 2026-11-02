@@ -55,7 +55,16 @@ GROUP_SEEN_MAX = 50
 GROUP_SEEN_WARNING = "刚发现的群的记录读不出，已当成空的"
 MOMENTS_OFF_MESSAGE = "这只 bot 的朋友圈功能关着"
 STATE_TEXT = {"running": "运行中", "idle": "空闲，来消息会自己起来", "stopped": "已停用",
-              "broken": "配置文件损坏，加载失败，需要人处理"}
+              "broken": "配置文件损坏，加载失败，需要人处理",
+              "dispatcher_down": "主程序没响应，来消息也不会处理。点「重启」会只重启这一只 bot 的主程序"}
+FULL_RESTART_OK = "主程序没响应，已连主程序一起重启"
+FULL_RESTART_FAILED = "主程序没起来，请稍后再试或看日志"
+FULL_RESTART_BUSY = "这只 bot 正在重启，请稍候"
+FULL_RESTART_LOCK_BUSY = "别的操作正在改供应商，请稍后再试"
+FULL_RESTART_LOCK_WAIT = 10.0
+_FULL_RESTARTING = set()            # 本进程内正在整只重启的 bot
+_FULL_RESTARTING_GUARD = threading.Lock()
+_LOCAL_BOT_LOCKS = {}               # provider_config 不在时的退路
 _PERSONA_LOCKS = {}
 _PERSONA_LOCKS_GUARD = threading.Lock()
 
@@ -247,6 +256,81 @@ def _picked_features(value):
     return None
 
 
+# ── 重启：只重启 worker / 主程序没响应时整只重启 ─────────────────────────────
+
+def _restart_worker_only(bot_id: str, port, force) -> dict:
+    """改前的重启路径：主程序在，只重启 worker。"""
+    try:
+        return claude_proc.restart_worker(bot_id, port, force=bool(force))
+    except claude_proc.DispatcherError as e:
+        if e.status == "unauthorized":
+            raise AdapterUnavailable("unauthorized", "dispatcher 口令不对") from None
+        if e.status == "down":
+            raise AdapterUnavailable("down", "dispatcher 没在运行") from None
+        raise AdapterError("internal", 500, e.message) from None
+
+
+def _probe_down(bot_id: str, port) -> bool:
+    """问一次 /status（失败于 down 时再问 /health），判主程序是否没响应。口令不对等其它失败不判。"""
+    try:
+        st = claude_proc.status(bot_id, port)
+    except claude_proc.DispatcherError as e:
+        return e.status == "down" and claude_proc.dispatcher_down(bot_id, port, None)
+    return claude_proc.dispatcher_down(bot_id, port, st)
+
+
+def _bot_lock(bot_id: str) -> threading.Lock:
+    """与换供应商共用的进程内锁（provider_config.bot_lock）；模块不在时用本模块自己的。"""
+    pc = None
+    with contextlib.suppress(ImportError):
+        pc = importlib.import_module("provider_config")
+    if pc is not None and callable(getattr(pc, "bot_lock", None)):
+        return pc.bot_lock(bot_id)
+    with _FULL_RESTARTING_GUARD:
+        return _LOCAL_BOT_LOCKS.setdefault(bot_id, threading.Lock())
+
+
+def _settle_restart(bot_id: str, res: dict) -> None:
+    """重启结果记账，与 provider_routes._settle 同语义；失败不改对外结果。"""
+    try:
+        pc = importlib.import_module("provider_config")
+        if res.get("status") == "ok":
+            pc.set_applied(bot_id)
+    except Exception as e:
+        _log.warning("console 整只重启 %r 记账失败：%s", _log_id(bot_id), type(e).__name__)
+
+
+def _full_restart(bot_id: str, port):
+    """只重启这一只 bot 的主程序（连 worker）。锁内只做复判与跑脚本，放锁后再等主程序恢复。
+    → 结果字典；锁内复判主程序已正常 → None（调用方走只重启 worker 的路径）。"""
+    started = time.monotonic()
+    deadline = started + claude_proc.FULL_RESTART_WAIT
+    with _FULL_RESTARTING_GUARD:
+        if bot_id in _FULL_RESTARTING:
+            raise AdapterError("busy", 409, FULL_RESTART_BUSY)
+        _FULL_RESTARTING.add(bot_id)
+    try:
+        lock = _bot_lock(bot_id)
+        if not lock.acquire(timeout=FULL_RESTART_LOCK_WAIT):
+            raise AdapterError("busy", 409, FULL_RESTART_LOCK_BUSY)
+        try:
+            if not _probe_down(bot_id, port):
+                return None
+            code = claude_proc.run_restart_one(bot_id)
+        finally:
+            lock.release()
+        ok = code == 0 and claude_proc.wait_fresh(bot_id, port, deadline)
+        res = {"status": "ok", "message": FULL_RESTART_OK} if ok else {"status": "failed",
+                                                                       "message": FULL_RESTART_FAILED}
+        _log.info("console 整只重启 %r：%s，耗时 %.1fs", _log_id(bot_id), "ok" if ok else "failed",
+                  time.monotonic() - started)
+        _settle_restart(bot_id, res)
+        return res
+    finally:
+        with _FULL_RESTARTING_GUARD:
+            _FULL_RESTARTING.discard(bot_id)
+
+
 class ClaudeLocalAdapter(BackendAdapter):
     backend = "claude"
 
@@ -270,13 +354,23 @@ class ClaudeLocalAdapter(BackendAdapter):
             bot_id = item["id"]
             cfg = _load_cfg(bot_id) or {}
             enabled = bots_registry.is_enabled(cfg, bot_id)
+            port = ports.get(bot_id)
+            st, failed = None, None
             try:
-                st = claude_proc.status(bot_id, ports.get(bot_id))
+                st = claude_proc.status(bot_id, port)
                 alive = st.get("alive") is True
                 phase = st.get("phase")
-            except claude_proc.DispatcherError:
-                alive, phase = False, None
-            state = "stopped" if not enabled else ("running" if alive else "idle")
+            except claude_proc.DispatcherError as e:
+                alive, phase, failed = False, None, e.status
+            if not enabled:
+                state = "stopped"
+            elif st is not None:
+                state = "dispatcher_down" if claude_proc.dispatcher_down(bot_id, port, st) else (
+                    "running" if alive else "idle")
+            elif failed == "down" and claude_proc.dispatcher_down(bot_id, port, None):
+                state = "dispatcher_down"
+            else:
+                state = "idle"
             binding = bindings.get(bot_id) if isinstance(bindings.get(bot_id), dict) else {}
             provider = None
             source = "default"
@@ -362,14 +456,16 @@ class ClaudeLocalAdapter(BackendAdapter):
         cfg = _require_bot(bot_id)
         if not bots_registry.is_enabled(cfg, bot_id):
             raise AdapterError("stopped", 409, "已停用，先启用再重启")
-        try:
-            return claude_proc.restart_worker(bot_id, _port(bot_id), force=bool(force))
-        except claude_proc.DispatcherError as e:
-            if e.status == "unauthorized":
-                raise AdapterUnavailable("unauthorized", "dispatcher 口令不对") from None
-            if e.status == "down":
-                raise AdapterUnavailable("down", "dispatcher 没在运行") from None
-            raise AdapterError("internal", 500, e.message) from None
+        port = _port(bot_id)
+        if claude_proc.dispatcher_check_enabled():
+            with _FULL_RESTARTING_GUARD:
+                if bot_id in _FULL_RESTARTING:
+                    raise AdapterError("busy", 409, FULL_RESTART_BUSY)
+            if _probe_down(bot_id, port):
+                result = _full_restart(bot_id, port)
+                if result is not None:
+                    return result
+        return _restart_worker_only(bot_id, port, force)
 
     # ── 生活设定（T16 移植 life_settings 前如实报未配置）────────────────────
     def get_life(self, bot_id: str) -> dict:
