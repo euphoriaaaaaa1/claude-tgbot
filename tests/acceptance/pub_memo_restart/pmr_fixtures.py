@@ -15,14 +15,14 @@ REPO = Path(__file__).resolve().parents[3]
 if str(REPO) not in sys.path:
     sys.path.append(str(REPO))          # 只追加不插队，避免顶掉别的目录的同名模块
 
-PROD_PORTS = range(17801, 17809)        # 生产 dispatcher 端口 17801-17808：测试进程一次都不许连
+PROD_PORTS = set(range(17801, 17809)) | {7788, 7897, 8767}   # 生产 dispatcher 17801-17808、语音桥 7788、本机代理 7897、供应商页 8767：测试进程一次都不许连
 
 PASSWORD = "pmr-test-panel-pw-12345"
 
 
 @pytest.fixture(autouse=True)
 def no_prod_port_connect(monkeypatch):
-    """进程内任何 socket 连向 17801-17808 都记下并按拒连处理；用例结束时只要记过就判失败（被测代码吞异常也逃不掉）。"""
+    """进程内任何 socket 连向生产端口（见 PROD_PORTS）都记下并按拒连处理；用例结束时只要记过就判失败（被测代码吞异常也逃不掉）。"""
     hits = []
     real_connect, real_connect_ex = socket.socket.connect, socket.socket.connect_ex
 
