@@ -386,19 +386,13 @@ class HangServer:
         self.stop()
 
 
-def write_bot(env, bot_id=BOT, port=None, enabled=None, port_raw=None):
-    """写一只 bot 的配置与 .api-token。返回频道目录。
-
-    port=None 且 port_raw=None：配置里不写 dispatcher_port 这一行（此时适配器会按注册表派生成本机生产端口，
-    用例不要用这种写法去测“端口未配”）。port_raw 是原样写进 yaml 的值文本，如 "null"、"abc"、"70000"。
-    """
+def write_bot(env, bot_id=BOT, port=None, enabled=None):
+    """写一只 bot 的配置（port=None 表示不写 dispatcher_port）与 .api-token。返回频道目录。"""
     channel = Path(env["channels"]) / bot_id
     channel.mkdir(parents=True, exist_ok=True)
     (channel / ".api-token").write_text(API_TOKEN, encoding="utf-8")
     lines = ["display_name: 测试 Bot", 'bot_channel_path: "%s"' % channel, "chat_id: 987654321"]
-    if port_raw is not None:
-        lines.append("dispatcher_port: %s" % port_raw)
-    elif port is not None:
+    if port is not None:
         lines.append("dispatcher_port: %d" % port)
     lines += ["namespace_uuid: 550e8400-e29b-41d4-a716-446655440001", "telegram_username: test_bot",
               "launcher: registry"]
