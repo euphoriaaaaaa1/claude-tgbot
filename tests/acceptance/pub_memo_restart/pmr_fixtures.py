@@ -80,6 +80,11 @@ def r_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDEBOT_PROVIDER_PATH", str(provider_path))
     monkeypatch.setenv("DIRECTOR_NO_SPAWN", "1")
     monkeypatch.setenv("CONSOLE_DSH_ADAPTER_URL", "")
+    # 本机代理环境变量会让回环请求绕去代理端口（7897），既碰真实代理又让假服务收不到请求：一律清掉并声明全部直连
+    for k in ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("no_proxy", "*")
+    monkeypatch.setenv("NO_PROXY", "*")
     for k in ("CLIPROXY_PORT", "CLIPROXY_MGMT_KEY", "CLIPROXY_API_KEY", "MOMENTS_WEB_HOST",
               "CLAUDEBOT_TEST", "CLAUDEBOT_RESTART_ONE_CMD", "HUB_ACCESS_PASSWORD", "HUB_ADMIN_PASSWORD"):
         monkeypatch.delenv(k, raising=False)
