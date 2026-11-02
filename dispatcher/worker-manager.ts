@@ -20,6 +20,7 @@ import {
   mkdirSync, existsSync, statSync, watch, chmodSync, unlinkSync, realpathSync, type FSWatcher,
 } from 'fs'
 import { backupSessionJsonl } from './backup_retention'
+import { armRecallAfterCompact } from './recall_arm'
 import { join, delimiter, dirname, basename, resolve } from 'path'
 import { homedir, tmpdir, platform } from 'os'
 import { buildTimePrefix } from './time_annotate'
@@ -569,6 +570,20 @@ export function compactSessionIfHuge(jsonlPath: string): { ok: boolean; kept: nu
   return { ok: true, kept: keep.size, dropped, estimated: total }
 }
 
+// 守卫压缩真丢了老对话行 → 给一次性私聊找回布防（scripts/recall_private.py 的 resume 钩子随后补回）。
+// 返回值与 compactSessionIfHuge 原样相同；布防成败只记一行常量日志，不影响拉起。
+export function compactAndArm(jsonlPath: string, botDir: string): ReturnType<typeof compactSessionIfHuge> {
+  const res = compactSessionIfHuge(jsonlPath)
+  if (res.ok && res.dropped > 0) {
+    const arm = armRecallAfterCompact(botDir)
+    logSpawn(arm === 'armed' ? 'recall armed after compact'
+      : arm === 'off' ? 'recall arm off'
+      : arm === 'skip' ? 'recall arm skipped'
+      : 'recall arm failed')
+  }
+  return res
+}
+
 // ─── worker 子进程环境白名单（H-11）──────────────────────────────────
 // worker 是 --dangerously-skip-permissions 的模型进程；它一旦被诱导执行 `env`
 // 就能把 dispatcher 的全部环境（含 TELEGRAM_BOT_TOKEN / PEERS_JSON）读走。
@@ -1091,7 +1106,7 @@ export class WorkerManager {
         stripAll = checkFingerprint(jsonl, 'providerfp', providerFingerprint(), 'provider(BASE_URL/MODEL)') || stripAll
         stripAll = checkFingerprint(jsonl, 'clivfp', cliVersion(claude.bin, claude.viaCmd), 'CLI 版本') || stripAll
         stripThinking(jsonl, stripAll)
-        compactSessionIfHuge(jsonl)
+        compactAndArm(jsonl, botDir)
       }
 
       const mcpConfig = writeMcpConfig()
