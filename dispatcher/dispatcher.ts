@@ -10,7 +10,7 @@
  * inbox → stdin 注入，崩溃自动 --resume，跨平台（macOS/Windows/Linux 无 tmux）。
  */
 
-import { Bot, GrammyError, type Context } from 'grammy'
+import { Bot, GrammyError, HttpError, type Context } from 'grammy'
 import type { ReactionTypeEmoji } from 'grammy/types'
 import {
   readFileSync, writeFileSync, mkdirSync, statSync, renameSync, appendFileSync, existsSync, chmodSync,
@@ -25,6 +25,11 @@ import { winCmdSpawnSpec } from './win_cmd'
 import { isolationSwitchOff, readSettingsFile, summarySpawnPlan, userSettingsPath } from './worker_isolation'
 import { buildSendPlan } from './send_plan'
 import { classifySendError, describeSendError } from './send_error'
+import { createLinkMonitor, writeLinkState, linkPauseReason, shouldBlockSend, LinkDownError } from './link_state'
+import {
+  bumpClearEpoch, eligible, nextLinkUpSince, resendRecord, resendTickAll, withResendParts,
+  type PartSource, type ResendEvent, type SendPart as ResendSendPart,
+} from './resend_plan'
 import { startProviderWatch } from './provider_watch'
 import { createPromiseRuntime } from './promise_runtime'
 import {
@@ -61,7 +66,7 @@ import {
 import { createHangRuntime } from './hang_runtime'
 import { sweepStaleSynthetic, STALE_SYNTHETIC_MS } from './inbox_names'
 import { probeSituation } from './situation_bridge'
-import { inboxHumanMarks } from './chat_guard'
+import { escapeSyntheticPrefix, inboxHumanMarks } from './chat_guard'
 import { safeMime } from './channel_wrap'
 
 // ─── env ──────────────────────────────────────────────────────────────
@@ -157,6 +162,7 @@ type Access = {
   paragraphDelay?: number
   voiceId?: string
   hangEnabled?: boolean       // 被晾感知总开关，缺省开；false = 她永远不会主动追问
+  linkGateEnabled?: boolean   // 线路判断总开关（启动探测、发前拦截、状态文件、恢复后补发），缺省开；只认 JSON 布尔 false
 }
 function loadAccess(): Access {
   try {
@@ -175,6 +181,7 @@ function loadAccess(): Access {
       paragraphDelay: p.paragraphDelay,
       voiceId: p.voiceId,
       hangEnabled: p.hangEnabled,
+      linkGateEnabled: p.linkGateEnabled,
     }
   } catch {
     return { dmPolicy: 'disabled', allowFrom: [], groups: {}, pending: {} }
@@ -313,6 +320,111 @@ bot.api.config.use((prev, method, payload, signal) =>
     if (method === 'getUpdates') lastPollOk = Date.now()
     return res
   }))
+
+// ─── Telegram 线路判断（口径见 link_state.ts）────────────────────────────
+// access.json 的 linkGateEnabled: false（只认 JSON 布尔，与 hangEnabled 同一写法）→ 整套关掉：不装拦截、不探测、
+// 不设启动闸、不写线路状态文件、不登记补发；补发巡检只做旧记录的过期清理。启动时读一次，改了要重启。
+const LINK_GATE_ON = loadAccess().linkGateEnabled !== false
+// 这个 transformer 装在最外层，做两件事：
+// 1) 已知不通时，发送类方法在调用 Telegram 之前直接抛 LinkDownError、不发网络请求（确定没送达，记 link_down）；
+// 2) 记录每次调用的结局：拿到 Telegram 的回应（含 ok:false 的错误回应，grammY 在 transformer 外才把它转成
+//    GrammyError）记回包；grammY 把一切没拿到回应的情形（连不上、连接被重置、超时、回应不是 JSON）包成 HttpError，
+//    这类才记网络层失败。主动中止（bot 停止时 abort 掉的 getUpdates 等，signal 已 aborted）不算线路问题。
+// 探测自己的 getMe 不在这里登记（由 linkProbe 用 probeFinished 登记，免得一次结局记两遍）。不改轮询本身。
+// 启动时线路好坏未知（startUnknown），先探测确认通了才 bot.start，见文件末尾启动段。
+const linkMonitor = createLinkMonitor({ startUnknown: true })
+const linkProbeSignals = new WeakSet<object>()
+// 最近一次发送类网络失败的时刻。发起早于它的请求（例如线路断之前就挂着的长轮询）晚些拿到回包，
+// 推翻不了这次失败，也不能清掉它登记的立即探测，交给探测判定；之后发起的请求拿到回包照常算恢复
+let linkSendFailedAtMs = 0
+if (LINK_GATE_ON) {
+  bot.api.config.use(async (prev, method, payload, signal) => {
+    if (shouldBlockSend(method, linkMonitor.isDown())) throw new LinkDownError(method)
+    const isProbe = signal != null && linkProbeSignals.has(signal)
+    const startedMs = Date.now()
+    try {
+      const res = await prev(method, payload, signal)
+      if (!isProbe && startedMs > linkSendFailedAtMs) linkMonitor.recordResponse(Date.now())
+      return res
+    } catch (e) {
+      if (!isProbe && !signal?.aborted && e instanceof HttpError) {
+        // 只有发送类失败触发立即探测；拉取和其它读取类（getFile 等）只记"最近结束的请求失败"
+        const isSend = shouldBlockSend(method, true)
+        if (isSend) linkSendFailedAtMs = Date.now()
+        linkMonitor.recordNetworkFailure(Date.now(), isSend ? 'send' : 'poll')
+      }
+      throw e
+    }
+  })
+}
+
+// 线路状态文件：不通时写 <dir>/<bot>（每轮刷新 checked_at）、恢复时删，给主动开口脚本与约定的暂停闸读。
+// 缺省目录跟随家目录：非 Windows 取 HOME（与 Python expanduser 同口径），Windows 取 homedir()（USERPROFILE）。
+const LINK_STATE_DIR = process.env.LINK_STATE_DIR
+  || join((process.platform !== 'win32' && process.env.HOME) || homedir(), '.claude', 'dispatcher', '.link-state')
+const LINK_STATE_TICK_MS = 10_000
+const LINK_PROBE_TIMEOUT_MS = 10_000
+const LINK_BOOT_MS = Date.now()
+let linkWasDown = false
+// 线路判为通之前不开始收消息；开闸前每轮巡检都探测，不按已不通时的 60 秒重探间隔
+let linkPollGateOpen = false
+let linkProbeInFlight = false
+// 恢复后补发：线路连续通的起点，只在不通/未知→通那一刻记；不持久化，重启后从开闸判通起算
+let resendLinkUpSinceMs: number | null = null
+const syncLinkState = () => {
+  const nowMs = Date.now()
+  const down = linkMonitor.isDown()
+  resendLinkUpSinceMs = nextLinkUpSince(resendLinkUpSinceMs, linkPollGateOpen && linkMonitor.isKnown() && !down, nowMs)
+  // 未知按不通写状态文件，让约定暂停闸与主动开口跳过；down_since 取本进程启动时刻，不沿用旧文件
+  const fileDown = down || !linkMonitor.isKnown()
+  const sinceMs = linkMonitor.downSinceMs() ?? LINK_BOOT_MS
+  writeLinkState(LINK_STATE_DIR, BOT_NAME, fileDown, Math.floor(sinceMs / 1000), Math.floor(nowMs / 1000))
+  if (down !== linkWasDown) {
+    linkWasDown = down
+    process.stderr.write(`dispatcher[${BOT_NAME}]: ${down ? `link_down since=${Math.floor(sinceMs / 1000)}` : 'link_up'}\n`)
+  }
+}
+// 一次 getMe 探测（10 秒超时）：拿到 Telegram 回应（含 GrammyError 这类错误回应）算回包；其余（网络层失败、超时）算失败
+const linkProbe = async () => {
+  let gotResponse = false
+  try {
+    const signal = AbortSignal.timeout(LINK_PROBE_TIMEOUT_MS)
+    linkProbeSignals.add(signal)
+    linkProbeInFlight = true
+    linkMonitor.probeStarted(Date.now())
+    await bot.api.getMe(signal as unknown as Parameters<typeof bot.api.getMe>[0])
+    gotResponse = true
+  } catch (e) {
+    gotResponse = e instanceof GrammyError
+  } finally {
+    linkProbeInFlight = false
+  }
+  linkMonitor.probeFinished(Date.now(), gotResponse)
+  syncLinkState()   // 探测结局立刻落到状态文件，不等下一轮巡检
+}
+const linkProbeLogged = () => {
+  void linkProbe().catch(e => process.stderr.write(`dispatcher[${BOT_NAME}]: link_probe_failed reason=${e instanceof Error ? e.name : 'unknown'}\n`))
+}
+const linkStateTick = () => {
+  // 定时器里任何异常都只记一行，不得拖垮 dispatcher（writeLinkState 本身已吞文件系统错误）
+  if (LINK_GATE_ON) {
+    try {
+      if (!linkProbeInFlight && (!linkPollGateOpen || linkMonitor.shouldProbe(Date.now()))) linkProbeLogged()
+      syncLinkState()
+    } catch (e) {
+      process.stderr.write(`dispatcher[${BOT_NAME}]: link_state_tick_failed reason=${e instanceof Error ? e.name : 'unknown'}\n`)
+    }
+  }
+  // 补发巡检单独 try：它出错不影响探测与线路状态文件，反之亦然
+  try { resendTick() } catch (e) {
+    process.stderr.write(`dispatcher[${BOT_NAME}]: resend_tick_failed reason=${e instanceof Error ? e.name : 'unknown'}\n`)
+  }
+}
+// 启动先按未知状态重写状态文件：上次进程留下的 down_since 不沿用，探测有结果前约定与主动开口跳过；
+// 关掉线路判断时删掉旧状态文件，免得残留文件让主动开口误跳过
+if (LINK_GATE_ON) syncLinkState()
+else writeLinkState(LINK_STATE_DIR, BOT_NAME, false, 0, 0)
+setInterval(linkStateTick, LINK_STATE_TICK_MS)
 
 // ─── gate / mention / group router (ported verbatim) ─────────────────
 function isMentioned(ctx: Context, extraPatterns?: string[]): boolean {
@@ -916,6 +1028,7 @@ function wipeSessionJsonl(): boolean {
     if (!SESSION_JSONL || !existsSync(SESSION_JSONL)) return false
     const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '')
     renameSync(SESSION_JSONL, `${SESSION_JSONL}.deleted-${ts}`)
+    resendBumpEpoch()   // 会话文件真被移走：清空代数再加 1，旧会话的待补整批作废
     return true
   } catch {
     process.stderr.write(`dispatcher[${BOT_NAME}]: wipe session failed\n`)
@@ -951,10 +1064,60 @@ const promise = createPromiseRuntime({
   probeAsleep: makeAsleepProbe(BOT_NAME, undefined, undefined, promiseLog),
   ensureWorker: promiseEnsureWorker,
   // pause 时连 DM 都不回，承诺更不该发 → 顺延；bot 停用开关同一道闸
-  isPaused: () => isPaused() ?? promiseBotDisabled(),
+  // 线路已知不通时同样顺延，免得白白拉起 worker、耗掉重投次数
+  isPaused: () => isPaused() ?? promiseBotDisabled()
+    ?? (LINK_GATE_ON ? linkPauseReason(LINK_STATE_DIR, BOT_NAME, Math.floor(Date.now() / 1000)) : null),
   isStopped: makeStopCheck(BOT_NAME),
   log: promiseLog,
 })
+// ─── 恢复后补发 ─────────────────────────────────────────────────────────
+// /send 收尾记下私聊里确定没发出的段（<CHANNEL_DIR>/.resend/<chatId>.json），线路连续通满 120 秒后由 10 秒线路巡检
+// 往 inbox 投一条 [resend-check] 提醒。判定与读写全在 resend_plan.ts（全同步），这里只接线；任何异常只记一行。
+// 单只停用：建 .disabled/resend-<bot>，立即停写停投（巡检只做过期清理），不用重启。
+const RESEND_DISABLED_PATH = join(process.env.DISABLED_DIR || join(homedir(), '.claude', 'dispatcher', '.disabled'), `resend-${BOT_NAME}`)
+const resendRetract = makeInboxRetract(CHANNEL_DIR)
+function resendLog(line: string): void { process.stderr.write(`dispatcher[${BOT_NAME}]: ${line}\n`) }
+function resendDisabled(): boolean { try { return existsSync(RESEND_DISABLED_PATH) } catch { return false } }
+/** resendRecord 的事件各记一行，只含计数，不含正文和路径 */
+function resendEventLog(chatId: string, e: ResendEvent): void {
+  if (e.kind === 'recorded') resendLog(`resend_recorded chat=${chatId} added=${e.added} pending=${e.pending}`)
+  else if (e.kind === 'sent_match' || e.kind === 'unknown_key') resendLog(`resend_${e.kind} chat=${chatId} pending=${e.pending}`)
+  else resendLog(`resend_skip reason=${e.kind} chat=${chatId}`)
+}
+function resendGuard<T>(what: string, fallback: T, fn: () => T): T {
+  try { return fn() } catch (e) {
+    resendLog(`resend_${what}_failed reason=${e instanceof Error ? e.name : 'unknown'}`)
+    return fallback
+  }
+}
+/** 与 writeInbox 同一套文件名规则；只看 inbox 根目录：被 worker 挪进 .pending 就算取走 */
+function resendInboxPresent(key: string, chatId: string): boolean {
+  const name = `${chatId}_${key}`.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return existsSync(join(CHANNEL_DIR, 'inbox', `${name}.json`))
+}
+function resendTick(): void {
+  if (!CHANNEL_DIR) return
+  const nowMs = Date.now()
+  const linkUp = LINK_GATE_ON && linkPollGateOpen && linkMonitor.isKnown() && !linkMonitor.isDown()
+  // 与约定共用一组暂停闸，另加清理进行中与本功能的停用开关；关掉线路判断时固定 blocked，只做过期清理
+  const blocked = !LINK_GATE_ON || clearInProgress || resendDisabled()
+    || (isPaused() ?? promiseBotDisabled() ?? linkPauseReason(LINK_STATE_DIR, BOT_NAME, Math.floor(nowMs / 1000))) != null
+  resendTickAll(CHANNEL_DIR, {
+    nowMs, linkUp, linkUpSinceMs: resendLinkUpSinceMs, blocked,
+    fileExists: (p) => { try { return existsSync(p) } catch { return false } },
+  }, {
+    inboxPresent: resendInboxPresent,
+    writeInbox: (chatId, key, meta) => writeInbox(chatId, key, meta),
+    removeInbox: resendRetract,
+    ensureWorker: promiseEnsureWorker,
+    log: resendLog,
+  })
+}
+/** 收到 /clear 时与移走会话文件之后各调一次：清空代数加 1，旧会话的待补整批作废、冷却作废。失败只记一行，不影响清理 */
+function resendBumpEpoch(): void {
+  if (LINK_GATE_ON && CHANNEL_DIR) resendGuard('epoch', undefined, () => bumpClearEpoch(CHANNEL_DIR))
+}
+
 // 承诺功能的任何失败都不得把 dispatcher 拖崩或停掉真人消息处理。
 const promiseTick = () => {
   promise.tick().catch(e =>
@@ -1235,6 +1398,7 @@ async function handleInbound(
       return
     }
     clearInProgress = true
+    resendBumpEpoch()   // 收到 /clear 立刻加清空代数，不等清理走完；移走会话文件时那一次照加，多加无害
     // 回执与清理解耦：走到回执时上下文已清，回执失败/挂起只记日志，不再回"失败"误导用户。
     const receipt = async (msg: string): Promise<void> => {
       let timer: ReturnType<typeof setTimeout> | undefined
@@ -1366,7 +1530,8 @@ async function handleInbound(
     sender_username: from.username,
     chat_type: ctx.chat?.type ?? 'private',
     is_bot_sender: from.is_bot === true,
-    text,
+    // 真人正文里的内部标记转义（合成件与 bot 发言原样）
+    text: !isBotSender && !options?.synthetic ? escapeSyntheticPrefix(text) : text,
     ts: new Date((ctx.message?.date ?? 0) * 1000).toISOString(),
     reply_to: ctx.message?.reply_to_message?.message_id,
   }
@@ -1533,6 +1698,7 @@ function ledgerStore(led: Ledger, id: string, status: number, text: string, now:
 
 /** 段失败原因归类（契约 11 的固定集合）。绝不回显错误正文（防用户正文/令牌外泄）。 */
 function segmentReason(e: unknown): string {
+  if (e instanceof LinkDownError) return 'link_down'   // 线路已知不通，发前就拦下，确定没发出
   if (e instanceof GrammyError) {
     const c = (e as any).error_code
     if (typeof c === 'number' && c >= 400 && c < 500) return 'telegram_4xx'
@@ -1954,7 +2120,7 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
 
         // H-16/H-17：单段发送 —— 引用失败去引用重发一次；返回最终成败与归类原因（绝不回显正文）。
         const sendText = async (text: string, replyParams: { message_id: number } | undefined)
-          : Promise<{ ok: true; id: number } | { ok: false; reason: string }> => {
+          : Promise<{ ok: true; id: number } | { ok: false; reason: string; cls: string }> => {
           const attempt = async (opts: any) => {
             try { const m = await bot.api.sendMessage(chatId, text, opts); return { ok: true as const, id: m.message_id } }
             catch (e) { return { ok: false as const, reason: segmentReason(e), err: e } }
@@ -1966,9 +2132,10 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
             process.stderr.write(`dispatcher[${BOT_NAME}]: send_reply_ref_dropped\n`)
             const second = await attempt({})
             if (second.ok) return second
-            return { ok: false, reason: second.reason }
+            return { ok: false, reason: second.reason, cls: classifySendError(second.err).cls }
           }
-          return { ok: false, reason: first.reason }
+          // cls 只供补发视图判「建连前失败」，不进回包
+          return { ok: false, reason: first.reason, cls: classifySendError(first.err).cls }
         }
 
         // H-17 §16：把单段处理与"总预算剩余时间"赛跑，到界即判 timeout（不再无限等待）。
@@ -1982,7 +2149,9 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
         }
 
         // 单段处理（绝不抛）。文件段失败按段跳过；文本/语音段走 sendText（含引用降级）。
-        const doFile = async (p: string): Promise<{ ok: boolean; reason?: string; ids: number[] }> => {
+        const doFile = async (p: string): Promise<{ ok: boolean; reason?: string; ids: number[]; cls?: string }> => {
+          // 文件段走裸 fetch、不经 grammY transformer，线路已知不通时在这里拦，不读文件
+          if (LINK_GATE_ON && linkMonitor.isDown()) return { ok: false, reason: 'link_down', ids: [] }
           const ext = extname(p).toLowerCase()
           const replyToId = (replyTo != null && replyMode !== 'off') ? replyTo : undefined
           const isPhoto = PHOTO_EXTS.has(ext)
@@ -1995,14 +2164,16 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
             return { ok: false, reason: segmentReason(e), ids: [] }
           }
         }
-        const doText = async (t: string, i: number, shouldReplyTo: boolean): Promise<{ ok: boolean; reason?: string; ids: number[] }> => {
+        const doText = async (t: string, i: number, shouldReplyTo: boolean): Promise<{ ok: boolean; reason?: string; ids: number[]; cls?: string }> => {
           const replyParams = shouldReplyTo ? { message_id: replyTo! } : undefined
           if (asVoice) {
+            // 语音桥那头同样要连 Telegram，线路已知不通时不调桥、不回退文字
+            if (LINK_GATE_ON && linkMonitor.isDown()) return { ok: false, reason: 'link_down', ids: [] }
             const voiceId = access.voiceId
             if (!voiceId) {
               process.stderr.write(`dispatcher[${BOT_NAME}]: as_voice 但 access.json 无 voiceId，降级纯文本\n`)
               const r = await sendText(t, replyParams)
-              return r.ok ? { ok: true, ids: [r.id] } : { ok: false, reason: r.reason, ids: [] }
+              return r.ok ? { ok: true, ids: [r.id] } : { ok: false, reason: r.reason, ids: [], cls: r.cls }
             }
             const hasDual = voiceChunks.length > 0
             const ttsText = hasDual ? (voiceChunks[i] ?? '') : t
@@ -2036,7 +2207,24 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
             return ids.length > 0 ? { ok: true, ids } : { ok: false, reason: 'network', ids: [] }
           }
           const r = await sendText(t, replyParams)
-          return r.ok ? { ok: true, ids: [r.id] } : { ok: false, reason: r.reason, ids: [] }
+          return r.ok ? { ok: true, ids: [r.id] } : { ok: false, reason: r.reason, ids: [], cls: r.cls }
+        }
+
+        // 补发视图（不进回包）：与 parts 同序同号，区分「确定没发出」与「状态不明」，供 resendRecord 用。
+        // 纯语音（有 voiceId、没有 voice_text 配对）记 voice；有配对时按文字段算；语音路径的失败一律状态不明
+        const resendParts: ResendSendPart[] = []
+        const resendSources: PartSource[] = []
+        const pureVoice = asVoice && !!access.voiceId && voiceChunks.length === 0
+        const noteResend = (n: number, outcome: ResendSendPart['outcome'], reason?: string) => {
+          const it = items[n]
+          const extra = reason ? { reason } : {}
+          if (it.kind === 'file') {
+            resendParts.push({ index: n, kind: PHOTO_EXTS.has(extname(it.path).toLowerCase()) ? 'photo' : 'document', outcome, ...extra })
+            resendSources.push({ path: it.path })
+          } else {
+            resendParts.push({ index: n, kind: pureVoice ? 'voice' : 'text', outcome, ...extra })
+            resendSources.push({ text: it.chunk })
+          }
         }
 
         let textIdx = 0   // 只数文字气泡，语音配对和 reply-to-first 都按它算
@@ -2044,10 +2232,11 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
           if (now() >= deadline) {
             dropped.push({ index: n, reason: 'timeout' })
             parts.push({ index: n, ok: false, message_id: null, kind: items[n].kind, reason: 'timeout' })
+            noteResend(n, 'skipped')   // 这段根本没开始
             continue
           }   // 预算已尽
           const item = items[n]
-          let raced: { timedOut: true } | { timedOut: false; v: { ok: boolean; reason?: string; ids: number[] } }
+          let raced: { timedOut: true } | { timedOut: false; v: { ok: boolean; reason?: string; ids: number[]; cls?: string } }
           if (item.kind === 'file') {
             raced = await raceBudget(doFile(item.path), deadline - now())
           } else {
@@ -2062,6 +2251,7 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
           if (raced.timedOut) {
             dropped.push({ index: n, reason: 'timeout' })
             parts.push({ index: n, ok: false, message_id: null, kind: item.kind, reason: 'timeout' })
+            noteResend(n, 'unknown')   // 发送中途被预算截断，可能已送达
             continue
           }
           if (raced.v.ok) {
@@ -2069,10 +2259,16 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
             if (sent === 0 && promiseIds.length > 0) markOutbound(CHANNEL_DIR, chatId, promiseIds)
             sent++; sentIds.push(...raced.v.ids)
             parts.push({ index: n, ok: true, message_id: raced.v.ids[0] ?? null, kind: item.kind, reason: null })
+            noteResend(n, 'sent')
           } else {
             const reason = raced.v.reason || 'network'
             dropped.push({ index: n, reason })
             parts.push({ index: n, ok: false, message_id: null, kind: item.kind, reason })
+            // cls 只有普通文字段才带：最后一次尝试是建连前失败才算确定没发出；其余（含 5xx、连接被重置、超时）状态不明
+            if (reason === 'link_down') noteResend(n, 'failed', 'link_down')
+            else if (raced.v.cls === 'retryable') noteResend(n, 'failed', 'network')
+            else if (reason === 'telegram_4xx') noteResend(n, 'failed', 'rejected')
+            else noteResend(n, 'unknown')
           }
         }
         // （旧的"图片统一压尾"循环已并入上方计划循环：无标记时行为不变，仍是压尾）
@@ -2122,7 +2318,18 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
         // H-16/H-17：恒含 planned/sent/dropped/idempotent；部分送达=2xx，全丢=502。
         const planned = items.length
         const status = (sent === 0 && planned > 0) ? 502 : 200
-        const respText = JSON.stringify({ ok: sent > 0, planned, sent, dropped, idempotent: !!batchId, message_ids: sentIds, parts, ts: now(), ...featureNotes })
+        // 恢复后补发：私聊记下确定没发出的段；写盘成功且开关没关才在回包末尾加 resend_parts，否则回包逐字不变
+        let resendNums: number[] = []
+        if (LINK_GATE_ON && CHANNEL_DIR && !String(chatId).startsWith('-')) {
+          if (resendDisabled()) {
+            // 开关关着：只在确有该补的段时记一行，免得每次私聊发送都刷日志
+            if (resendParts.some((p, i) => eligible(p, resendSources[i] ?? null))) resendLog(`resend_skip reason=disabled chat=${chatId}`)
+          } else {
+            resendNums = resendGuard('record', [] as number[],
+              () => resendRecord(CHANNEL_DIR, String(chatId), resendParts, resendSources, Date.now(), e => resendEventLog(String(chatId), e)))
+          }
+        }
+        const respText = JSON.stringify(withResendParts({ ok: sent > 0, planned, sent, dropped, idempotent: !!batchId, message_ids: sentIds, parts, ts: now(), ...featureNotes }, resendNums))
         if (batchId) ledgerStore(ledger, batchId, status, respText, now())
         return new Response(respText, { status, headers: { 'content-type': 'application/json' } })
       }
@@ -2268,6 +2475,13 @@ process.stderr.write(`dispatcher[${BOT_NAME}]: HTTP listening on 127.0.0.1:${ser
 
 // ─── start polling (with 409 retry) ───────────────────────────────────
 void (async () => {
+  if (LINK_GATE_ON) {
+    // 启动先探测一次（10 秒超时），之后由 10 秒巡检继续探；判为通才 bot.start，
+    // 免得断线时 grammY 的 init 进入它自己的退避（封顶 20 分钟），线路恢复后迟迟不收消息
+    if (!linkProbeInFlight) linkProbeLogged()
+    while (!(linkMonitor.isKnown() && !linkMonitor.isDown())) await new Promise(r => setTimeout(r, 1000))
+    linkPollGateOpen = true
+  }
   for (let attempt = 1; ; attempt++) {
     try {
       await bot.start({
