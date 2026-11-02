@@ -10,6 +10,7 @@ import time
 import pytest
 
 import pmr_helpers as H
+from pmr_fixtures import adapter, no_prod_port_connect, r_env, web_client  # noqa: F401  夹具（不用 conftest.py，见 pmr_fixtures 文件头）
 from pmr_helpers import BOT, FakeDispatcher, HangServer, MISSING, free_port, status_body, write_bot, write_link_state
 
 STATE_TEXT_DOWN = "主程序没响应，来消息也不会处理。点「重启」会只重启这一只 bot 的主程序"
@@ -126,9 +127,14 @@ def test_R20_已停用的bot_显示stopped且不去问health(r_env, adapter):
     assert "/health" not in paths                           # 已停用的不判活
 
 
-def test_R20_端口未配_显示idle(r_env, adapter):
-    write_bot(r_env, port=None, enabled=True)
-    assert _row(adapter)["state"] == "idle"
+@pytest.mark.parametrize("port_text", ["null", "abc", "70000"], ids=["端口为空", "端口非整数", "端口越界"])
+def test_R20_端口未配或不合法_显示idle且不连任何端口(r_env, adapter, port_text):
+    # 配置里干脆不写端口会被派生成本机生产端口 17801，所以这里一律显式写成“没有可用端口”的值；
+    # 不连任何端口由 pmr_fixtures 的 no_prod_port_connect 护栏兜底（连了 17801-17808 用例即失败）
+    write_bot(r_env, port_raw=port_text, enabled=True)
+    row = _row(adapter)
+    assert row["state"] == "idle"
+    assert row["polling"] is False
 
 
 def test_R20_开关文件存在且端口无服务_回到改前显示idle(r_env, adapter):
