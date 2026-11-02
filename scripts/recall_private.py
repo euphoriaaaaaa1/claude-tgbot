@@ -3,8 +3,11 @@
 
 钩子模式  不带参数，登记为 SessionStart(matcher=resume)。只在 source=resume 触发（压缩钩子运行时本次边界行尚未写入，
           在 compact 触发会把刚丢的一段误判为仍在上下文）；布防标记 <cwd>/.claude/compact-recall.armed
-          （由 scripts/install_compact_hook.py --recall 写）是 72 小时内的普通文件才触发，先输出、再原子改名为
-          compact-recall.used-<时刻> 即用掉；改名失败标记留着，下次 resume 再补一次。
+          （由 scripts/install_compact_hook.py --recall 写，dispatcher 守卫压缩丢行后也会自动写）是 72 小时内的
+          普通文件才触发。补出内容后记 compact-recall.inflight（注入时刻、次数、标记的 st_mtime_ns），标记先留着；
+          下次 resume 时会话里出现晚于注入时刻的 user 行（补回已随那一轮落盘）才原子改名为
+          compact-recall.used-<时刻> 即用掉，inflight 同后缀改名留档；没落盘就再补，满 5 次放弃。补出 0 条、
+          写不进 inflight 时照旧当场用掉。改名失败标记留着，下次 resume 再试。
 离线导出  --render --cwd <bot 目录> --transcript <会话文件>：不看也不动标记，结果写 stdout（执行者须重定向进文件）。
           stdout 是私聊原文：先 `umask 077` 再重定向，落地文件才是 0600（默认 umask 下是 0644，本机其他账户可读）。
 选取      活动文件最后一个重置点之后视为已在上下文，其中最早的行 timestamp 为 T_in；没有重置点 → n=0。重置点三种：
@@ -13,9 +16,10 @@
           清空之后"的 .bak.<秒>.compact 守卫备份；不读 .deleted-* 等其它文件。
           挑选、去重、规整、渲染全部复用 compact_private_context.py；上限 400 条 / 9000 UTF-16 码元。
 错误      任何情况 exit 0；stderr 只有元数据行或 `recall_private: skip <类名>`，不含正文、名字、id。
-只读会话文件与备份；唯一的写操作是标记改名。不联网、不起子进程。
+只读会话文件与备份；写操作只有标记与 inflight 的改名、inflight 的写入。不联网、不起子进程。
 """
 import json
+import math
 import os
 import re
 import stat
@@ -34,6 +38,10 @@ MAX_MSGS = 400
 MAX_TOTAL = 9000
 MARKER_TTL = 72 * 3600
 MARKER_SKEW = 300  # 标记里的时刻最多允许比本机时钟快这么多秒
+MAX_ATTEMPTS = 5   # 补回一直没落盘时最多注入几次
+MARKER_NAME = "compact-recall.armed"
+INFLIGHT_NAME = "compact-recall.inflight"
+INFLIGHT_MAX_BYTES = 4096
 _NULL_PARENT_RE = re.compile(r'"parentUuid"\s*:\s*null')
 
 
@@ -208,7 +216,7 @@ def _marker_time(path: str):
 def marker_armed(cwd: str) -> bool:
     """<cwd>/.claude/compact-recall.armed 是普通文件，修改时刻与内容里的布防时刻都在 72 小时内。只看不动。
     两个都看：重写内容不刷新有效期，单碰一下修改时刻也不行。"""
-    path = os.path.join(cwd, ".claude", "compact-recall.armed")
+    path = os.path.join(cwd, ".claude", MARKER_NAME)
     try:
         st = os.lstat(path)
     except (FileNotFoundError, NotADirectoryError):
@@ -220,22 +228,105 @@ def marker_armed(cwd: str) -> bool:
     return armed_at is not None and -MARKER_SKEW <= now - armed_at <= MARKER_TTL
 
 
+def armed_ns(cwd: str):
+    """当前布防标记的 st_mtime_ns；不存在或读不了 → None。"""
+    try:
+        return os.lstat(os.path.join(cwd, ".claude", MARKER_NAME)).st_mtime_ns
+    except OSError:
+        return None
+
+
+def _is_int(v) -> bool:
+    return type(v) is int  # 布尔不算
+
+
+def read_inflight(cwd: str):
+    """有效的 inflight → dict(t, count, armed_ns)；不存在、不是普通文件、超过 4 KB、格式不对、
+    armed_ns 对不上当前标记 → None（按第一次注入处理）。"""
+    path = os.path.join(cwd, ".claude", INFLIGHT_NAME)
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):  # 目录等：fdopen 会抛，先判
+            return None
+        raw = os.read(fd, INFLIGHT_MAX_BYTES + 1)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    if len(raw) > INFLIGHT_MAX_BYTES:
+        return None
+    try:
+        d = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(d, dict) or not {"t", "count", "armed_ns"} <= set(d):
+        return None
+    t, count, ns = d["t"], d["count"], d["armed_ns"]
+    if not (_is_int(t) or type(t) is float) or not math.isfinite(t):
+        return None
+    if not _is_int(count) or count < 1 or not _is_int(ns) or ns != armed_ns(cwd):
+        return None
+    return {"t": float(t), "count": count, "armed_ns": ns}
+
+
+def write_inflight(cwd: str, t: float, count: int, ns: int) -> None:
+    """临时文件 + os.replace 写一行 JSON（POSIX 0600）；失败照常抛，并删掉临时文件。"""
+    folder = os.path.join(cwd, ".claude")
+    tmp = os.path.join(folder, f".{INFLIGHT_NAME}.{os.getpid()}.tmp")
+    data = (json.dumps({"t": float(t), "count": count, "armed_ns": ns}) + "\n").encode("utf-8")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, os.path.join(folder, INFLIGHT_NAME))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def injected_after(path: str, t: float) -> bool:
+    """会话尾部有一行 type=user、timestamp 严格晚于 t → 上一次注入已随那一轮落盘。"""
+    for line in cpc.read_tail(path):
+        if '"user"' not in line or "timestamp" not in line:
+            continue
+        o = _row(line)
+        if o is None or o.get("type") != "user":
+            continue
+        ts = cpc.epoch_of(o.get("timestamp"))
+        if ts is not None and ts > t:
+            return True
+    return False
+
+
 def consume_marker(cwd: str) -> bool:
-    """有效标记 → 原子改名为 used-<本机时刻>（同名加 -1、-2…）。
+    """有效标记 → 原子改名为 used-<本机时刻>（同名加 -1、-2…）；inflight 在且不是目录时同后缀改名留档。
     在选取跑完之后才调用：超时被杀或中途异常时标记留着，下次 resume 再试。"""
     folder = os.path.join(cwd, ".claude")
-    marker = os.path.join(folder, "compact-recall.armed")
+    marker = os.path.join(folder, MARKER_NAME)
+    inflight = os.path.join(folder, INFLIGHT_NAME)
     if not marker_armed(cwd):
         return False
-    base = os.path.join(folder, "compact-recall.used-" + time.strftime("%Y%m%d-%H%M%S"))
-    dst, n = base, 0
-    while os.path.lexists(dst):  # 不覆盖已有的触发记录
+    suffix = time.strftime("%Y%m%d-%H%M%S")
+    sfx, n = suffix, 0
+    while (os.path.lexists(os.path.join(folder, "compact-recall.used-" + sfx))
+           or os.path.lexists(os.path.join(folder, INFLIGHT_NAME + ".used-" + sfx))):  # 不覆盖已有的触发记录
         n += 1
-        dst = f"{base}-{n}"
+        sfx = f"{suffix}-{n}"
     try:
-        os.rename(marker, dst)
+        os.rename(marker, os.path.join(folder, "compact-recall.used-" + sfx))
     except OSError:
         return False
+    try:
+        if os.path.lexists(inflight) and not stat.S_ISDIR(os.lstat(inflight).st_mode):
+            os.rename(inflight, os.path.join(folder, INFLIGHT_NAME + ".used-" + sfx))
+    except OSError:
+        pass  # 残留的 inflight 对不上下一次布防的 armed_ns，自动作废
     return True
 
 
@@ -256,6 +347,7 @@ def parse_args(argv: list):
 
 
 def main(argv: list) -> None:
+    started = time.time()  # 本次钩子开始时刻：注入随下一行 user 落盘，必晚于它
     try:
         mode = parse_args(argv)
         if mode is False:
@@ -277,8 +369,29 @@ def main(argv: list) -> None:
         path = cpc.transcript_ok(hook.get("transcript_path")) if cwd_real else None
         if path is None or not marker_armed(hook["cwd"]):
             return
-        emit(path, cwd_real)           # 抛异常 → 下面吞掉，标记留着
-        consume_marker(hook["cwd"])    # 选取跑完（含"没东西可补"）才用掉
+        cwd = hook["cwd"]
+        prev = read_inflight(cwd)
+        if prev is not None:
+            if injected_after(path, prev["t"]):       # 上次补回已落盘 → 用掉，不再补
+                if consume_marker(cwd):
+                    sys.stderr.write(f"recall_private: consumed attempts={prev['count']}\n")
+                return
+            if prev["count"] >= MAX_ATTEMPTS:          # 补满仍没落盘 → 放弃
+                if consume_marker(cwd):
+                    sys.stderr.write(f"recall_private: give-up attempts={prev['count']}\n")
+                return
+        n = emit(path, cwd_real)       # 抛异常 → 下面吞掉，标记留着
+        if n == 0:                     # 没东西可补：照旧当场用掉
+            consume_marker(cwd)
+            return
+        try:
+            ns = armed_ns(cwd)
+            if ns is None:
+                raise FileNotFoundError(MARKER_NAME)
+            write_inflight(cwd, started, (prev["count"] if prev else 0) + 1, ns)
+        except Exception as e:         # 记不下次数：退回"补一次即用掉"
+            sys.stderr.write(f"recall_private: skip {type(e).__name__}\n")
+            consume_marker(cwd)
     except Exception as e:  # 钩子绝不能让 resume 失败：吞掉，只留类名
         sys.stderr.write(f"recall_private: skip {type(e).__name__}\n")
 
