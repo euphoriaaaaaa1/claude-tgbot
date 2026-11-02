@@ -343,7 +343,10 @@ MAX_RESTART_BODY = 1024
 @console_bp.route("/api/console/bots/<backend>/<bot_id>/restart", methods=["POST"])
 def api_restart_bot(backend, bot_id):
     try:
-        body = _body(MAX_RESTART_BODY)
+        try:
+            body = json_object(MAX_RESTART_BODY)
+        except BodyError as e:   # 重启接口的请求体错误一律按 422 invalid（含超过 1 KB）
+            raise Reject("invalid", 422, e.message) from None
         force = body.get("force", False)
         if not isinstance(force, bool):
             raise Reject("invalid", 422, "force 必须是 true 或 false")
