@@ -433,6 +433,21 @@ python3 platform_services.py unregister autostart
 | 生图报缺令牌 | 跑 `scripts/set_novelai_key.py`，或改用 ComfyUI |
 | 新 bot 加完没起来 | `restart-bots.sh` 读的是 `configs/*.yml`；确认 `enabled` 不是 `false`，并重新跑一次 |
 
+### 13.1 Telegram 线路断开时
+
+dispatcher 会判断到 Telegram 的线路是否已知不通（代理挂掉、网络断开等）。
+
+- **怎么判不通**：只有一次 `getMe` 探测以网络层失败结束才判为不通；任何请求拿到 Telegram 回应即恢复。连接被拒这类快速失败通常在 10 秒到 2 分钟内判出；线路黑洞（连得上但一直不回包）时请求要等到超时才结束，可能要 9 分钟左右。经 HTTP 代理时，"连不上"指连不上代理。
+- **启动时**：dispatcher 先做一次 `getMe` 探测，判为通之后才开始收消息；断线中启动时 HTTP 接口照常工作，每 10 秒探一次，线路恢复后约 10–20 秒内开始收消息。
+- **不通期间**：文字、图片、文件、语音都不发出请求，`/send` 回包逐段记 `reason: "link_down"`；主动开口跳过且不扣冷静期；到点的约定顺延，恢复后照常触发。断线刚开始那段时间里发出的段可能状态不明，不会自动补发。
+- **恢复后补发**：只针对私聊、只针对确定没有发出的段。线路连续通满 120 秒后，dispatcher 向该私聊的 inbox 投一条以 `[resend-check]` 开头的系统提醒，由 bot 结合当前对话判断是否用自己的话重新说；已经说过或不合时宜的可以不发。每批最多 3 轮，12 小时作废，`/clear` 立即作废；状态不明的段不补。补发提醒到达时 bot 按一条私聊消息处理，被晾档案会被这条提醒取走（与 `[hang-check]`、`[promise-due]` 相同）。worker 的回复工具结果里会多一行 `resend_scheduled:`，提示这几段已登记补发、不要现场重发。
+- **补发记录**：存在 bot 频道目录的 `.resend/` 下，含私聊原文（文字只存前 500 字）；状态不明的段只记内容摘要（SHA-256 前 16 位十六进制，不加盐），不存原文，线路正常时偶发的 5xx 也会留下这类摘要文件。dispatcher 运行时 12 小时内清掉，单只停用补发或关掉线路判断时照样清理；dispatcher 停着期间文件保留。macOS/Linux 上目录权限 0700、文件 0600。
+- **单只停用补发**：建空文件 `~/.claude/dispatcher/.disabled/resend-<bot>`（设置了 `DISABLED_DIR` 时为 `$DISABLED_DIR/resend-<bot>`），立即生效，不用重启；删掉即恢复。
+- **关掉整套线路判断**：在该 bot 的 `access.json` 写 `"linkGateEnabled": false`（必须是 JSON 布尔值，写成字符串 `"false"` 不算关），重启 dispatcher 生效。关掉后启动探测、发前拦截、线路状态文件、补发一并关闭，行为与没有本功能时相同，只保留旧补发记录的过期清理。
+- **线路状态文件**：不通时 dispatcher 写 `<LINK_STATE_DIR>/<bot>`（只含两个时间戳），恢复时删除；`scripts/self_initiate.py` 读同一位置。`LINK_STATE_DIR` 缺省为 `~/.claude/dispatcher/.link-state`，两侧都认这个环境变量。
+- **日志**（stderr，前缀 `dispatcher[<bot>]: `，不含正文、路径和令牌）：`link_down since=<秒>`、`link_up`、`link_probe_failed`、`link_state_tick_failed`；`resend_recorded chat= added= pending=`、`resend_sent_match`、`resend_unknown_key`、`resend_skip reason=disabled|cooldown|exhausted|bad_chat`、`resend_inject chat= round=/3 parts= chars= age_s=`、`resend_taken`、`resend_done`、`resend_give_up`、`resend_void reason=session|expired`、`resend_inject_failed reason=`、`resend_record_failed`、`resend_tick_failed`、`resend_epoch_failed`；约定侧 `PAUSED gate=link_down`；主动开口 `skip: reason=link_down`。
+- **Windows**：代码路径已覆盖，未在真机验证。Windows 上 0600/0700 不生效，补发记录的隐私依赖用户目录的默认权限；频道目录配到用户目录之外时由所在目录的权限决定。Bun 与 Python 在 Windows 上都按 `USERPROFILE` 取家目录，如两侧落点不一致，可用 `LINK_STATE_DIR` 显式指定同一目录。
+
 ---
 
 ## 14. 安全说明
@@ -502,6 +517,8 @@ powershell -ExecutionPolicy Bypass -File windows\unregister-tasks.ps1
 | macOS | 实跑验证 | 安装、8767、新建 bot、供应商、功能开关、party/photo、双门禁测试 |
 | Linux | 静态检查 | 脚本与路径按 POSIX 检查；未在真实发行版上完整跑通 |
 | Windows | VM 先验 + 真机复验清单 | 已做路径/编码/计划任务三项先验；管理台全流程、语音、聚会/摄像、长稳运行仍需真机复验 |
+
+Telegram 线路断开处理（第 13.1 节）在 macOS 上用本机假 Telegram 跑过验收测试，Windows 上未真机验证。
 
 未验证项会如实写在这里，不把“能启动”说成“全功能已验证”。
 
