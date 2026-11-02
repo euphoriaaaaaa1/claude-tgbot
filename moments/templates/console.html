@@ -337,8 +337,8 @@ var ConsoleUX = (function () {
   const DEFAULT_TEXT = '底层默认';
   const STATUS_TEXT = {down: '底层没在运行', unconfigured: '还没配置', unauthorized: '令牌不对',
     not_installed: '未安装', error: '出错了'};
-  const STATE_TEXT = {running: '运行中', idle: '空闲', stopped: '已停用', broken: '需要处理'};
-  const STATE_KIND = {running: 'ok', idle: '', stopped: 'local', broken: 'bad'};
+  const STATE_TEXT = {running: '运行中', idle: '空闲', stopped: '已停用', broken: '需要处理', dispatcher_down: '主程序没响应'};
+  const STATE_KIND = {running: 'ok', idle: '', stopped: 'local', broken: 'bad', dispatcher_down: 'bad'};
   const text = (v) => (v === null || v === undefined ? '' : String(v));
   const list = (v) => (Array.isArray(v) ? v : []);
   const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
@@ -418,6 +418,14 @@ var ConsoleUX = (function () {
     return {kind: b.enabled === true && b.running !== true ? 'warn' : 'ok', text: msg};
   }
   function actionsDisabled(bot) { return isDuplicate(bot); }
+  function canRestart(backend, bot) {
+    const b = obj(bot);
+    return backendOk(backend) && hasCap(backend, 'bot.restart.graceful') && b.enabled !== false
+      && !isDuplicate(bot) && !(typeof b.moved_to === 'string' && b.moved_to);
+  }
+  function restartConfirmText(bot) {
+    return '重启「' + displayName(bot) + '」？主程序正常时只重启 worker；主程序没响应时会只把这一只 bot 的主程序连 worker 一起重启，通常十几秒。';
+  }
   function manageUrl(backend, botId) {
     return '/console?b=' + encodeURIComponent(text(backend)) + '/' + encodeURIComponent(text(botId));
   }
@@ -448,7 +456,7 @@ var ConsoleUX = (function () {
     hasCap, backendOk, backendLabel, backendReason, groupCountText, groupByBackend,
     displayName, isDuplicate, duplicateHint, stateBadge, stateLine, providerLine, pendingText,
     enableToggle, isOtherSideUnknown, otherSideConfirmText, enableBody, enableResult,
-    actionsDisabled, manageUrl, selectedFromQuery, failureText, loadErrorText};
+    actionsDisabled, canRestart, restartConfirmText, manageUrl, selectedFromQuery, failureText, loadErrorText};
 })();
 if (typeof window !== 'undefined') window.ConsoleUX = ConsoleUX;
 </script>
@@ -757,6 +765,7 @@ if (typeof window !== 'undefined') window.LifeHints = {lifeEmptyHints: lifeEmpty
 const _origFetch = fetch;
 let DATA = null;
 let BUSY = false;
+const RESTARTING = new Set();   // 正在等重启结果的卡片（backend/bot_id），重画后按钮仍置灰
 let SEL = null;
 let GEN = 0;
 let ARCH = null;
@@ -957,6 +966,16 @@ function renderCard(backend, bot) {
   link.textContent = '管理';
   link.href = ConsoleUX.manageUrl(backend.backend, bot.bot_id);
   box.appendChild(link);
+  if (ConsoleUX.canRestart(backend, bot)) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn';
+    btn.setAttribute('data-action', 'restart');
+    const busy = RESTARTING.has((backend.backend || '') + '/' + (bot.bot_id || ''));
+    btn.textContent = busy ? '正在重启…' : '重启';
+    btn.disabled = busy;
+    box.appendChild(btn);
+  }
   return node;
 }
 function isSelected(backend, botId) { return !!(SEL && SEL.backend === backend && SEL.botId === botId); }
@@ -1412,9 +1431,39 @@ function selectBot(backend, botId, push) {
   if (push !== false) history.replaceState(null, '', ConsoleUX.manageUrl(backend, botId));
   render();
 }
+// 卡片「重启」：一次确认；请求进行中按钮置灰；返回后在顶部提示 message
+async function restartBot(backend, botId, name, btn) {
+  const key = backend + '/' + botId;
+  if (RESTARTING.has(key)) return;
+  const bot = list(obj(DATA).bots).find((b) => obj(b).bot_id === botId && obj(b).backend === backend) || {bot_id: botId, display_name: name};
+  if (!confirm(ConsoleUX.restartConfirmText(bot))) return;
+  RESTARTING.add(key);
+  btn.disabled = true;
+  btn.textContent = '正在重启…';
+  let r;
+  try {
+    r = await jsonFetch('/api/console/bots/' + encodeURIComponent(backend) + '/' + encodeURIComponent(botId) + '/restart',
+      {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+    r = {ok: false, status: 0, body: null};
+  } finally {
+    RESTARTING.delete(key);
+  }
+  const b = obj(r.body);
+  const done = r.ok && b.ok === true;
+  setOpMsg(name + '：' + (done ? (txt(b.message).trim() || '已重启') : ConsoleUX.failureText(r)), done ? 'ok' : 'err');
+  await load();
+}
 document.getElementById('groups').addEventListener('click', (e) => {
   const card = e.target.closest('[data-role="bot-card"]');
   if (!card) return;
+  const rb = e.target.closest('button[data-action="restart"]');
+  if (rb) {
+    restartBot(card.getAttribute('data-backend'), card.getAttribute('data-bot-id'),
+      card.querySelector('[data-role="bot-name"]').textContent, rb);
+    return;
+  }
   const link = e.target.closest('a[data-action="manage"]');
   if (link && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1)) return;
   if (link) e.preventDefault();
