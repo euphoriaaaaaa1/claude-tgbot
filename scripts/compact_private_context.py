@@ -36,7 +36,7 @@ REPLY_TOOLS = ("mcp__telegram-worker__reply", "mcp__telegram-worker__send_messag
 # 不从仓内导入那张表：钩子保持零仓内依赖，导入失败时剔除表变空就是安全倒退；漏项由单测对照那张表拦下。
 SYNTH_PREFIXES = ("[self-initiate]", "[group-dm-nudge]", "[director]", "[hang-check]", "[promise-due]", "[moment-",
                   "[voice-image]", "[voice-recap]", "[peer-inbound]", "[memory-compactor]", "[wildcard-daily]",
-                  "[系统自检]", "[from peer bot")
+                  "[系统自检]", "[from peer bot", "[resend-check]")
 # CLI 原生控制消息（同在 _INTERNAL_MARKERS 里）：本不会出现在 <channel> 里，出现了也不当真人原话补回
 NATIVE_PREFIXES = ("Continue from where you left off.", "[Request interrupted by user", "No response requested.",
                    "This session is being continued", "Base directory for this skill", "<command-name>",
