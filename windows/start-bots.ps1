@@ -1,6 +1,8 @@
 ﻿# start-bots.ps1 — 启动全部 bot 的 dispatcher（Windows）
 # bot 名单/端口/命名空间来自注册表（configs\*.yml），加 bot 不用改本文件。
 # 进程模型与 macOS/Linux 一致：每个 bot 一个后台 bun 进程，pid/日志落本机目录。
+# -Only <bot>：只起这一只（管理台单只重启经 restart-bots.ps1 -Only 调用）；不在注册表或已停用 → 退出 2。
+param([string]$Only = "")
 $ErrorActionPreference = "Stop"
 # 保证任务计划/隐藏会话里能找到 bun（登录会话 PATH 未必含 ~/.bun/bin）
 $env:PATH = "$env:USERPROFILE\.bun\bin;$env:PATH"
@@ -38,6 +40,13 @@ if ($RegistryCode -ne 0 -or -not $RegistryJson) {
 }
 # @() 包一层：只有一个 bot 时 ConvertFrom-Json 回的是单个对象而不是数组
 $Registry = @($RegistryJson | ConvertFrom-Json)
+if ($Only) {
+    $Registry = @($Registry | Where-Object { $_.id -ceq $Only })
+    if ($Registry.Count -eq 0) {
+        [Console]::Error.WriteLine("$Only 不在注册表里或已停用，未启动")
+        exit 2
+    }
+}
 
 # 只探 /health（免口令）；/status 需要 X-Api-Token，不能拿来判活。
 function Test-DispatcherAlive([int]$Port) {
