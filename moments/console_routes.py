@@ -334,6 +334,35 @@ def api_set_voice(backend, bot_id):
     return _profile("voice", backend, bot_id, write=True)
 
 
+# ── 重启（卡片「重启」按钮）────────────────────────────────────────────────────
+# 主程序正常时只重启 worker；主程序没响应时由底层决定是否连主程序一起重启（claude 侧见
+# ClaudeLocalAdapter.restart）。登录门与跨站校验由全站 before_request 负责，这里不重写。
+MAX_RESTART_BODY = 1024
+
+
+@console_bp.route("/api/console/bots/<backend>/<bot_id>/restart", methods=["POST"])
+def api_restart_bot(backend, bot_id):
+    try:
+        body = _body(MAX_RESTART_BODY)
+        force = body.get("force", False)
+        if not isinstance(force, bool):
+            raise Reject("invalid", 422, "force 必须是 true 或 false")
+        ad, caps, _levels = _prepare(backend, bot_id, check_busy=True)
+        cap = "bot.restart.force" if force else "bot.restart.graceful"
+        if caps.get(cap) is not True:
+            raise Reject("unsupported", 501, "这个底层不支持%s重启" % ("强制" if force else ""))
+        result = _call(lambda: ad.restart(bot_id, force))
+        result = result if isinstance(result, dict) else {}
+        status = result.get("status") if isinstance(result.get("status"), str) else "failed"
+        message = result.get("message") if isinstance(result.get("message"), str) else ""
+        return jsonify(_scrubbed({"ok": status != "failed", "status": status, "message": message}))
+    except Reject as r:
+        return _fail(r.code, r.http_status, r.message, r.fields)
+    except Exception as e:  # noqa: BLE001
+        _log.error("console 重启失败 %r/%r：%s", backend, bot_id, type(e).__name__)
+        return _fail("internal", 500, INTERNAL_MESSAGE)
+
+
 # ── 群聊、导演、聚会（INTERFACE §2.13，T16）────────────────────────────────────
 # 群清单在 adapters.group_config，聚会状态在 adapters.party_state；成员身份经各底层适配器的
 # groups / set_groups 读写。进退群串行执行，避免两次交错互相覆盖。
