@@ -334,24 +334,18 @@ const LINK_GATE_ON = loadAccess().linkGateEnabled !== false
 // 启动时线路好坏未知（startUnknown），先探测确认通了才 bot.start，见文件末尾启动段。
 const linkMonitor = createLinkMonitor({ startUnknown: true })
 const linkProbeSignals = new WeakSet<object>()
-// 最近一次发送类网络失败的时刻。发起早于它的请求（例如线路断之前就挂着的长轮询）晚些拿到回包，
-// 推翻不了这次失败，也不能清掉它登记的立即探测，交给探测判定；之后发起的请求拿到回包照常算恢复
-let linkSendFailedAtMs = 0
 if (LINK_GATE_ON) {
   bot.api.config.use(async (prev, method, payload, signal) => {
     if (shouldBlockSend(method, linkMonitor.isDown())) throw new LinkDownError(method)
     const isProbe = signal != null && linkProbeSignals.has(signal)
-    const startedMs = Date.now()
     try {
       const res = await prev(method, payload, signal)
-      if (!isProbe && startedMs > linkSendFailedAtMs) linkMonitor.recordResponse(Date.now())
+      if (!isProbe) linkMonitor.recordResponse(Date.now())
       return res
     } catch (e) {
       if (!isProbe && !signal?.aborted && e instanceof HttpError) {
         // 只有发送类失败触发立即探测；拉取和其它读取类（getFile 等）只记"最近结束的请求失败"
-        const isSend = shouldBlockSend(method, true)
-        if (isSend) linkSendFailedAtMs = Date.now()
-        linkMonitor.recordNetworkFailure(Date.now(), isSend ? 'send' : 'poll')
+        linkMonitor.recordNetworkFailure(Date.now(), shouldBlockSend(method, true) ? 'send' : 'poll')
       }
       throw e
     }
