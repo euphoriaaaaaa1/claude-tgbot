@@ -194,6 +194,25 @@ async function postJson(path: string, body: any): Promise<any> {
   if (!r.ok) throw new Error(`dispatcher ${path} ${r.status}: ${await r.text().catch(() => '')}`)
   return r.json()
 }
+/** dispatcher 回包里的 resend_parts（非空、全为非负整数才算）→ 工具结果追加的一行；否则空串 */
+function resendScheduledLine(nums: unknown): string {
+  if (!Array.isArray(nums) || nums.length === 0 || !nums.every(n => Number.isInteger(n) && n >= 0)) return ''
+  return `resend_scheduled: 段 ${nums.join(',')} 确定没有发出，已登记补发；不要现在重发，稍后会收到系统提醒再处理。`
+}
+/** /send 专用：成败与错误文本同 postJson；回包带 resend_parts 时错误文本末尾多一行，2xx 时由调用方追加 */
+async function postSend(body: any): Promise<{ out: any; resendLine: string }> {
+  const r = await fetch(`${DISPATCHER}/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Api-Token': API_TOKEN },
+    body: JSON.stringify(body),
+  })
+  const raw = await r.text().catch(() => '')
+  let parsed: any = undefined
+  try { parsed = JSON.parse(raw) } catch { /* 非 JSON：忽略 resend_parts */ }
+  const resendLine = resendScheduledLine(parsed?.resend_parts)
+  if (!r.ok) throw new Error(`dispatcher /send ${r.status}: ${raw}${resendLine ? `\n${resendLine}` : ''}`)
+  return { out: parsed === undefined ? JSON.parse(raw) : parsed, resendLine }
+}
 /** 需要读错误体/状态码的调用（/party、/promise）：网络失败返回 status=0。 */
 async function postStatus(path: string, body: any): Promise<{ status: number; json: any }> {
   try {
@@ -329,7 +348,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
         // party 改投到群时，私聊消息的 reply_to 在群里无效，不转发。
         const partyTarget = partyRedirect !== '' && targetChat === partyRedirect && d.chat_id !== partyRedirect
-        const out = await postJson('/send', {
+        const { out, resendLine } = await postSend({
           chat_id: targetChat,
           text: args.text,
           reply_to: partyTarget ? undefined : args.reply_to,
@@ -353,7 +372,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
             ? out.dropped.map((dropped: any) => dropped?.index).filter((x: any) => x != null)
             : []
           const missTxt = missing.length ? missing.join(', ') : `${sentN}/${planned}`
-          return { content: [{ type: 'text', text: `partial send: ${sentN}/${planned} delivered; missing segment(s) = ${missTxt}` }], isError: true }
+          const partialLine = `partial send: ${sentN}/${planned} delivered; missing segment(s) = ${missTxt}`
+          return { content: [{ type: 'text', text: resendLine ? `${partialLine}\n${resendLine}` : partialLine }], isError: true }
         }
         turn.promiseIdsByChat.delete(targetChat.trim())
         let text = ids.length === 1 ? `sent (id: ${ids[0]})` : `sent ${ids.length} parts (ids: ${ids.join(', ')})`
