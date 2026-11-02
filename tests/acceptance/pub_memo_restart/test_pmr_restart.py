@@ -12,6 +12,7 @@ import time
 import pytest
 
 import pmr_helpers as H
+from pmr_fixtures import adapter, make_stub, no_prod_port_connect, r_env, web_client  # noqa: F401  夹具（不用 conftest.py，见 pmr_fixtures 文件头）
 from pmr_helpers import BOT, FakeDispatcher, LEAK, free_port, pid_alive, write_bot
 
 OK_MSG = "主程序没响应，已连主程序一起重启"
