@@ -25,6 +25,7 @@
  * 安全：reason 只含结构化字段（cls/code），**绝不含** String(e) 全文 / token / 用户文本 / 底层 message。
  */
 import { GrammyError, HttpError } from 'grammy'
+import { LinkDownError } from './link_state'
 
 // ─── 类型 ────────────────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ export type SendClass =
   | 'retryable'    // 确定未送达，可自动重试（429 限流；建连前阶段失败）
   | 'undelivered'  // 确定未送达，但重试无益（Telegram 4xx 确定性拒收）
   | 'ambiguous'    // 可能已送达 / 状态未知 —— 绝不重发
+  | 'link_down'    // 线路已知不通，发送前就被拦下 —— 请求根本没发出，确定未送达
 
 export interface SendErrorInfo {
   cls: SendClass
@@ -76,6 +78,7 @@ export function isPreConnectFailure(code: string): boolean {
  */
 export function classifySendError(e: unknown): SendErrorInfo {
   try {
+    if (e instanceof LinkDownError) return { cls: 'link_down', reason: 'link_down' }
     if (e instanceof GrammyError) {
       const code = e.error_code
       const reason = `GrammyError ${code}`
