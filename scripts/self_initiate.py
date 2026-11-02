@@ -11,6 +11,7 @@ macOS launchd 与 Windows 任务计划都调本脚本（每 10 分钟 tick，闸
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import time
@@ -38,6 +39,29 @@ def _bot_port(bot: str) -> str | None:
         return os.environ[env_key]
     # 默认单 bot 部署：17801
     return "17801"
+
+
+_LINK_BOT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+_LINK_CHECKED_RE = re.compile(r"(?:^|\s)checked_at=(\d{1,18})(?=\s|$)")
+_LINK_STALE_SEC = 120
+
+
+def _link_down(bot: str, now: int) -> bool:
+    """dispatcher 判 Telegram 线路不通时写 <LINK_STATE_DIR>/<bot>；checked_at 距 now 在 ±120 秒内才算不通。
+    文件不存在、读失败、解析不出、过期或超前一律视为通（不改变原流程）。"""
+    try:
+        if not _LINK_BOT_RE.match(bot):
+            return False
+        d = os.environ.get("LINK_STATE_DIR") or os.path.expanduser("~/.claude/dispatcher/.link-state")
+        with open(os.path.join(d, bot), "rb") as f:
+            head = f.read(256).decode("utf-8", errors="replace")
+        m = _LINK_CHECKED_RE.search(head)
+        if not m:
+            return False
+        age = now - int(m.group(1))
+        return -_LINK_STALE_SEC <= age <= _LINK_STALE_SEC
+    except Exception:
+        return False
 
 
 def _channel_dir(bot: str) -> str:
@@ -96,6 +120,10 @@ def main() -> int:
         target = COOLDOWN_MIN
     if last and now - last < target:
         print(f"skip: 距上次 {now-last}s < 随机目标 {target}s", file=sys.stderr)
+        return 0
+    # 线路不通：不发、不扣冷静期（不写 .last / .interval），等 dispatcher 恢复后下一轮再判
+    if _link_down(bot, now):
+        print("skip: reason=link_down", file=sys.stderr)
         return 0
     open(marker, "w", encoding="utf-8").write(str(now))
     open(interval_f, "w", encoding="utf-8").write(str(random.randint(COOLDOWN_MIN, COOLDOWN_MAX)))
