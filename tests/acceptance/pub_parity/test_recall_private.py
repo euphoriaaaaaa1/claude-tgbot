@@ -6,7 +6,9 @@
 """
 import datetime
 import glob
+import json
 import os
+import re
 import stat
 
 import pytest
@@ -54,6 +56,27 @@ def _used(bot):
     return glob.glob(os.path.join(str(bot), ".claude", "compact-recall.used-*"))
 
 
+def _inflight_path(bot):
+    return os.path.join(str(bot), ".claude", "compact-recall.inflight")
+
+
+def _inflight_used(bot):
+    return glob.glob(os.path.join(str(bot), ".claude", "compact-recall.inflight.used-*"))
+
+
+def _stderr_lines(err):
+    return [l for l in err.splitlines() if l.strip()]
+
+
+def _append_user_row_after_injection(s):
+    """模拟补回的内容已随下一轮用户消息写进会话：追加一行 timestamp 晚于 inflight.t 的 user 行。"""
+    t = json.loads(open(_inflight_path(s["bot"]), encoding="utf-8").read())["t"]
+    later = datetime.datetime.fromtimestamp(t + 60, datetime.timezone.utc)
+    row = user_row("u-after", "a2", "补回之后的下一条用户消息", iso_z(later))
+    with open(s["tpath"], "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def test_找回_没布防_空输出_不动文件(tmp_path):
     s = _session(tmp_path)
     before, tbytes = _claude_dir_state(s["bot"]), s["tpath"].read_bytes()
@@ -63,7 +86,7 @@ def test_找回_没布防_空输出_不动文件(tmp_path):
     meta_stderr_ok(err, "recall_private")
 
 
-def test_找回_布防且在72小时内_resume_输出更早的私聊_标记改名为used(tmp_path):
+def test_找回_布防且在72小时内_resume_输出更早的私聊_标记留着并写inflight(tmp_path):
     s = _session(tmp_path)
     marker = arm_marker(s["home"], s["bot"])
     assert os.path.isfile(marker)
@@ -72,19 +95,30 @@ def test_找回_布防且在72小时内_resume_输出更早的私聊_标记改�
     for body in EARLIER:
         assert body in out, f"{body} 应被找回"
     assert IN_CONTEXT not in out                                    # 已在上下文里的不重复补
-    assert not os.path.exists(marker) and len(_used(s["bot"])) == 1  # 标记用掉：改名为 used-<时刻>
+    # 补回的内容还没进会话，标记不能用掉：armed 仍在、没有 used，改写 inflight 记账
+    assert os.path.isfile(marker) and _used(s["bot"]) == []
+    inflight = json.loads(open(_inflight_path(s["bot"]), encoding="utf-8").read())
+    assert inflight["count"] == 1 and inflight["armed_ns"] == os.stat(marker).st_mtime_ns
     meta = meta_stderr_ok(err, "recall_private")
+    assert meta.startswith("recall_private: ok n=")
     assert s["name"] not in meta and EARLIER[0] not in meta
 
 
-def test_找回_用掉标记后再次触发_空输出(tmp_path):
+def test_找回_补回内容进了会话后再触发_消费标记_之后再触发仍是空输出(tmp_path):
     s = _session(tmp_path)
-    arm_marker(s["home"], s["bot"])
+    marker = arm_marker(s["home"], s["bot"])
     assert _run(s)[1] != ""
-    used_before = _used(s["bot"])
+    _append_user_row_after_injection(s)
     rc, out, err = _run(s)
     assert rc == 0 and out == "", err
-    assert _used(s["bot"]) == used_before                           # 不再产生新的 used 记录
+    assert _stderr_lines(err) == ["recall_private: consumed attempts=1"]
+    assert not os.path.exists(marker)
+    used, inflight_used = _used(s["bot"]), _inflight_used(s["bot"])
+    assert len(used) == 1 and len(inflight_used) == 1               # 标记与 inflight 都改名留档
+    assert not os.path.exists(_inflight_path(s["bot"]))
+    rc, out, err = _run(s)                                          # 已消费：再触发什么都不补
+    assert rc == 0 and out == "", err
+    assert _used(s["bot"]) == used and _inflight_used(s["bot"]) == inflight_used   # 不再产生新的留档
 
 
 def test_找回_布防超过72小时_空输出(tmp_path):
@@ -117,11 +151,11 @@ def test_找回_带未知命令行参数_写skip_BadArgs_空输出_退出0(tmp_p
 
 @skip_if_root
 @skip_on_windows
-def test_找回_改名失败_照常先输出_标记留着下次再补(tmp_path):
+def test_找回_目录只读_照常先输出_inflight写不进_stderr多一行skip_标记留着下次再补(tmp_path):
     s = _session(tmp_path)
     marker = arm_marker(s["home"], s["bot"])
     cdir = os.path.dirname(marker)
-    os.chmod(cdir, stat.S_IRUSR | stat.S_IXUSR)                     # 目录只读：标记改名必失败
+    os.chmod(cdir, stat.S_IRUSR | stat.S_IXUSR)                     # 目录只读：inflight 写不进，标记改名也必失败
     try:
         rc, out, err = _run(s)
     finally:
@@ -129,4 +163,9 @@ def test_找回_改名失败_照常先输出_标记留着下次再补(tmp_path):
     assert rc == 0, err
     assert all(b in out for b in EARLIER)                           # 先输出
     assert os.path.isfile(marker) and _used(s["bot"]) == []         # 改名失败：标记留着
-    meta_stderr_ok(err, "recall_private")
+    assert not os.path.exists(_inflight_path(s["bot"]))             # inflight 没写进去
+    lines = _stderr_lines(err)
+    assert len(lines) == 2, err
+    assert lines[0].startswith("recall_private: ok n=")
+    assert re.fullmatch(r"recall_private: skip [A-Za-z_][A-Za-z0-9_]*", lines[1]), lines[1]
+    assert "consumed" not in err and "give-up" not in err
