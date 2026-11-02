@@ -95,6 +95,15 @@ export class FakeTelegram {
     this.mode = m
     if (m === 'off') await this.close()
     else await this.listen()
+    // 切到「断线」要和真实断线一样：已建立的连接（含挂着的长轮询）一并掐掉，
+    // 否则旧连接还能拿到回包，等于线路没断（约定 5.23.2：任何请求拿到回包即恢复为通）
+    if (m === 'cut') this.dropEstablishedConnections()
+  }
+
+  /** 掐断当前所有已建立的连接（keep-alive 空闲连接与挂着的 getUpdates 长轮询都包括） */
+  dropEstablishedConnections(): void {
+    for (const s of [...this.sockets]) { try { s.destroy() } catch { /* ignore */ } }
+    this.sockets.clear()
   }
 
   /** 推一条真人（或 bot）消息给 getUpdates */
