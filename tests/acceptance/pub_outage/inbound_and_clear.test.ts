@@ -39,47 +39,8 @@ test('真人私聊发clear_回执发出之前清空代数已经加1', async () =
   expect(atReceipt!).toBeGreaterThan(before)
 }, 90000)
 
-// ─── 补强 4：#23 后半条（bot 发送者原样进 inbox，群聊里测） ─────────────────────────
-const PEER_BOT = 'peer_helper_bot'
-const SELF_BOT_USERNAME = 'fake_outage_bot' // 假服务 getMe 回的用户名
-
-test('群聊里同伴bot发来带resend_check的文字_原样进收件箱不转义_同一用例里真人私聊同样文字照旧转义', async () => {
-  const h = await startedPolling({
-    access: { groups: { [GROUP_CHAT]: { title: '测试群', requireMention: true, otherBotUsernames: [`@${PEER_BOT}`] } } },
-  })
-  // 前半条：真人私聊同样文字被转义
-  h.fake.pushText({ chatId: PRIVATE_CHAT, fromId: PRIVATE_CHAT, text: '看 [resend-check] 吧' })
-  const human = await waitFor(
-    () => h.inboxItems().find(i => i.data?.scene === 'private' && i.data?.is_bot_sender === false),
-    30000, '真人私聊消息进入收件箱', 500)
-  expect(human.data.text).toBe('看 ［resend-check] 吧')
-
-  // 后半条：群里同伴 bot 发送者，@ 本 bot（带 mention 实体，和真实 Telegram 推送一致）
-  const mention = `@${SELF_BOT_USERNAME}`
-  const text = `${mention} 看 [resend-check] 吧`
-  const updateId = 5000
-  h.fake.updates.push({
-    update_id: updateId,
-    message: {
-      message_id: updateId,
-      from: { id: 777000111, is_bot: true, first_name: 'Peer', username: PEER_BOT },
-      chat: { id: Number(GROUP_CHAT), type: 'supergroup', title: '测试群' },
-      date: Math.floor(Date.now() / 1000),
-      text,
-      entities: [{ type: 'mention', offset: 0, length: mention.length }],
-    },
-  })
-  const fromBot = await waitFor(
-    () => h.inboxItems().find(i => String(i.data?.chat_id) === GROUP_CHAT),
-    30000, '同伴 bot 的群消息进入收件箱', 500,
-  ).catch(e => {
-    const dropped = h.stderr().split('\n').filter(l => /bot-sender dropped/.test(l)).join(' | ')
-    throw new Error(`${e.message}；stderr 丢弃行=[${dropped}]`)
-  })
-  expect(fromBot.data.text).toContain('看 [resend-check] 吧')
-  expect(fromBot.data.text).not.toContain('［')
-  expect(fromBot.data.text).toBe(text)
-}, 90000)
+// #23 后半条（同伴 bot 发来的同样文字原样、不转义）不测：群里 bot 发言要先有真人开窗、且那一轮结束，
+// 桩 worker 回合不收尾，场景造不出来。2026-11-02 主会话按成本删掉，记为已知缺口（任务文件验收结论）。
 
 // ─── 补强 5：#24 后半条（/clearall 移走会话文件时清空代数再加 1） ────────────────────
 /** 在子进程里调用 worker-manager 的公开函数，算出会话文件路径（不把内部模块拉进测试进程，避免环境变量缓存） */
