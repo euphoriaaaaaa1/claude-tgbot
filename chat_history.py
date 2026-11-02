@@ -78,6 +78,7 @@ _INTERNAL_MARKERS = (
     # 产出方在仓库外的 TypeScript 侧：hang_plan.ts / promise_plan.ts
     "[hang-check]",           # "被晾档案"检查；与真人私聊同形，只有正文能认出来
     "[promise-due]",          # 承诺到点注入；同样与真人私聊同形
+    "[resend-check]",         # 线路恢复后的补发提醒（resend_plan.ts 注入）；同样与真人私聊同形
     "[moment-image-gen]",
     "[voice-image]",
     "[voice-recap]",
