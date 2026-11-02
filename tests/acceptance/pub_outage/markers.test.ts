@@ -61,19 +61,41 @@ const KNOWN_MISSING: Record<string, string[]> = {
   'dispatcher/clear_summary.ts': ['[promise-due'],
 }
 const CLI_NATIVE = '[Request interrupted by user'
+// 过滤清单源码里出现的占位写法（形如 [xxx-due]，不是真标记），文本扫描时跳过
+const PLACEHOLDER = /^\[xxx-/
 
-test('四份标记清单一致_chat_guard的14项都出现在另外三份里_缺的只能是登记过的已知例外', async () => {
+// 「只转义、不进过滤」的标记：同伴 bot 的发言要留在 /clear 摘要和聊天记录里，所以只在转义清单里（锁后修订第 1 条）
+const ESCAPE_ONLY = ['[from peer bot']
+const FILTER_FILES = ['dispatcher/clear_summary.ts', 'chat_history.py', 'scripts/compact_private_context.py']
+// 过滤清单源码里「方括号内部标记」的文本特征：小写连字符词、[moment-、[系统自检、[from peer bot、CLI 原生的 [Request interrupted by user
+const MARKER_TOKEN = /\[(?:[a-z]{2,}(?:-[a-z]{2,})+|moment-|系统自检|from peer bot|Request interrupted by user)/g
+
+test('四份标记清单一致_都含resend_check_过滤清单是转义清单的子集_转义多出来的只能是登记过的只转义项', async () => {
   const g = await loadGuard()
   const canon: string[] = (g.INTERNAL_TEXT_MARKERS as string[]).map(m => m.replace(/\]$/, ''))
   expect(canon).toContain('[resend-check')
+
   const problems: string[] = []
-  for (const file of ['dispatcher/clear_summary.ts', 'chat_history.py', 'scripts/compact_private_context.py']) {
+  for (const file of FILTER_FILES) {
     const src = sourceOf(file)
+    // 1) 四份清单都含 [resend-check]
+    if (!src.includes('[resend-check')) problems.push(`${file} 缺 [resend-check]`)
+    // 2) 过滤 ⊆ 转义：过滤清单里出现的内部标记，必须在转义清单里（CLI 原生标记不归 chat_guard 管）
+    for (const tok of new Set(src.match(MARKER_TOKEN) ?? [])) {
+      if (tok === CLI_NATIVE || PLACEHOLDER.test(tok)) continue
+      if (!canon.some(m => tok.startsWith(m))) problems.push(`${file} 里的 ${tok} 不在转义清单里`)
+    }
+    // 3) 转义比过滤多出来的，只能是登记的只转义项（以及登记过的已知例外）
     for (const m of canon) {
       if (src.includes(m)) continue
-      if (m === CLI_NATIVE || (KNOWN_MISSING[file] ?? []).includes(m)) continue
-      problems.push(`${file} 缺 ${m}]`)
+      if (ESCAPE_ONLY.includes(m) || (KNOWN_MISSING[file] ?? []).includes(m)) continue
+      problems.push(`${file} 缺 ${m}]（转义清单有、过滤清单没有，且未登记为只转义项）`)
     }
   }
   expect(problems).toEqual([])
+})
+
+test('四份标记清单一致_只转义项from_peer_bot确实在转义清单里', async () => {
+  const g = await loadGuard()
+  expect(g.INTERNAL_TEXT_MARKERS).toContain('[from peer bot')
 })
