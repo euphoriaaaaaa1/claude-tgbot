@@ -55,6 +55,40 @@ export function escapeUserMarkers(text: unknown): string {
     .replaceAll('[party]', '［party］')
 }
 
+/** 恢复后补发提醒件（resend_plan 注入）的正文前缀。 */
+export const RESEND_CHECK_PREFIX = '[resend-check]'
+
+/**
+ * 系统内部合成消息用的正文标记全集（与 clear_summary.ts、chat_history.py、compact_private_context.py
+ * 的过滤清单对齐）。真人正文里出现这些标记时要转义，免得被当成内部消息丢掉或误判。
+ */
+export const INTERNAL_TEXT_MARKERS: readonly string[] = Object.freeze([
+  '[self-initiate]',
+  '[director]',
+  '[peer-inbound]',
+  '[moment-',
+  '[hang-check]',
+  PROMISE_DUE_PREFIX,
+  '[group-dm-nudge]',
+  RESEND_CHECK_PREFIX,
+  '[voice-image]',
+  '[voice-recap]',
+  '[wildcard-daily]',
+  '[memory-compactor]',
+  '[系统自检]',
+  '[from peer bot',
+])
+
+/** 真人正文里每一处内部标记开头的半角 `[` 换成全角 `［`，其余字符不动；非字符串原样返回。 */
+export function escapeSyntheticPrefix(text: unknown): unknown {
+  if (typeof text !== 'string' || !text.includes('[')) return text
+  let out = text
+  for (const marker of INTERNAL_TEXT_MARKERS) {
+    if (out.includes(marker)) out = out.split(marker).join('［' + marker.slice(1))
+  }
+  return out
+}
+
 /** 到期提醒件（promise_runtime 注入）：正文以 [promise-due] 开头。 */
 export function isPromiseDueInbox(meta: unknown): boolean {
   return isObj(meta) && typeof meta.text === 'string' && meta.text.startsWith(PROMISE_DUE_PREFIX)
