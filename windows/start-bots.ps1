@@ -40,7 +40,8 @@ if ($RegistryCode -ne 0 -or -not $RegistryJson) {
 }
 # @() 包一层：只有一个 bot 时 ConvertFrom-Json 回的是单个对象而不是数组
 $Registry = @($RegistryJson | ConvertFrom-Json)
-if ($Only) {
+# 判「传没传 -Only」而不是判真假：显式传空串也算传了，空串匹配不到任何编号 → 退出 2，不能落到整批启动。
+if ($PSBoundParameters.ContainsKey('Only')) {
     $Registry = @($Registry | Where-Object { $_.id -ceq $Only })
     if ($Registry.Count -eq 0) {
         [Console]::Error.WriteLine("$Only 不在注册表里或已停用，未启动")
