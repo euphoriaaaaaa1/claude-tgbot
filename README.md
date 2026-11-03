@@ -217,7 +217,7 @@ python3 platform_services.py start provider-web --repo "$PWD"
 - 重启：卡片上的「重启」。主程序正常时只重启 worker；主程序没响应时（卡片显示红色的「主程序没响应」）只把这一只 bot 的主程序连 worker 一起重启，通常十几秒，别的 bot 不受影响。
   - 「主程序没响应」的判法：主程序的本机接口两次都没答上，或主程序在、但超过 300 秒没从 Telegram 成功拉到更新且线路判断没报断线。主程序刚启动或电脑刚唤醒的几秒里可能短暂出现，属正常。
   - 单只重启在 macOS/Linux 上跑 `dispatcher/restart-one.sh <bot编号>`，Windows 上跑 `windows\restart-bots.ps1 -Only <bot编号>`（Windows 真机未测）。环境取管理台进程的环境，你在自己复制的 `restart-bots.sh` 里另加的变量（代理等）不会带上，要带就写进该 bot 的 `.env`；Windows 上只从 `.env` 读令牌，其余环境同样取管理台进程的。
-  - 只停这一只：`restart-bots.sh`、`restart-one.sh`、`windows\start-bots.ps1` 拉起主程序时在命令行末尾带 `--bot=<bot编号>`，单只重启只停带本 bot 这个标记的本仓库主程序。pid 文件指向别的 bot（旧 pid 被复用）或没有这个标记的进程时不停，按没在跑处理；它若仍占着端口，单只重启报「端口仍被占用」并退出 3，不另起一个。加这个标记之前已经在跑的主程序就是这种情况，跑一次 `bash restart-bots.sh`（Windows 为 `windows\restart-bots.ps1`）整体重启后即可。
+  - 只停这一只：`restart-bots.sh`、`restart-one.sh`、`windows\start-bots.ps1` 拉起主程序时在命令行末尾带 `--bot=<bot编号>`，单只重启只停带本 bot 这个标记的本仓库主程序。pid 文件指向别的 bot（旧 pid 被复用）或没有这个标记的进程时不停，按没在跑处理；它若仍占着端口，单只重启报「端口仍被占用」并退出 3，不另起一个。加这个标记之前已经在跑的主程序就是这种情况。macOS/Linux 老用户的 `restart-bots.sh` 是早先从示例复制的，不带这个标记（`install.sh` 不会覆盖它，只会提示），要先 `cp restart-bots.example.sh restart-bots.sh` 重新复制（或在自己那份拉起主程序那行末尾加上 `"--bot=$bot"`），再跑一次 `bash restart-bots.sh` 整体重启；Windows 的脚本随仓库更新，跑一次 `windows\restart-bots.ps1` 整体重启即可。
   - 关掉判活与整只重启：建空文件 `~/.claude-tgbot/dispatcher-check.off`（Windows 为 `%USERPROFILE%\.claude-tgbot\dispatcher-check.off`），立即生效，概览与重启回到只看 worker 的旧行为。关掉线路判断（`linkGateEnabled: false`）后断网也会显示「主程序没响应」，这时可以用它关掉。
 
 手动建（管理台不可用时）：
