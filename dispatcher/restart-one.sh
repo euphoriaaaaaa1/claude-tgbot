@@ -11,6 +11,10 @@
 #   1  起不来：注册表读不出、缺 .env 或令牌、拉起后 0.7 秒内就退出
 #   2  参数不对，或这只 bot 不在注册表里 / 已停用
 #   3  旧进程停不掉，或停完端口仍有人在听（找不到合格 pid 时不盲杀、不重复起进程）
+#
+# 归属标记：拉起时在命令行末尾带 --bot=<bot>（restart-bots.example.sh、windows/start-bots.ps1 同样带），
+# 停旧进程只认带本 bot 标记的本仓库 dispatcher。pid 文件指向别的 bot（过期 pid 被复用）或没有标记的旧进程时
+# 一律不停，按「没在跑」处理，再由端口检查兜底：旧进程仍占着端口就退出 3。
 set -u
 set -o pipefail
 
@@ -40,10 +44,44 @@ sys.exit(0)
 PY
 }
 
-restart_one() {
-  local bot="$1" out line port ns chan log pidfile old pid i
+# bot 编号与适配器、路由同一条规则（adapters/base.py 的 valid_bot_id）：1 到 64 位，只含字母数字和 . _ -，
+# 不能全是点。字符逐个列出、不用区间写法：区间在部分 locale 下会放进别的字符。
+_valid_bot_id() {
+  case "$1" in
+    ''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]*) return 1 ;;
+  esac
+  [ "${#1}" -le 64 ] || return 1
+  case "$1" in
+    *[!.]*) return 0 ;;
+  esac
+  return 1
+}
 
-  out="$(registry_lines)" || { echo "bots_registry 执行失败，没有重启" >&2; return 1; }
+# pid 是否是本仓库、这一只 bot 的 dispatcher：命令行要以 "<仓库>/dispatcher/dispatcher.ts --bot=<bot>" 结尾，
+# 或其后紧跟空格。编号已过 _valid_bot_id，不含通配符和空白。
+_pid_is_bot_dispatcher() {
+  local cmd
+  cmd="$("$PS_CMD" -ww -o command= -p "$1" 2>/dev/null || true)"
+  case "$cmd" in
+    *"$REPO_DIR/dispatcher/dispatcher.ts --bot=$2"|*"$REPO_DIR/dispatcher/dispatcher.ts --bot=$2 "*) return 0 ;;
+  esac
+  return 1
+}
+
+restart_one() {
+  local bot="$1" out rc line port ns chan log pidfile old pid i
+
+  out="$(registry_lines)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # 名单为空（例如唯一一只也停用了）时 bots_registry 同样退出 1；JSON 输出恰好是 [] 才算空名单
+    if [ "$rc" -eq 1 ] && [ -z "$out" ] && [ "$(registry_json 2>/dev/null)" = "[]" ]; then
+      echo "$bot 不在注册表里或已停用，没有重启" >&2
+      return 2
+    fi
+    echo "bots_registry 执行失败，没有重启" >&2
+    return 1
+  fi
   line="$(printf '%s\n' "$out" | awk -F'\t' -v b="$bot" '$1 == b { print; exit }')"
   if [ -z "$line" ]; then
     echo "$bot 不在注册表里或已停用，没有重启" >&2
@@ -75,14 +113,20 @@ EOF
     return 1
   fi
 
-  # 只停 pid 文件记的、命令行确实是本仓库 dispatcher 的那一个进程树
+  # 只停 pid 文件记的、命令行确实是本仓库这一只 bot 的 dispatcher 的那一个进程树
   old=""
   if [ -f "$pidfile" ]; then
     old="$(cat "$pidfile" 2>/dev/null || true)"
     case "$old" in
       ''|*[!0-9]*) old="" ;;
     esac
-    if [ -n "$old" ] && ! { kill -0 "$old" 2>/dev/null && _pid_is_dispatcher "$old"; }; then
+    if [ -n "$old" ] && ! kill -0 "$old" 2>/dev/null; then
+      old=""
+    fi
+    if [ -n "$old" ] && ! _pid_is_bot_dispatcher "$old" "$bot"; then
+      if _pid_is_dispatcher "$old"; then
+        echo "$bot 的 pid 文件记的 pid $old 是本仓库的 dispatcher，但不是 $bot 的（别的 bot 复用了这个 pid，或是没有归属标记的旧进程），不停它；旧进程若仍占着端口，跑一次 restart-bots.sh 整体重启" >&2
+      fi
       old=""
     fi
   fi
@@ -122,7 +166,7 @@ EOF
       BOT_NAME="$bot" \
       DISPATCHER_PORT="$port" \
       BOT_NAMESPACE="$ns" \
-      nohup "$BUN_BIN" "$REPO_DIR/dispatcher/dispatcher.ts" >>"$log" 2>&1
+      nohup "$BUN_BIN" "$REPO_DIR/dispatcher/dispatcher.ts" "--bot=$bot" >>"$log" 2>&1
   ) &
   pid=$!
   printf '%s\n' "$pid" > "$pidfile"
@@ -141,10 +185,11 @@ if [ "$#" -ne 1 ]; then
   echo "用法：restart-one.sh <bot>" >&2
   exit 2
 fi
-# bot id 会拼进路径：拒绝带路径分隔符/.. 的输入（同 scripts/watch-bot.sh）
-case "$1" in
-  ''|.|..|*/*|*\\*) echo "非法 bot id：$1" >&2; exit 2 ;;
-esac
+# bot 编号会拼进路径和进程匹配：不合规则一律拒绝，报错里不回显原文
+if ! _valid_bot_id "$1"; then
+  echo "非法 bot 编号（只能是 1 到 64 位字母数字与 . _ -，且不能全是点），没有重启" >&2
+  exit 2
+fi
 
 restart_one "$1" 2>&1 | scrub_token_stream
 exit "${PIPESTATUS[0]}"
