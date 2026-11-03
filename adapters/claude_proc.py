@@ -24,8 +24,10 @@ import logging
 import math
 import os
 import re
+import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -329,10 +331,58 @@ def dispatcher_down(bot_id: str, port, st) -> bool:
         return False
 
 
+_PROC_CGROUP = "/proc/self/cgroup"
+_SYSTEMD_SCOPE_PREFIX = ["systemd-run", "--user", "--scope", "--collect", "--quiet", "--"]
+
+
+def _in_systemd_user_service() -> bool:
+    """当前进程是否跑在 systemd 用户服务（``user@<uid>.service`` 下的某个 ``.service``）里。
+
+    判据用 ``/proc/self/cgroup`` 而不用 ``INVOCATION_ID``：后者会被子进程一路继承，从服务里开出的
+    终端也带着它；cgroup 路径反映的是此刻真实所在的位置。只认 systemd 那一行（cgroup v2 的 ``0::``，
+    v1 的 ``name=systemd``），且路径要经过 ``user@`` 管理器、末段以 ``.service`` 结尾：这才说明
+    ``systemd-run --user`` 连得上本用户的管理器，而管理台停服务时整个 cgroup 会被一起杀。
+    系统级服务、登录会话的 ``session-N.scope``、终端的 ``.scope`` 都不算。读不到 → False。"""
+    try:
+        with open(_PROC_CGROUP, encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        hier, controllers, path = parts
+        if not ((hier == "0" and controllers == "") or controllers == "name=systemd"):
+            continue
+        segs = [s for s in path.strip().split("/") if s]
+        if (len(segs) >= 2 and segs[-1].endswith(".service")
+                and any(s.startswith("user@") and s.endswith(".service") for s in segs[:-1])):
+            return True
+    return False
+
+
+def _detach_from_service_cgroup(argv: list) -> list:
+    """Linux 上管理台跑成 systemd 用户服务时，给单只重启命令套一层独立 scope。
+
+    systemd 默认 ``KillMode=control-group``，``setsid``/``nohup`` 都脱离不了服务的 cgroup，
+    脚本拉起的主程序会在管理台服务停止或自动重启时被一起杀掉。``systemd-run --user --scope``
+    在用户管理器下新建一个 transient scope，把自己移进去后 exec 脚本（退出码即脚本的退出码）；
+    scope 不属于管理台服务，服务停止不波及它；脚本退出后由 nohup 起的主程序撑住 scope，进程全部
+    退出后 scope 自动结束，``--collect`` 让失败的 scope 也会被回收，``--quiet`` 不打提示。
+    条件不满足（非 Linux、不在用户服务里、找不到 systemd-run）→ 原样返回。"""
+    if not sys.platform.startswith("linux"):
+        return argv
+    if not _in_systemd_user_service() or not shutil.which("systemd-run"):
+        return argv
+    return _SYSTEMD_SCOPE_PREFIX + argv
+
+
 def restart_one_argv(bot_id: str) -> list:
     """单只整只重启入口的命令行。测试接缝：``CLAUDEBOT_TEST=1`` 且 ``CLAUDEBOT_RESTART_ONE_CMD`` 是非空字符串
     数组的 JSON → 用它，末尾加 bot 编号。否则 POSIX 跑仓内 ``dispatcher/restart-one.sh``，Windows 跑
-    ``windows\\restart-bots.ps1 -Only``。"""
+    ``windows\\restart-bots.ps1 -Only``；Linux 上管理台在 systemd 用户服务里时前面套
+    ``systemd-run --user --scope``（见 ``_detach_from_service_cgroup``）。测试接缝不套。"""
     if os.environ.get("CLAUDEBOT_TEST") == "1":
         raw = os.environ.get("CLAUDEBOT_RESTART_ONE_CMD")
         if raw:
@@ -345,7 +395,7 @@ def restart_one_argv(bot_id: str) -> list:
     if os.name == "nt":   # pragma: no cover - Windows 条件测试
         return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                 os.path.join(_REPO, "windows", "restart-bots.ps1"), "-Only", bot_id]
-    return ["bash", os.path.join(_REPO, "dispatcher", "restart-one.sh"), bot_id]
+    return _detach_from_service_cgroup(["bash", os.path.join(_REPO, "dispatcher", "restart-one.sh"), bot_id])
 
 
 def run_restart_one(bot_id: str):
