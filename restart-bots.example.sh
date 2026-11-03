@@ -68,6 +68,8 @@ while IFS="$TAB" read -r bot port ns; do
   # 子 shell + exec：$! 就是最终 bun 进程的 PID；nohup 让它脱离终端。
   # BOT_NAMESPACE 必须注进去：worker-manager.ts 是 env 优先，注了它新 bot 才认得
   # 自己的记忆命名空间（TS 侧那张表退化为 legacy 兜底，源码零改动）。
+  # 末尾的 --bot=<bot> 是归属标记：dispatcher/restart-one.sh 只停带本 bot 标记的进程，
+  # 防过期 pid 被别的 bot 复用时误停；dispatcher.ts 本身不读它。
   (
     cd "$REPO_DIR/dispatcher" || exit 1
     exec env \
@@ -76,7 +78,7 @@ while IFS="$TAB" read -r bot port ns; do
       BOT_NAME="$bot" \
       DISPATCHER_PORT="$port" \
       BOT_NAMESPACE="$ns" \
-      nohup "$BUN_BIN" "$REPO_DIR/dispatcher/dispatcher.ts" >>"$log" 2>&1
+      nohup "$BUN_BIN" "$REPO_DIR/dispatcher/dispatcher.ts" "--bot=$bot" >>"$log" 2>&1
   ) &
   pid=$!
   printf '%s\n' "$pid" > "$RUN_DIR/$bot.pid"
