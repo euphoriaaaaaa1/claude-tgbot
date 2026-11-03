@@ -8,7 +8,8 @@ $PSExe = (Get-Process -Id $PID).Path
 $StopScript = Join-Path $PSScriptRoot "stop-bots.ps1"
 $StartScript = Join-Path $PSScriptRoot "start-bots.ps1"
 
-if ($Only) {
+# 判「传没传 -Only」而不是判真假：显式传空串也算传了，交给下面的编号校验退出 2，不能落到整批重启。
+if ($PSBoundParameters.ContainsKey('Only')) {
     # 与 adapters/base.py 的 valid_bot_id 同一条规则（stop-bots.ps1 同此）：1 到 64 位字母数字与 . _ -，不能全是点
     if ($Only -cnotmatch '^(?!\.+\z)[A-Za-z0-9._-]{1,64}\z') {
         [Console]::Error.WriteLine("非法 bot 编号（只能是 1 到 64 位字母数字与 . _ -，且不能全是点），没有重启")
