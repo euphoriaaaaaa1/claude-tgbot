@@ -80,6 +80,9 @@ mkdir -p "$HOME/.claude/channels"
 # 它不读注册表 → 新加的 bot 永远起不来，而重启脚本本身照样"成功"退出。
 grep -q bots_registry restart-bots.sh 2>/dev/null || {
   todo "restart-bots.sh 是旧版（硬编码 bot 名单，加 bot 不生效）→ cp restart-bots.example.sh restart-bots.sh"; left=1; }
+# 同理：早先复制的副本拉起主程序时不带 --bot=<bot> 归属标记，管理台单只重启认不出这只的进程、只会退 3。
+grep -qF -- '--bot=' restart-bots.sh 2>/dev/null || {
+  todo "restart-bots.sh 拉起主程序时不带 --bot 标记（管理台单只重启会失败）→ cp restart-bots.example.sh restart-bots.sh（或在拉起主程序那行末尾加上 \"--bot=\$bot\"），再 bash restart-bots.sh 整体重启"; left=1; }
 ok "configs/_global.yml、restart-bots.sh 就位"
 
 # 供应商清单：管理台（8767）和 provider_config 都读它。缺失时给一份空白清单，
