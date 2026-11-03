@@ -362,6 +362,24 @@ def _in_systemd_user_service() -> bool:
     return False
 
 
+_SYSTEMD_PROBE_WAIT = 5
+
+
+def _systemd_scope_usable() -> bool:
+    """用与正式调用完全相同的前缀同步试跑一次 ``true``：退出码 0 → 可用。
+
+    cgroup 判据只说明进程在用户服务里，不保证 ``systemd-run`` 本身能成功：systemd 低于 236 不认
+    ``--collect``、用户管理器的私有 socket 连不上时它会直接失败，脚本根本没跑。非零、超时、起不来
+    一律当不可用，让调用方照旧直接起脚本。不缓存：重启是低频操作，环境可能随时变化。"""
+    try:
+        result = subprocess.run(_SYSTEMD_SCOPE_PREFIX + ["true"], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                timeout=_SYSTEMD_PROBE_WAIT)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 def _detach_from_service_cgroup(argv: list) -> list:
     """Linux 上管理台跑成 systemd 用户服务时，给单只重启命令套一层独立 scope。
 
@@ -370,10 +388,13 @@ def _detach_from_service_cgroup(argv: list) -> list:
     在用户管理器下新建一个 transient scope，把自己移进去后 exec 脚本（退出码即脚本的退出码）；
     scope 不属于管理台服务，服务停止不波及它；脚本退出后由 nohup 起的主程序撑住 scope，进程全部
     退出后 scope 自动结束，``--collect`` 让失败的 scope 也会被回收，``--quiet`` 不打提示。
-    条件不满足（非 Linux、不在用户服务里、找不到 systemd-run）→ 原样返回。"""
+    条件不满足（非 Linux、不在用户服务里、找不到 systemd-run、试跑失败）→ 原样返回。
+    试跑放在最后，只有前面判据都通过才会真的起一次 ``systemd-run``。"""
     if not sys.platform.startswith("linux"):
         return argv
     if not _in_systemd_user_service() or not shutil.which("systemd-run"):
+        return argv
+    if not _systemd_scope_usable():
         return argv
     return _SYSTEMD_SCOPE_PREFIX + argv
 
@@ -381,8 +402,8 @@ def _detach_from_service_cgroup(argv: list) -> list:
 def restart_one_argv(bot_id: str) -> list:
     """单只整只重启入口的命令行。测试接缝：``CLAUDEBOT_TEST=1`` 且 ``CLAUDEBOT_RESTART_ONE_CMD`` 是非空字符串
     数组的 JSON → 用它，末尾加 bot 编号。否则 POSIX 跑仓内 ``dispatcher/restart-one.sh``，Windows 跑
-    ``windows\\restart-bots.ps1 -Only``；Linux 上管理台在 systemd 用户服务里时前面套
-    ``systemd-run --user --scope``（见 ``_detach_from_service_cgroup``）。测试接缝不套。"""
+    ``windows\\restart-bots.ps1 -Only``；Linux 上管理台在 systemd 用户服务里且 ``systemd-run`` 试跑成功时前面套
+    ``systemd-run --user --scope``（见 ``_detach_from_service_cgroup``）。测试接缝不套、不试跑。"""
     if os.environ.get("CLAUDEBOT_TEST") == "1":
         raw = os.environ.get("CLAUDEBOT_RESTART_ONE_CMD")
         if raw:
