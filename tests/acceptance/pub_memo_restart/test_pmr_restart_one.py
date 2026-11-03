@@ -46,6 +46,7 @@ _FAKE_BUN_SH = """#!/bin/sh
 {
   printf 'BOT_NAME=%s\\n' "$BOT_NAME"
   printf 'DISPATCHER_PORT=%s\\n' "$DISPATCHER_PORT"
+  printf 'ARGS=%s\\n' "$*"
   printf 'PID=%s\\n' "$$"
 } >> "$FAKE_BUN_LOG"
 sleep 20
@@ -135,10 +136,13 @@ class Sandbox:
         assert port not in PROD_PORTS, "替身拿到了生产端口 %d" % port
         return proc, port
 
-    def spawn_lookalike(self, listen=False, bot_name="beta"):
-        """命令行 = <fake>/bun <仓库>/dispatcher/dispatcher.ts 的长寿命进程；listen=True 时监听随机本机端口。"""
-        return self._spawn([str(self.lookalike_exe), str(DISPATCHER_TS)],
-                           {"FAKE_LISTEN": "1" if listen else "0", "BOT_NAME": bot_name})
+    def spawn_lookalike(self, listen=False, bot_name="beta", bot_flag=None):
+        """命令行 = <fake>/bun <仓库>/dispatcher/dispatcher.ts 的长寿命进程；listen=True 时监听随机本机端口。
+        bot_flag 给了（如 "alpha"）就在命令行末尾追加 --bot=<bot_flag>（本 bot 标记）；默认不带，行为不变。"""
+        argv = [str(self.lookalike_exe), str(DISPATCHER_TS)]
+        if bot_flag is not None:
+            argv.append("--bot=%s" % bot_flag)
+        return self._spawn(argv, {"FAKE_LISTEN": "1" if listen else "0", "BOT_NAME": bot_name})
 
     def spawn_plain_listener(self):
         """没有 pid 文件、命令行也不像 dispatcher 的占端口进程。"""
@@ -178,14 +182,16 @@ class Sandbox:
                 p.wait(timeout=5)
             except Exception:
                 pass
-        # 脚本若真拉起了替身 bun，按它自己记在日志里的 pid 清掉
+        # 脚本若真拉起了替身 bun，按它自己记在日志里的 pid 清掉（连同它的 sleep 子进程，不留孤儿）
         if self.bun_log.exists():
             for ln in self.bun_log.read_text(encoding="utf-8").splitlines():
                 if ln.startswith("PID=") and ln[4:].isdigit():
-                    try:
-                        os.kill(int(ln[4:]), signal.SIGKILL)
-                    except OSError:
-                        pass
+                    kids = subprocess.run(["pgrep", "-P", ln[4:]], capture_output=True, text=True).stdout.split()
+                    for target in kids + [ln[4:]]:
+                        try:
+                            os.kill(int(target), signal.SIGKILL)
+                        except OSError:
+                            pass
 
 
 @pytest.fixture
@@ -334,22 +340,36 @@ def test_pid文件指向不像dispatcher的普通进程_该进程仍存活(sb):
     assert rc in (0, 3), out
 
 
-def test_本bot自己的dispatcher_要么停掉并拉起_要么宁可不动退出3_不得退出0而旧进程还活着(sb):
-    mine, port = sb.spawn_lookalike(listen=True, bot_name="alpha")
+def test_本bot自己的dispatcher_命令行带本bot标记_停掉旧进程并拉起新的_退出0(sb):
+    """正向路径：命令行带 --bot=alpha、pid 文件记在 alpha 名下，只允许退出 0（不再接受 3）。"""
+    mine, port = sb.spawn_lookalike(listen=True, bot_name="alpha", bot_flag="alpha")
     sb.register("alpha", port)
     sb.write_pid_file("alpha", mine.pid)
     rc, out = sb.run("alpha")
-    if rc == 0:
-        deadline = time.time() + 3
-        while alive(mine) and time.time() < deadline:
-            time.sleep(0.05)
-        assert not alive(mine), "退出码 0（已重启）但旧进程还活着"
-        log = sb.bun_log.read_text(encoding="utf-8")
-        assert "BOT_NAME=alpha" in log and "DISPATCHER_PORT=%d" % port in log, log
-    else:
-        assert rc == 3, out
-        assert alive(mine), "退出码 3（没动）却已经把旧进程停了"
-        assert sb.bun_calls() == []
+    assert rc == 0, out
+    deadline = time.time() + 3
+    while alive(mine) and time.time() < deadline:
+        time.sleep(0.05)
+    assert not alive(mine), "退出码 0（已重启）但旧进程还活着"
+    assert len(sb.bun_calls()) == 1, "应恰好拉起 1 个新进程: %r" % sb.bun_calls()
+    log = sb.bun_log.read_text(encoding="utf-8")
+    assert "BOT_NAME=alpha" in log and "DISPATCHER_PORT=%d" % port in log, log
+    args_lines = [ln for ln in log.splitlines() if ln.startswith("ARGS=")]
+    assert len(args_lines) == 1 and "--bot=alpha" in args_lines[0].split(), "新进程命令行应带 --bot=alpha: %r" % args_lines
+
+
+def test_命令行带别的bot标记但pid文件记在本bot名下_不停该进程_本bot端口空闲时照常拉起退出0(sb):
+    """反向：--bot=beta 的进程被记在 alpha.pid 里（pid 复用），重启 alpha 不得停它。"""
+    beta_proc, beta_port = sb.spawn_lookalike(listen=True, bot_name="beta", bot_flag="beta")
+    sb.register("beta", beta_port, namespace=NS_BETA)
+    alpha_port = unused_port()
+    sb.register("alpha", alpha_port)
+    sb.write_pid_file("alpha", beta_proc.pid)
+    rc, out = sb.run("alpha")
+    assert alive(beta_proc), "停了命令行带 --bot=beta 的进程（退出码 %s）: %s" % (rc, out)
+    assert port_open(beta_port), "beta 的端口不再可连"
+    assert rc == 0, out
+    assert len(sb.bun_calls()) == 1, "alpha 没在跑且端口空闲，应拉起 1 个新进程: %r" % sb.bun_calls()
 
 
 # ───────────────── 修订2-d：本 bot 端口被无 pid 记录的进程占着 → 退出 3 ─────────────────
