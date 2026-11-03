@@ -9,8 +9,9 @@ $StopScript = Join-Path $PSScriptRoot "stop-bots.ps1"
 $StartScript = Join-Path $PSScriptRoot "start-bots.ps1"
 
 if ($Only) {
-    if ($Only -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]*$') {
-        [Console]::Error.WriteLine("非法 bot id：$Only")
+    # 与 adapters/base.py 的 valid_bot_id 同一条规则（stop-bots.ps1 同此）：1 到 64 位字母数字与 . _ -，不能全是点
+    if ($Only -cnotmatch '^(?!\.+\z)[A-Za-z0-9._-]{1,64}\z') {
+        [Console]::Error.WriteLine("非法 bot 编号（只能是 1 到 64 位字母数字与 . _ -，且不能全是点），没有重启")
         exit 2
     }
     $RepoDir = Split-Path -Parent $PSScriptRoot
@@ -23,6 +24,11 @@ if ($Only) {
     $RegistryJson = & $Py -m bots_registry --format=json
     $RegistryCode = $LASTEXITCODE
     Pop-Location
+    # 名单为空（例如唯一一只也停用了）时 bots_registry 退出 1 并输出 []：按不在注册表处理，退出 2（同 restart-one.sh）
+    if ($RegistryCode -eq 1 -and ("$RegistryJson".Trim() -eq '[]')) {
+        [Console]::Error.WriteLine("$Only 不在注册表里或已停用，没有重启")
+        exit 2
+    }
     if ($RegistryCode -ne 0 -or -not $RegistryJson) {
         [Console]::Error.WriteLine("bots_registry 读不出 bot 名单（退出码 $RegistryCode），没有重启")
         exit 1
