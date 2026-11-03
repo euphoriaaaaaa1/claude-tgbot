@@ -21,7 +21,7 @@ from adapters import AdapterError, AdapterUnavailable, UNAVAILABLE_TEXT, group_c
 from adapters.base import (GROUP_INTRO_MAX, GROUP_ITEM_MAX, GROUP_LIST_MAX, GROUP_USERNAME_RE, TTS_MODELS,
                            person_of, polling_of, valid_chat_id, valid_group_chat_id)
 from adapters.guard import scrub
-from adapters.lifecycle_flow import (INTERNAL_MESSAGE, Reject, call as _call, conflict_of, fail_body,
+from adapters.lifecycle_flow import (INTERNAL_MESSAGE, Reject, call as _call, conflict_of, fail_body, log_id,
                                      prepare as _prepare)
 from moments.request_body import BodyError, json_object
 
@@ -362,7 +362,7 @@ def api_restart_bot(backend, bot_id):
     except Reject as r:
         return _fail(r.code, r.http_status, r.message, r.fields)
     except Exception as e:  # noqa: BLE001
-        _log.error("console 重启失败 %r/%r：%s", backend, bot_id, type(e).__name__)
+        _log.error("console 重启失败 %r/%r：%s", log_id(backend), log_id(bot_id), type(e).__name__)
         return _fail("internal", 500, INTERNAL_MESSAGE)
 
 
