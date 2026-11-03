@@ -92,9 +92,11 @@ foreach ($b in $Registry) {
 
     $out = Join-Path $LogDir "$($b.id)-dispatcher.log"
     $err = Join-Path $LogDir "$($b.id)-dispatcher.err.log"
+    # 末尾的 --bot=<bot> 是归属标记：stop-bots.ps1 -Only 只停带本 bot 标记的进程，
+    # 防过期 pid 被别的 bot 复用时误停；dispatcher.ts 本身不读它。
     $psi = @{
         FilePath               = $Bun
-        ArgumentList           = @((Join-Path $RepoDir "dispatcher\dispatcher.ts"))
+        ArgumentList           = @((Join-Path $RepoDir "dispatcher\dispatcher.ts"), "--bot=$($b.id)")
         WorkingDirectory       = (Join-Path $RepoDir "dispatcher")
         RedirectStandardOutput = $out
         RedirectStandardError  = $err
