@@ -14,7 +14,8 @@ $DispatcherPath = Join-Path $RepoDir "dispatcher\dispatcher.ts"
 # 命令行里可能是反斜杠也可能是正斜杠；[regex]::Escape 后再把转义的反斜杠放宽
 $Pattern = [regex]::Escape($DispatcherPath) -replace '\\\\', '[\\/]'
 
-if ($Only) {
+# 判「传没传 -Only」而不是判真假：显式传空串也算传了，交给下面的编号校验退出 2，不能落到整批全停。
+if ($PSBoundParameters.ContainsKey('Only')) {
     # 与 adapters/base.py 的 valid_bot_id 同一条规则：1 到 64 位字母数字与 . _ -，不能全是点。
     # 用 -cnotmatch（区分大小写）和 \z：忽略大小写时开尔文符号等非 ASCII 字符会被当成字母放行，$ 会放过结尾换行。
     if ($Only -cnotmatch '^(?!\.+\z)[A-Za-z0-9._-]{1,64}\z') {
