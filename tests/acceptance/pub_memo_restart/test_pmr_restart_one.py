@@ -262,7 +262,7 @@ def test_已停用的bot_退出2_不停pid文件里的进程_不起bun(sb):
 
 
 # ───────────────── 修订2-b：非法编号 → 退出 2 ─────────────────
-@pytest.mark.parametrize("bad", ["a/b", "a b", "..", "../alpha", "a..b", "a;b", "a\tb"])
+@pytest.mark.parametrize("bad", ["a/b", "a b", "..", "../alpha", "a;b", "a\tb", "a" * 65])
 def test_非法编号_退出2_文案是非法编号_不停进程_不起bun(sb, bad):
     sb.register("alpha", unused_port())
     victim, _ = sb.spawn_lookalike()
@@ -290,7 +290,7 @@ def test_空字符串编号_退出2_不起bun(sb):
 
 
 # ───────────────── 修订3：合法编号（含点号、下划线、连字符）入口接受，走到查注册表 ─────────────────
-@pytest.mark.parametrize("good", ["my.bot", "my_bot", "my-bot", "bot2", "a.b-c_d"])
+@pytest.mark.parametrize("good", ["my.bot", "my_bot", "my-bot", "bot2", "a.b-c_d", "a..b"])
 def test_合法编号_未注册_退出2_但不是非法编号文案(sb, good):
     sb.register("alpha", unused_port())
     rc, out = sb.run(good)
