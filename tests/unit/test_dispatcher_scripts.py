@@ -116,6 +116,7 @@ def test_shellcheck可用时对核心脚本零错误():
     targets = [
         REPO_ROOT / "install.sh", RESTART, STOP, LIB, IDLE_WAIT, REAP,
         REPO_ROOT / "scripts" / "watch-bot.sh", REPO_ROOT / "scripts" / "setup_keys.sh",
+        REPO_ROOT / "dispatcher" / "restart-one.sh",
     ]
     r = subprocess.run([exe, "-S", "warning", *map(str, targets)],
                        capture_output=True, text=True, timeout=120)
