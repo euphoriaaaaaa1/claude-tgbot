@@ -18,6 +18,8 @@
 | `platform_services.py` | macOS launchd / Linux systemd --user / Windows 计划任务的统一注册入口 |
 | `jiwen/`、`holiday.py`、`school_calendar.py` 等 | 情绪/关系数值、节假日、校历、生活情境 |
 
+合并连发：同一聊天里连着发的几条文字，静默满 8 秒后合成一条交给 bot；bot 正在回这个聊天时又发来的文字，等这一轮回完再按同样的静默窗合并，不会插进正在回的那一轮。私聊和群聊同样适用。参数与关闭方式见第 5 节。
+
 ---
 
 ## 2. 安装（macOS / Linux）
@@ -206,6 +208,11 @@ python3 platform_services.py start provider-web --repo "$PWD"
   - 不想手填可以用起草脚本：`python3 scripts/draft_proactive_config.py <bot编号>` 会读这只 bot 的人设，调你在 `jiwen.delta_llm` 里配的模型地址起草「人设摘要」「什么情况下主动说话」「思念值变化规则」「睡觉时段」四项，写到 `<bot编号>-proactive-draft.yml`（0600）。**草稿只供你过目，不会自动写入**；确认后用 `--apply` 才写进配置，其他键不变、自动备份。要草拟 dsh 后端 bot 的睡觉时段用 `--backend dsh`。
   - 人设全文会发给该模型地址（单份超过 256 KiB 会直接拒绝），地址只允许 https 或本机回环 http，不跟随重定向。
 - 语音：可填 TTS 音色编号；不填走默认音色。
+- 段间停顿与连发合并：新建的 bot 在 `access.json` 里默认写好 `splitOnParagraph: true`、`paragraphDelay: 1200`（回复按段落分条发，段间停 1.2 秒）和 `burstWindowMs: 8000`、`burstMaxMs: 0`（连发的文字静默满 8 秒再合并，不设总上限）。
+  - bot 正在回某个聊天时，这个聊天里又发来的文字会先攒着，等这一轮回完再按静默窗放行：最后一条已经静默满 8 秒的马上投，没满的等满再投。图片、文件仍是先把攒着的文字投出去再单独投。私聊和群聊同样适用；群里换人说话会把攒着的那一波先投掉，但同一个人一直隔不到 8 秒就再发，这一波会一直攒着不投。
+  - 关闭合并：`burstWindowMs` 写 `0`，消息一到就投（与早先不合并的行为相同）。
+  - 给合并设总上限：`burstMaxMs` 写正数（毫秒），自第一条起满这么久必投；写的值小于 `burstWindowMs` 时按 `burstWindowMs` 算。
+  - 老 bot 注意：`access.json` 里没写这两个键的 bot，缺省值从原先的 5 秒静默、12 秒上限改成了 8 秒静默、无上限；以前写 `burstMaxMs: 0` 实际等于窗口长度，现在表示无上限。想保持原样就把这两个键写成 `5000`、`12000`。改完重启该 bot 生效。
 - 压缩与清空后的补回：四条 SessionStart 钩子，管理台新建的 bot 自动带齐。
   - 压缩后补回群聊：对话上下文被压缩后，把所在群最近的聊天补回去；
   - 压缩后补回私聊：把最近的私聊原文补回去；
@@ -422,6 +429,8 @@ python3 platform_services.py status provider-web --repo "$PWD"
 python3 platform_services.py unregister autostart
 ```
 
+Telegram 里的 `/stopbot <bot编号>`、`/startbot <bot编号>` 只认私聊里 `allowFrom` 名单内的人，别处发的静默忽略。公开版这两个命令不执行启停，只回一句提示，请到 8767 管理台操作。可选的 bot 名单按 `configs/*.yml` 的文件名现读（`_` 开头的文件不算），新建 bot 后不用重启就能认；编号不分大小写；只看消息第一行。环境变量 `DISPATCHER_CTL_BOTS`（逗号分隔）设了合法名字时以它为准。
+
 ---
 
 ## 13. 常见错误
@@ -528,6 +537,8 @@ powershell -ExecutionPolicy Bypass -File windows\unregister-tasks.ps1
 | Windows | VM 先验 + 真机复验清单 | 已做路径/编码/计划任务三项先验；管理台全流程、语音、聚会/摄像、长稳运行仍需真机复验 |
 
 Telegram 线路断开处理（第 13.1 节）在 macOS 上用本机假 Telegram 跑过验收测试，Windows 上未真机验证。
+
+回复途中连发的合并、新的合并缺省值（第 5 节）和 `/stopbot`、`/startbot` 按配置目录派生名单（第 12 节）在 macOS 上跑过测试，Windows 上未真机验证。
 
 未验证项会如实写在这里，不把“能启动”说成“全功能已验证”。
 
