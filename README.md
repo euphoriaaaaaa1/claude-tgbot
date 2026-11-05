@@ -212,7 +212,7 @@ python3 platform_services.py start provider-web --repo "$PWD"
   - bot 正在回某个聊天时，这个聊天里又发来的文字会先攒着，等这一轮回完再按静默窗放行：最后一条已经静默满 8 秒的马上投，没满的等满再投。图片、文件仍是先把攒着的文字投出去再单独投。私聊和群聊同样适用；群里换人说话会把攒着的那一波先投掉，但同一个人一直隔不到 8 秒就再发，这一波会一直攒着不投。
   - 关闭合并：`burstWindowMs` 写 `0`，消息一到就投（与早先不合并的行为相同）。
   - 给合并设总上限：`burstMaxMs` 写正数（毫秒），自第一条起满这么久必投；写的值小于 `burstWindowMs` 时按 `burstWindowMs` 算。
-  - 老 bot 注意：`access.json` 里没写这两个键的 bot，缺省值从原先的 5 秒静默、12 秒上限改成了 8 秒静默、无上限；以前写 `burstMaxMs: 0` 实际等于窗口长度，现在表示无上限。想保持原样就把这两个键写成 `5000`、`12000`。改完重启该 bot 生效。
+  - 老 bot 注意：`access.json` 里没写这两个键的 bot，缺省值从原先的 5 秒静默、12 秒上限改成了 8 秒静默、无上限；以前写 `burstMaxMs: 0` 实际等于窗口长度，现在表示无上限。想恢复原先的静默与上限时长，就把这两个键写成 `5000`、`12000`（回复途中扣住连发仍然生效，只有 `burstWindowMs: 0` 能整体关掉合并）。改完重启该 bot 生效。
 - 压缩与清空后的补回：四条 SessionStart 钩子，管理台新建的 bot 自动带齐。
   - 压缩后补回群聊：对话上下文被压缩后，把所在群最近的聊天补回去；
   - 压缩后补回私聊：把最近的私聊原文补回去；
@@ -429,7 +429,7 @@ python3 platform_services.py status provider-web --repo "$PWD"
 python3 platform_services.py unregister autostart
 ```
 
-Telegram 里的 `/stopbot <bot编号>`、`/startbot <bot编号>` 只认私聊里 `allowFrom` 名单内的人，别处发的静默忽略。公开版这两个命令不执行启停，只回一句提示，请到 8767 管理台操作。可选的 bot 名单按 `configs/*.yml` 的文件名现读（`_` 开头的文件不算），新建 bot 后不用重启就能认；编号不分大小写；只看消息第一行。环境变量 `DISPATCHER_CTL_BOTS`（逗号分隔）设了合法名字时以它为准。
+Telegram 里的 `/stopbot <bot编号>`、`/startbot <bot编号>` 只在私聊里、由 `allowFrom` 名单内的人发出时执行；群里或名单外的人发的不执行。公开版这两个命令不执行启停，只回一句提示，请到 8767 管理台操作。可选的 bot 名单按 `configs/*.yml` 的文件名现读（`_` 开头的文件不算），新建 bot 后不用重启就能认；编号不分大小写；只看消息第一行。环境变量 `DISPATCHER_CTL_BOTS`（逗号分隔）设了合法名字时以它为准。
 
 ---
 
