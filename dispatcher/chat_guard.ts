@@ -229,7 +229,18 @@ export function replyToolDescription(): string {
   return '只有用户在私聊里刚刚（10 分钟内）明确让你去群里说某件事时才置 true；其它任何情况不得声明。私聊里聊到的内容永远不带进群。'
 }
 
-const FORBIDDEN_PORTS = new Set(['17801', '17802', '17803', '17804', '7897', '7788'])
+// 测试模式禁连的端口：代理与语音桥两个单点，加上 dispatcher 默认端口整段（17801–17899），
+// 新增 bot 不必回来改表。已知局限：yml 或环境变量自定义到段外的端口拦不到。
+const FORBIDDEN_PORTS = new Set(['7897', '7788'])
+const FORBIDDEN_PORT_MIN = 17801
+const FORBIDDEN_PORT_MAX = 17899
+
+function isForbiddenPort(port: string): boolean {
+  if (FORBIDDEN_PORTS.has(port)) return true
+  if (!/^[0-9]+$/.test(port)) return false
+  const n = Number(port)
+  return n >= FORBIDDEN_PORT_MIN && n <= FORBIDDEN_PORT_MAX
+}
 
 /** 取 URL 端口；解析不了 → null。不用 WHATWG URL：它拒绝 >65535 的端口，而契约要求只按端口字面判定 */
 function urlPort(u: string): string | null {
@@ -255,7 +266,7 @@ export function testModeCheck(env: unknown): { ok: boolean; reason: string | nul
   for (const k of ['TELEGRAM_DISPATCHER_URL', 'DISPATCHER_URL']) {
     if (typeof e[k] !== 'string' || e[k] === '') continue
     const port = urlPort(e[k])
-    if (port == null || FORBIDDEN_PORTS.has(port)) return { ok: false, reason: 'forbidden_port' }
+    if (port == null || isForbiddenPort(port)) return { ok: false, reason: 'forbidden_port' }
   }
   return { ok: true, reason: null }
 }
