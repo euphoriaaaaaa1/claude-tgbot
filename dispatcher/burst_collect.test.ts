@@ -195,12 +195,12 @@ test('日志只有条数与 chat_id，绝不带正文', () => {
   expect(r.logs).toEqual(['burst_merged chat=FAKECHAT-1 count=2'])
 })
 
-test('readBurstCfg：缺文件/缺字段 → 5000/12000', () => {
+test('readBurstCfg：缺文件/缺字段 → 8000/0（0=不封顶）', () => {
   const d = join(ROOT, 'cfg-missing')
   mkdirSync(d, { recursive: true })
   expect(readBurstCfg(d)).toEqual(DEFAULT_BURST)
   writeFileSync(join(d, 'access.json'), JSON.stringify({ allowFrom: ['FAKE'] }))
-  expect(readBurstCfg(d)).toEqual({ windowMs: 5000, maxMs: 12000 })
+  expect(readBurstCfg(d)).toEqual({ windowMs: 8000, maxMs: 0 })
 })
 
 test('readBurstCfg：字符串数字认、0 认、坏值回缺省、maxMs 不低于 windowMs', () => {
@@ -211,7 +211,7 @@ test('readBurstCfg：字符串数字认、0 认、坏值回缺省、maxMs 不低
     return readBurstCfg(d)
   }
   expect(cfg({ burstWindowMs: '3000', burstMaxMs: '9000' })).toEqual({ windowMs: 3000, maxMs: 9000 })
-  expect(cfg({ burstWindowMs: 0 })).toEqual({ windowMs: 0, maxMs: 12000 })
+  expect(cfg({ burstWindowMs: 0 })).toEqual({ windowMs: 0, maxMs: 0 })
   expect(cfg({ burstWindowMs: 'abc', burstMaxMs: null })).toEqual(DEFAULT_BURST)
   expect(cfg({ burstWindowMs: 8000, burstMaxMs: 1000 })).toEqual({ windowMs: 8000, maxMs: 8000 })
   writeFileSync(join(d, 'access.json'), '{not json')
