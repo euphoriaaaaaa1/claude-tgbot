@@ -33,9 +33,11 @@ export type BurstCollector = {
   hasWave: (chatId: string) => boolean   // 该聊天当前是否有在攒的波（worker 按聊天判定进波）
 }
 
-export const DEFAULT_BURST: BurstCfg = { windowMs: 5000, maxMs: 12000 }
+// access.json 缺这两个键时的兜底：8 秒静默、无总上限（maxMs=0）。
+export const DEFAULT_BURST: BurstCfg = { windowMs: 8000, maxMs: 0 }
 
-/** access.json 读 burstWindowMs / burstMaxMs；缺失、非数、读不到 → 缺省值。字符串数字也认。 */
+/** access.json 读 burstWindowMs / burstMaxMs；缺失、非数、读不到 → 缺省值。字符串数字也认。
+ *  burstMaxMs ≤ 0 表示无上限（返回 0）。 */
 export function readBurstCfg(channelDir: string): BurstCfg {
   const num = (v: unknown, dflt: number): number => {
     const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v
@@ -44,8 +46,9 @@ export function readBurstCfg(channelDir: string): BurstCfg {
   let raw: Record<string, unknown> = {}
   try { raw = JSON.parse(readFileSync(join(channelDir, 'access.json'), 'utf8')) ?? {} } catch { raw = {} }
   const windowMs = num(raw.burstWindowMs, DEFAULT_BURST.windowMs)
-  // 封顶不可能早于窗口，否则每条一到就被"封顶"冲掉，等于关了防抖
-  return { windowMs, maxMs: Math.max(num(raw.burstMaxMs, DEFAULT_BURST.maxMs), windowMs) }
+  const rawMax = num(raw.burstMaxMs, DEFAULT_BURST.maxMs)
+  // 显式 ≤0 表示无上限；正数时封顶不可能早于窗口，否则每条一到就被"封顶"冲掉，等于关了防抖
+  return { windowMs, maxMs: rawMax <= 0 ? 0 : Math.max(rawMax, windowMs) }
 }
 
 /** 不参与合并的消息：媒体、peer bot 发言、内部合成消息（H-27 先看 meta.synthetic 标记；
@@ -65,7 +68,7 @@ export function createBurstCollector(deps: BurstDeps): BurstCollector {
   const now = deps.now ?? Date.now
   const log = deps.log ?? (() => {})
   const enabled = windowMs > 0
-  // chatId → 当前波（到达序）+ 波首的发送人。群里两个人 5s 内各说一句不能并成一条，
+  // chatId → 当前波（到达序）+ 波首的发送人。群里两个人在同一窗口内各说一句不能并成一条，
   // 否则合并件的 meta 取首条 = 把后面那人的话按在前一个人头上。
   const waves = new Map<string, { msgs: InMsg[]; from: string }>()
   // path → 该条 InMsg：写失败重试时要把整条（含正文）放回队首，光有 path 不够。
