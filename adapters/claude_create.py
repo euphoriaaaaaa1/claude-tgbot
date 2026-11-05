@@ -428,6 +428,10 @@ def _write_payload(payload: str, spec: dict, token: SecretToken, channel: str, c
     access = _template_json(paths, "access.json") if paths else {}
     access.update(dmPolicy="allowlist", allowFrom=[spec["chat_id"]], groups={})
     access.setdefault("splitOnParagraph", True)
+    # 段间停顿与连发合并的缺省：段间 1200ms；8 秒静默、无总上限。模板已写的值保留。
+    access.setdefault("paragraphDelay", 1200)
+    access.setdefault("burstWindowMs", 8000)
+    access.setdefault("burstMaxMs", 0)
     access.update(_voice_view(spec.get("voice")))
     _write_text(os.path.join(payload, "access.json"),
                 json.dumps(access, ensure_ascii=False, indent=2) + "\n", 0o600)
