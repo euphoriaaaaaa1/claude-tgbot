@@ -693,8 +693,18 @@ function writeMcpConfig(): string {
 // 改成：空闲时首条先不入队，开 burstWindowMs 窗口收同 chat 的后续消息，静默满窗（或自
 // 首条起满 burstMaxMs）再合并成一条入队。媒体 / 内部合成消息 / 群里换人都不并（截波单投）。
 // burstWindowMs=0 → collector.enabled=false，入队路径回归现状。
+// 本聊天有一轮回复在飞时，它的连发同样进波并被扣住（不插进正在回的那一轮）；回合结束不主动放行，
+// 在飞解除后由下一拍 tick 按静默窗放行：末条已静默满窗的下一拍即投，没满的等满再投。私聊群聊同样适用。
 const BURST_DIR = join(CHANNEL_DIR, '.burst')
 const BURST_TICK_MS = 500
+
+/** 读 inbox 原件的 chat_id，统一成字符串（与收集器、pump 同一口径）；读不了 / 坏 JSON → ''。 */
+function peekChatId(path: string): string {
+  try {
+    const o = JSON.parse(readFileSync(path, 'utf8'))
+    return o && typeof o === 'object' ? String(o.chat_id ?? '') : ''
+  } catch { return '' }
+}
 
 // ─── 队列条目 ──────────────────────────────────────────────────────────
 type QueueItem =
@@ -875,6 +885,7 @@ export class WorkerManager {
       destDir: burstDir,
       deliver: p => this.enqueueFile(p),
       log: logSpawn,
+      holdWhile: c => this.burstHeld(c),
     })
     // 崩在"合并件已落盘、还没入队"那一瞬 → 合并件留在 .burst，启动时收一次，绝不丢。
     // 只在这里收：.burst 刻意不进 inboxDirs，否则 drainInbox 每轮都会把合并件再收进
@@ -1468,6 +1479,12 @@ export class WorkerManager {
     return !this.inFlight && this.queue.length === 0
   }
 
+  /** 该聊天此刻有一轮回复在飞 → 它的波扣住不按静默窗放行。要求 inFlight 非空：重试时进程不在、
+   *  件塞回队首的路径会清 inFlight 却留着 inFlightChatId，只看聊天标记会把波永远扣住。 */
+  private burstHeld(chatId: string): boolean {
+    return !!this.inFlight && !!this.inFlightChatId && this.inFlightChatId === chatId
+  }
+
   /** 入队一个 inbox 原件/合并件（波次层 flush 的落点；tick 触发的 flush 不经过 drainInbox，
    *  所以这里自己推一次 pump）。已在队里/正在飞的直接跳过，绝不重复投。 */
   private enqueueFile(path: string): void {
@@ -1483,10 +1500,13 @@ export class WorkerManager {
         for (const f of readdirSync(dir).sort()) {
           if (!f.endsWith('.json')) continue
           const p = join(dir, f)
-          // 已在攒波时也要走波次层：arrive() 认得出重复路径（fs.watch + 5s 兜底扫会重复报），
-          // 走原路就会把还在波里的原件又入一次队 → 同一句话投两遍。
-          if (this.burst.enabled && (this.burst.waves() > 0 || this.burstIdle())
-              && this.burst.arrive(p)) continue
+          // 按聊天判定进波：本聊天已有波（arrive() 认得出重复路径，fs.watch + 5s 兜底扫会重复报，
+          // 走原路就会把还在波里的原件又入一次队）、或完全空闲、或本聊天正在回（扣住到回合结束）。
+          // 别的聊天有波不再顺带让这条进波。
+          if (this.burst.enabled) {
+            const cid = peekChatId(p)
+            if ((this.burst.hasWave(cid) || this.burstIdle() || this.burstHeld(cid)) && this.burst.arrive(p)) continue
+          }
           this.enqueueFile(p)
         }
       } catch {}
