@@ -1,33 +1,68 @@
 /** /stopbot <bot> | /startbot <bot> 的纯解析层（独立模块：dispatcher.ts 顶层即运行，
  *  测试没法 import 它——解析逻辑放这里，两边共用）。 */
+import { readdirSync } from 'fs'
+import { botConfigDir } from './promise_wire'
+
 /**
- * 可管理的 bot 名单。公开版不硬编码任何 bot：由部署方经 DISPATCHER_CTL_BOTS
- * （逗号分隔）注入。名单为空时所有目标都得到用法提示，命令不会误放行。
+ * DISPATCHER_CTL_BOTS（逗号分隔）在模块加载时的快照，仅供诊断与旧测试使用。
+ * 生产解析走 botCtlTargets()：每次现读环境变量与配置目录，不用重启就能认新 bot。
  */
 export const CTL_BOTS: readonly string[] = Object.freeze(
   (process.env.DISPATCHER_CTL_BOTS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
 )
 
-/** 纯解析层：目标名单由调用方注入，便于单测与按配置接线。 */
+// 与 config_loader.py 的 BOT_ID_RE 同一口径：挡住空格、路径分隔符、'..' 之类的怪名字
+const BOT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
+
+/**
+ * 当前可管理的 bot 名单，不抛：
+ * 1. DISPATCHER_CTL_BOTS 非空且过滤后仍有合法名字 → 作为覆盖名单（转小写）；
+ * 2. 否则取配置目录（botConfigDir()）下 *.yml 的文件名，去掉 _ 开头（_global 等不是 bot），
+ *    按小写去重（大小写不敏感的文件系统上不会出现两份）、排序；
+ * 3. 目录读不了 → []。
+ */
+export function botCtlTargets(): string[] {
+  const fromEnv = (process.env.DISPATCHER_CTL_BOTS || '')
+    .split(',').map(s => s.trim().toLowerCase()).filter(s => BOT_ID_RE.test(s))
+  if (fromEnv.length > 0) return [...new Set(fromEnv)]
+  try {
+    const seen = new Set<string>()
+    const ids: string[] = []
+    for (const f of readdirSync(botConfigDir()).sort()) {
+      if (!f.endsWith('.yml') || f.startsWith('_')) continue
+      const id = f.slice(0, -'.yml'.length)
+      if (!BOT_ID_RE.test(id) || seen.has(id.toLowerCase())) continue
+      seen.add(id.toLowerCase())
+      ids.push(id)
+    }
+    return ids
+  } catch {
+    return []
+  }
+}
+
+/** 纯解析层：目标名单由调用方注入，便于单测。只看首行；目标不分大小写匹配，返回名单里的原样条目。 */
 export function parseBotCtlWithBots(
   trimmed: string, bots: readonly string[],
 ): { cmd: 'stopbot' | 'startbot'; target: string } | { usage: string } | null {
-  const m = trimmed.match(/^\/(stopbot|startbot)(?:@\w+)?(?:\s+(.+?))?\s*$/)
+  // 多行输入只取首行语义（整段粘贴不把第二行当参数，也不让它漏成普通消息下发给 worker）
+  const m = trimmed.split('\n')[0]!.match(/^\/(stopbot|startbot)(?:@\w+)?(?:\s+(.+?))?\s*$/)
   if (!m) return null
   const cmd = m[1] as 'stopbot' | 'startbot'
   const parts = (m[2] ?? '').trim().split(/\s+/).filter(Boolean)
-  const target = (parts[0] ?? '').toLowerCase()
+  const wanted = (parts[0] ?? '').toLowerCase()
+  const target = parts.length === 1 ? bots.find(b => b.toLowerCase() === wanted) : undefined
   // 段数不是 1 或目标不认识 → 都给用法提示（多余参数不放行进 AI，命令就该在这层终结）
-  if (parts.length !== 1 || !bots.includes(target)) {
+  if (target === undefined) {
     const known = bots.length > 0 ? `，可选：${bots.join(' / ')}` : '（尚未配置可管理的 bot）'
     return { usage: `用法：/${cmd} <bot>${known}` }
   }
   return { cmd, target }
 }
 
-/** 生产入口：名单取 DISPATCHER_CTL_BOTS。 */
+/** 生产入口：名单取 botCtlTargets()（每次现读）。 */
 export function parseBotCtl(trimmed: string): { cmd: 'stopbot' | 'startbot'; target: string } | { usage: string } | null {
-  return parseBotCtlWithBots(trimmed, CTL_BOTS)
+  return parseBotCtlWithBots(trimmed, botCtlTargets())
 }
 
 /** 公开版 /stopbot /startbot 的回复：不 spawn 任何脚本，只指向 8767 管理台。 */
