@@ -42,6 +42,9 @@ NOTIFY_RETRIES = 2
 # 功能开关：读沿用 5 秒；写可能要等对方空闲重启，60 秒，超时不重试，结果未知时文案说清
 FEATURES_TIMEOUT = 60
 FEATURES_TIMEOUT_MESSAGE = "dsh 侧没有及时回应，开关可能已经改了，请刷新后再看"
+# 情绪与节奏：读写都用 READ_TIMEOUT；写超时不重试，结果未知时文案说清
+RHYTHM_TIMEOUT_MESSAGE = "dsh 侧没有及时回应，节奏可能已经改了，请刷新后再看"
+RHYTHM_BODY_MESSAGE = "请求体必须带 set 对象、remove 列表与 version 字符串"
 # 启停：dsh 停用时最多等 50 秒、整条 55 秒封顶，壳等 60 秒
 ENABLE_TIMEOUT = 60
 # 归档、恢复、删除：各 60 秒；归档清单是读，用 READ_TIMEOUT
@@ -252,6 +255,40 @@ class DshHttpAdapter(BackendAdapter):
         if not isinstance(values, dict):
             raise AdapterError("invalid", 422, "values 必须是键值表")
         return self._request("PUT", self._bot_path(bot_id, "/life"), body={"values": dict(values)})
+
+    # ── 情绪与节奏（只做转发）────────────────────────────────────────────────
+    def get_rhythm(self, bot_id: str) -> dict:
+        """``{"bot_id", "version", "schema", "overrides", "warnings"}``（dsh 回体去掉 ``ok``，壳自己补）。
+
+        bot_id 不合规 → invalid，不读令牌、不发请求。非 2xx 由 ``_request`` 原样包成 AdapterError
+        （404 unknown_bot、422 invalid 带 fields、409 busy/stale、501 unsupported、500 internal）。
+        """
+        data = self._request("GET", self._bot_path(bot_id, "/rhythm"), timeout=READ_TIMEOUT)
+        schema = data.get("schema")
+        if (not _nonempty_str(data.get("version")) or not isinstance(data.get("overrides"), dict)
+                or not isinstance(schema, list)
+                or not all(isinstance(row, dict) and isinstance(row.get("key"), str) for row in schema)):
+            raise AdapterUnavailable("error", "底层回的形状不对")
+        warnings = data.get("warnings")
+        data["warnings"] = [w for w in warnings if isinstance(w, str)] if isinstance(warnings, list) else []
+        return data
+
+    def set_rhythm(self, bot_id: str, set_values: dict, remove_keys: list, version: str) -> dict:
+        """``{"version", "changed"}``（去掉 ``ok``）。入参不合规不读令牌、不发请求。
+
+        请求体恰好 ``{"set", "remove", "version"}``；超时报 down（文案说清可能已经改了），不重试。
+        """
+        path = self._bot_path(bot_id, "/rhythm")
+        if not isinstance(set_values, dict) or not isinstance(remove_keys, list) or not _nonempty_str(version):
+            raise AdapterError("invalid", 422, RHYTHM_BODY_MESSAGE)
+        data = self._request("PUT", path,
+                             body={"set": dict(set_values), "remove": list(remove_keys), "version": version},
+                             timeout=READ_TIMEOUT, timeout_message=RHYTHM_TIMEOUT_MESSAGE)
+        changed = data.get("changed")
+        if (not _nonempty_str(data.get("version")) or not isinstance(changed, list)
+                or not all(isinstance(k, str) for k in changed)):
+            raise AdapterUnavailable("error", "底层回的形状不对")
+        return data
 
     # ── 投递通知 ─────────────────────────────────────────────────────────────
     def notify(self, bot_id: str, source: str, text: str, key: str) -> dict:
@@ -645,6 +682,10 @@ def _voice_shape(data: dict) -> dict:
         if not (value is None or isinstance(value, str)):
             raise AdapterUnavailable("error", "底层回的形状不对")
     return data
+
+
+def _nonempty_str(value) -> bool:
+    return isinstance(value, str) and value != ""
 
 
 def _field_errors(raw) -> dict:
