@@ -10,5 +10,7 @@
   ],
   "splitOnParagraph": true,
   "paragraphDelay": 1200,
+  "burstWindowMs": 8000,
+  "burstMaxMs": 0,
   "tmuxSession": "tg-REPLACE_ME"
 }
