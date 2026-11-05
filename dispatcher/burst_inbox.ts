@@ -20,6 +20,9 @@ export type BurstDeps = BurstCfg & {
   deliver: (path: string) => void        // 投递一条原件/合并件（生产 = 进 WorkerManager 队列）
   log?: (line: string) => void
   now?: () => number                     // 假时钟注入口
+  // 该聊天是否有一轮回复在飞：true → tick 不因静默满窗放行它的波（maxMs>0 的封顶照旧）。
+  // 回合结束不主动放行，扣住解除后由下一拍 tick 按静默窗放行。抛错 / 非 true → 按 false。不给 = 原行为。
+  holdWhile?: (chatId: string) => boolean
 }
 
 export type BurstCollector = {
@@ -27,6 +30,7 @@ export type BurstCollector = {
   arrive: (path: string) => boolean      // true=已收进波次层；false=认不出（坏 JSON / 无 chat_id），调用方照旧处理
   tick: () => void                       // 定时器驱动（生产 500ms 粒度）
   waves: () => number                    // 诊断/测试：当前在攒的波数
+  hasWave: (chatId: string) => boolean   // 该聊天当前是否有在攒的波（worker 按聊天判定进波）
 }
 
 export const DEFAULT_BURST: BurstCfg = { windowMs: 5000, maxMs: 12000 }
@@ -169,15 +173,26 @@ export function createBurstCollector(deps: BurstDeps): BurstCollector {
     return true
   }
 
+  // 回调出错只能退回原行为：放行总比把消息无限期扣在内存里安全。不记日志：tick 每 500ms 一次，坏回调会刷屏。
+  function held(chatId: string): boolean {
+    if (!deps.holdWhile) return false
+    try { return deps.holdWhile(chatId) === true } catch { return false }
+  }
+
   function tick(): void {
     if (waves.size === 0) return
     const t = now()
     for (const [chatId, w] of [...waves]) {
-      const r = decideBurst(w.msgs, { kind: 'timer', nowMs: t }, windowMs, maxMs)
+      // 扣住时静默窗按无穷大判：静默多久都不放行，封顶（maxMs>0）仍由 decideBurst 照旧判
+      const r = decideBurst(w.msgs, { kind: 'timer', nowMs: t }, held(chatId) ? Infinity : windowMs, maxMs)
       store(chatId, r.wave, w.from)
       run(chatId, r.action, w.from)
     }
   }
 
-  return { enabled, arrive, tick, waves: () => waves.size }
+  function hasWave(chatId: string): boolean {
+    return typeof chatId === 'string' && chatId !== '' && waves.has(chatId)
+  }
+
+  return { enabled, arrive, tick, waves: () => waves.size, hasWave }
 }
