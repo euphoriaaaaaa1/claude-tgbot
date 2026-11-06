@@ -8,11 +8,17 @@ from b3b_helpers import (  # noqa: F401  夹具
     backend, base_url, bot, chrome, no_prod_port_connect, open_console, overview,
 )
 
-EXPECTED = {
-    "persona": "人设正文-ALPHA",
-    "life": "23:00-07:00",
+EXPECTED_ALPHA = {
+    "persona": "人设-alpha",
+    "life": "23:00-alpha",
     "voiceId": "voice-alpha",
-    "featLabels": ["功能甲"],
+    "featLabels": ["功能-alpha"],
+}
+EXPECTED_BETA = {
+    "persona": "人设-beta",
+    "life": "23:00-beta",
+    "voiceId": "voice-beta",
+    "featLabels": ["功能-beta"],
 }
 
 SNAPSHOT = """() => {
@@ -35,11 +41,11 @@ def test_选中正常行五块显示内容_切到另一只后新区块同样显�
     shell = open_console(_data(), query="?b=claude/alpha")
     shell.wait_reads("persona")
     page = shell.page
-    assert page.evaluate(SNAPSHOT) == EXPECTED, "选中后详情区块内容没显示出来"
+    assert page.evaluate(SNAPSHOT) == EXPECTED_ALPHA, "选中后详情区块内容没显示出来"
     assert "正在读取" not in page.inner_text("#detail"), "详情区还停在正在读取"
 
     page.locator('[data-role="bot-card"][data-backend="claude"][data-bot-id="beta"]').click()
     page.wait_for_function("() => document.getElementById('botIdLine').textContent === 'beta'")
     shell.wait_reads("persona")
-    assert page.evaluate(SNAPSHOT) == EXPECTED, "切到另一只后新区块没显示内容"
+    assert page.evaluate(SNAPSHOT) == EXPECTED_BETA, "切到 beta 后显示的仍是 alpha 的内容（没重新加载）"
     assert "正在读取" not in page.inner_text("#detail"), "切换后详情区还停在正在读取"
