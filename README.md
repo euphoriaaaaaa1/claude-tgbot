@@ -480,7 +480,7 @@ dispatcher 会判断到 Telegram 的线路是否已知不通（代理挂掉、�
 - 不要把 8767 直接挂公网。必须远程访问时，用 SSH 隧道或带鉴权的反向代理，并确认 dsh 转发路径不会绕过登录门。
 - `.api-token` 是 dispatcher 启动时生成的 32 字节随机口令，只经 `X-Api-Token` / Bearer 使用，不提交。
 
-管理台对已迁出（`moved_to` 是另一底层名）或正在切换（`pending`）的行只读：详情区顶部给出提示，写按钮隐藏、输入不可编辑。这是界面层限制，服务端不会拒绝这些行的内容写请求（端口在本机、单用户面板）；需要真正阻止写入时请先把它迁回��撤销切换。
+管理台对已迁出（`moved_to` 是另一底层名）或正在切换（`pending`）的行只读：详情区顶部给出提示，写按钮隐藏、输入不可编辑。这是界面层限制，服务端不会拒绝这些行的内容写请求（端口在本机、单用户面板）；需要真正阻止写入时请先把它迁回或撤销切换。
 - `reply` 的 `files` 有出口白名单：只允许生图输出目录、表情库、`<channels>/<bot>/inbox`、`<channels>/<bot>/media` 和 `MOMENTS_MEDIA_ROOT` 内的真实文件；`..`、软链、`.env`、`configs/`、`secrets/`、`providers.json` 一律丢弃（日志只记 `file_dropped` 原因码，不记路径）。
 - voice-bridge 默认 fail-closed：没有令牌时除 `/health` 外全部 401。`install.sh` 会在 `~/.claude/secrets/voice-bridge.token` 生成共享令牌（0600），dispatcher、voicecall、moments 从 `VOICE_BRIDGE_TOKEN_FILE` 读取并带 Bearer；只有显式 `VOICE_BRIDGE_ALLOW_INSECURE=1` 才允许无鉴权。
 - **群聊默认不放行陌生人（重要）**：群策略 `allowFrom` 为空时回退到私聊 owner 名单，owner 名单也为空则拒绝。群成员的发言会驱动一个拥有本机工具权限的 agent；**只把 bot 拉进你信任的群**。
