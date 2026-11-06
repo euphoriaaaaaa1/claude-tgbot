@@ -164,6 +164,7 @@ class ConsoleShell:
         self.page = page
         self.base = base
         self.data = data
+        # 值是 (status, body)；也可以是 {bot_id: (status, body)} 让不同 bot 返回不同结果
         self.reads = reads_with(**(reads or {}))
         self.requests = []      # [(method, url)]，含全部 /api 请求
         self.gets = []
@@ -181,7 +182,10 @@ class ConsoleShell:
         m = re.match(r"^/api/console/bots/[^/]+/([^/]+)/(profile|life|persona|voice|features)$", path)
         if m:
             bot_id, kind = m.group(1), m.group(2)
-            status, body = self.reads.get(kind) or default_reads(bot_id)[kind]
+            spec = self.reads.get(kind)
+            if isinstance(spec, dict):          # 按 bot id 分别给响应
+                spec = spec.get(bot_id)
+            status, body = spec or default_reads(bot_id)[kind]
             return route.fulfill(status=status, content_type="application/json",
                                  body=json.dumps(body))
         if path == "/api/console/archives":
@@ -285,7 +289,8 @@ def banner_visible(page):
 
 
 def banner_text(page):
-    loc = page.locator('#roBanner')
+    # 只读提示正文；同 person 跳转按钮（#roJump）在同一个 banner 里，不参与文案断言
+    loc = page.locator('#roBannerText')
     return loc.first.inner_text() if loc.count() else ''
 
 
