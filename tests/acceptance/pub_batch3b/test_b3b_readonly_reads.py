@@ -40,9 +40,9 @@ def test_P6_迁出行读接口全200_五块内容照常显示(open_console):
         featLabels: txt('[data-role="feature-label"]'), featStates: txt('[data-role="feature-state"]')};
     }""")
     assert got == {
-        "name": "Alpha", "persona": "人设正文-ALPHA", "life": "23:00-07:00",
+        "name": "Alpha", "persona": "人设-alpha", "life": "23:00-alpha",
         "voiceId": "voice-alpha", "voiceModel": "s1", "textLang": "zh", "voiceLang": "zh",
-        "featLabels": ["功能甲"], "featStates": ["开着"],
+        "featLabels": ["功能-alpha"], "featStates": ["开着"],
     }
 
 
