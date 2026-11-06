@@ -61,29 +61,29 @@ def overview(bots, backends=None):
     return {"backends": backends or [backend()], "bots": bots}
 
 
-OK_READS = {
-    "profile": (200, {"ok": True, "display_name": "Alpha"}),
-    "life": (200, {
-        "ok": True,
-        "fields": [{"key": "sleep_hours", "label": "睡眠", "type": "text"}],
-        "values": {"sleep_hours": "23:00-07:00"},
-    }),
-    "persona": (200, {"ok": True, "text": "人设正文-ALPHA", "version": "1"}),
-    "voice": (200, {"ok": True, "voice_id": "voice-alpha", "tts_model": "s1",
-                    "text_language": "zh", "voice_language": "zh"}),
-    "features": (200, {"ok": True, "keys": [{"key": "feat_alpha", "label": "功能甲"}],
-                       "features": {"feat_alpha": True}, "requirements": {}}),
-}
+def default_reads(bot_id="alpha"):
+    """按 bot id 生成不同内容：切到另一只后若还显示上一只的内容，就说明没重新加载。"""
+    return {
+        "profile": (200, {"ok": True, "display_name": bot_id.capitalize()}),
+        "life": (200, {
+            "ok": True,
+            "fields": [{"key": "sleep_hours", "label": "睡眠", "type": "text"}],
+            "values": {"sleep_hours": "23:00-" + bot_id},
+        }),
+        "persona": (200, {"ok": True, "text": "人设-" + bot_id, "version": "1"}),
+        "voice": (200, {"ok": True, "voice_id": "voice-" + bot_id, "tts_model": "s1",
+                        "text_language": "zh", "voice_language": "zh"}),
+        "features": (200, {"ok": True, "keys": [{"key": "feat_" + bot_id, "label": "功能-" + bot_id}],
+                           "features": {"feat_" + bot_id: True}, "requirements": {}}),
+    }
 
 DELETED = (404, {"ok": False, "code": "unknown_bot"})
 BACKEND_DOWN = (502, {"ok": False, "code": "backend_down", "message": "底层连不上"})
 
 
 def reads_with(**overrides):
-    """读接口默认全 200，按需覆盖；值是 (status, body) 元组。"""
-    out = dict(OK_READS)
-    out.update(overrides)
-    return out
+    """只给出要覆盖的读接口；未覆盖的按 default_reads(bot_id) 生成。值是 (status, body) 元组。"""
+    return dict(overrides)
 
 
 def _build_shell():
@@ -142,10 +142,14 @@ def base_url():
 
 @pytest.fixture(scope="module")
 def chrome():
-    from playwright.sync_api import sync_playwright
-
-    pw = sync_playwright().start()
-    browser = pw.chromium.launch(channel="chrome", headless=True)
+    # 仓里没声明 playwright 依赖、CI 也不装：缺依赖或本机没装 Chrome 时整批按环境跳过。
+    sync_api = pytest.importorskip("playwright.sync_api", reason="未安装 playwright")
+    pw = sync_api.sync_playwright().start()
+    try:
+        browser = pw.chromium.launch(channel="chrome", headless=True)
+    except Exception as e:  # noqa: BLE001  驱动/浏览器缺失
+        pw.stop()
+        pytest.skip("未安装 playwright 或 Chrome：%s" % type(e).__name__)
     try:
         yield browser
     finally:
@@ -174,9 +178,10 @@ class ConsoleShell:
         if path == "/api/console/overview":
             return route.fulfill(status=200, content_type="application/json",
                                  body=json.dumps(self.data))
-        m = re.match(r"^/api/console/bots/[^/]+/[^/]+/(profile|life|persona|voice|features)$", path)
+        m = re.match(r"^/api/console/bots/[^/]+/([^/]+)/(profile|life|persona|voice|features)$", path)
         if m:
-            status, body = self.reads[m.group(1)]
+            bot_id, kind = m.group(1), m.group(2)
+            status, body = self.reads.get(kind) or default_reads(bot_id)[kind]
             return route.fulfill(status=status, content_type="application/json",
                                  body=json.dumps(body))
         if path == "/api/console/archives":
