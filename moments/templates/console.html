@@ -1332,6 +1332,7 @@ function renderProfile() {
     const box = document.getElementById('lifeRows');
     const body = PROF.life;
     if (!body) {
+      if (PROF.lifeErr) box.replaceChildren();
       if (!box.children.length) box.innerHTML = '<div class="hint">' + (PROF.lifeErr ? '' : '正在读取生活设定…') + '</div>';
     } else {
       box.replaceChildren();
@@ -1381,7 +1382,11 @@ function renderProfile() {
   document.getElementById('personaFoot').hidden = !caps.persona;
   const pta = document.getElementById('personaText');
   pta.disabled = PROF.saving || BUSY || !caps.persona;
-  if (caps.persona && PROF.persona && pta.getAttribute('data-loaded') !== PROF.loaded) {
+  if (PROF.personaErr) {
+    // 读失败 / 本侧已删除：清掉上一只留下的正文，别把 A 的内容摆在 B 名下。
+    pta.value = '';
+    pta.removeAttribute('data-loaded');
+  } else if (caps.persona && PROF.persona && pta.getAttribute('data-loaded') !== PROF.loaded) {
     pta.value = txt(PROF.persona.text);
     pta.setAttribute('data-loaded', PROF.loaded);
   }
@@ -1391,7 +1396,12 @@ function renderProfile() {
   setMsg('voiceMsg', vmsg ? vmsg.text : (verr ? verr.text : ''), vmsg ? vmsg.kind : (verr ? verr.kind : ''));
   document.getElementById('voiceFoot').hidden = !caps.voice;
   const v = obj(PROF.voice);
-  if (caps.voice && PROF.voice) {
+  if (PROF.voiceErr) {
+    // 同上：语音四项也要清空，避免残留上一只的编号/模型/语言。
+    for (const id of ['voiceId', 'voiceModel', 'voiceTextLang', 'voiceLang']) {
+      document.getElementById(id).value = '';
+    }
+  } else if (caps.voice && PROF.voice) {
     document.getElementById('voiceId').value = txt(v.voice_id);
     document.getElementById('voiceModel').value = txt(v.tts_model);
     document.getElementById('voiceTextLang').value = txt(v.text_language);
