@@ -989,14 +989,16 @@ function renderDetail() {
   document.getElementById('blkOverview').hidden = !has;
   document.title = has ? '管理台 · ' + ConsoleUX.displayName(bot) : '管理台';
   if (!has) { GEN += 1; document.getElementById('blkFeatures').hidden = true; document.getElementById('blkProfile').hidden = true; return; }
+  // 先推进版本号再触发各块加载：loadFeatures/loadProfile 拿到的 gen 必须与响应回来看到的
+  // GEN 一致，否则响应会被当成上一只 bot 的过期结果丢弃，区块永远停在「正在读取…」。
+  const key = SEL.backend + '/' + SEL.botId;
+  const keyChanged = key !== renderDetail._key;
+  if (keyChanged) { renderDetail._key = key; GEN += 1; }
   renderHead(backend, bot);
   renderOverview(backend, bot);
   renderFeaturesArea();
   renderProfileArea();
-  const key = SEL.backend + '/' + SEL.botId;
-  if (key !== renderDetail._key) {
-    renderDetail._key = key;
-    GEN += 1;
+  if (keyChanged) {
     const canName = ConsoleUX.backendOk(backend) && ConsoleUX.hasCap(backend, 'bot.profile');
     document.getElementById('displayNameInput').value = ConsoleUX.displayName(bot);
     if (canName) loadName(GEN);
