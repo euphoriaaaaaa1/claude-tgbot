@@ -133,8 +133,10 @@ def test_overview_把moved_to原样返回_另一个底层名_pending_null(panel)
     bots = {b["bot_id"]: b for b in r.get_json()["bots"]}
     assert bots["alpha"]["moved_to"] == "dsh"
     assert bots["beta"]["moved_to"] == "pending"
-    assert bots["gamma"].get("moved_to") is None
-    assert bots["delta"].get("moved_to") is None
+    assert "moved_to" in bots["gamma"], "正常行的 moved_to 键应存在且为 null"
+    assert bots["gamma"]["moved_to"] is None
+    assert "moved_to" in bots["delta"], "缺省 moved_to 的 bot 也应原样带这个键"
+    assert bots["delta"]["moved_to"] is None
 
 
 @pytest.mark.parametrize("endpoint", READ_ENDPOINTS)
