@@ -60,6 +60,18 @@ textarea { min-height:110px; resize:vertical; line-height:1.6; }
 .banner.err { --tint:rgba(250,81,81,.12); background:var(--tint); color:var(--danger); }
 .banner.ok { --tint:rgba(7,193,96,.12); background:var(--tint); color:var(--wxgreen); }
 .banner[hidden] { display:none; }
+/* 已迁出 / 切换中的行：写入口一律藏起来，不依赖各块自己维护的 disabled。
+   不用 :is()，逗号并列以照顾旧版 Safari / Chromium。 */
+#detail.ro #displayNameSave,
+#detail.ro #toggleEnabled,
+#detail.ro #lifecycleFoot,
+#detail.ro #lifeSave,
+#detail.ro #personaSave,
+#detail.ro #voiceSave,
+#detail.ro [data-role="feature-toggle"] { display:none !important; }
+/* 详情区处于只读时，卡片上的重启也一并收起（整页不出现可用的写入口）。 */
+body.ro [data-action="restart"] { display:none !important; }
+#roJump { margin-left:8px; }
 .hint { font-size:12px; color:var(--ink-faint); overflow-wrap:anywhere; }
 .hint[hidden] { display:none; }
 .icon-btn { position:relative; flex:none; width:32px; height:32px; border:none; border-radius:8px;
@@ -179,6 +191,7 @@ dialog::backdrop { background:rgba(0,0,0,.45); }
 
   <main class="detail" id="detail">
     <div class="panel hint" id="pickHint" hidden></div>
+    <div class="banner warn" id="roBanner" data-role="readonly-banner" role="status" hidden><span id="roBannerText"></span><button type="button" class="btn btn-ghost" id="roJump" data-role="readonly-jump" hidden></button></div>
 
     <section class="panel bot-head" id="blkHead" hidden>
       <div class="card-head"><span class="card-name" id="botName"></span><span class="tag" id="backendTag"></span><span class="tag bad" id="dupTag" hidden>两边同时在跑</span><span class="tag" id="stateTag"></span></div>
@@ -329,7 +342,7 @@ dialog::backdrop { background:rgba(0,0,0,.45); }
 
 <script id="consoleLogic">
 // 界面判断与文案：纯函数与常量，不碰页面节点、不发请求。
-var ConsoleUX = (function () {
+var ConsoleUX = function () {
   'use strict';
   const GENERIC_FAIL_TEXT = '操作没有成功，请稍后再试。';
   const NETWORK_FAIL_TEXT = '网络错误，没有收到回应。';
@@ -390,6 +403,56 @@ var ConsoleUX = (function () {
     return '待生效：' + msg;
   }
 
+  // ── 已迁出 / 切换中的行 ─────────────────────────────────────────────────
+  // moved_to 只有两种算数：'pending'，或 overview 里 backends 名单中的底层名。
+  // "null"/"undefined"/空白/名单外字符串一律当正常行，避免脏值把正常行误判成迁出。
+  function movedTo(bot, backends) {
+    const raw = text(obj(bot).moved_to).trim();
+    if (!raw || raw === 'null' || raw === 'undefined') return '';
+    if (raw === 'pending') return raw;
+    return list(backends).some((b) => text(obj(b).backend) === raw) ? raw : '';
+  }
+  function movedLabelOf(movedToValue, backends) {
+    const m = text(movedToValue);
+    if (!m) return '';
+    for (const raw of list(backends)) {
+      const b = obj(raw);
+      if (text(b.backend) === m) return text(b.label).trim() || m;
+    }
+    return m;
+  }
+  function readonlyText(backendLabelValue, movedToValue, backends) {
+    const m = text(movedToValue);
+    if (!m) return '';
+    if (m === 'pending') return '正在切换底层，暂时只能查看。';
+    return '这只已切到 ' + movedLabelOf(m, backends) + '，这里是 ' + text(backendLabelValue)
+      + ' 侧留下的旧档，只能查看。';
+  }
+  // 稳定排序（ES2019 起 sort 保证稳定）：只读卡排到本段末尾，其余相对顺序不变。
+  function orderCards(bots, backends) {
+    const rank = (b) => (movedTo(b, backends) ? 1 : 0);
+    return list(bots).slice().sort((a, b) => rank(a) - rank(b));
+  }
+  // 只认 404 + code=unknown_bot；502/409 或别的 404 仍按普通错误显示。
+  function isUnknownBot(r) {
+    const x = obj(r);
+    return x.status === 404 && obj(x.body).code === 'unknown_bot';
+  }
+  // 同 person、未迁出、不是自己：返回 DATA.bots 顺序里的第一条，供「去看在跑的那份」。
+  function selectSibling(bot, bots, backends) {
+    const me = obj(bot);
+    const person = text(me.person).trim();
+    if (!person) return null;
+    for (const raw of list(bots)) {
+      const b = obj(raw);
+      if (text(b.person).trim() !== person) continue;
+      if (text(b.backend) === text(me.backend) && text(b.bot_id) === text(me.bot_id)) continue;
+      if (movedTo(b, backends)) continue;
+      return b;
+    }
+    return null;
+  }
+
   function enableToggle(backend, bot) {
     if (!backendOk(backend) || !hasCap(backend, 'bot.enable')) return null;
     const b = obj(bot);
@@ -417,7 +480,6 @@ var ConsoleUX = (function () {
     const msg = text(b.message).trim() || (b.enabled === true ? '已启用' : '已停用');
     return {kind: b.enabled === true && b.running !== true ? 'warn' : 'ok', text: msg};
   }
-  function actionsDisabled(bot) { return isDuplicate(bot); }
   function canRestart(backend, bot) {
     const b = obj(bot);
     return backendOk(backend) && hasCap(backend, 'bot.restart.graceful') && b.enabled !== false
@@ -456,8 +518,9 @@ var ConsoleUX = (function () {
     hasCap, backendOk, backendLabel, backendReason, groupCountText, groupByBackend,
     displayName, isDuplicate, duplicateHint, stateBadge, stateLine, providerLine, pendingText,
     enableToggle, isOtherSideUnknown, otherSideConfirmText, enableBody, enableResult,
-    actionsDisabled, canRestart, restartConfirmText, manageUrl, selectedFromQuery, failureText, loadErrorText};
-})();
+    canRestart, restartConfirmText, manageUrl, selectedFromQuery, failureText, loadErrorText,
+    movedTo, movedLabelOf, readonlyText, orderCards, isUnknownBot, selectSibling};
+}();
 if (typeof window !== 'undefined') window.ConsoleUX = ConsoleUX;
 </script>
 
@@ -767,6 +830,8 @@ let DATA = null;
 let BUSY = false;
 const RESTARTING = new Set();   // 正在等重启结果的卡片（backend/bot_id），重画后按钮仍置灰
 let SEL = null;
+// 当前选中行的只读原因：'' 正常，'pending' 切换中，或另一底层名（已迁出）。
+let RO = '';
 let GEN = 0;
 let ARCH = null;
 const OPS = {active: null, recent: null};
@@ -776,9 +841,9 @@ const LCDLG = {backend: null, bot: null};
 const BSW = {last: null};
 const CF = {form: null, pending: null};
 const N = {on: false, loaded: '', saving: false};
-const FEAT = {on: false, loaded: '', saving: false, resp: null, notice: null, error: ''};
+const FEAT = {on: false, loaded: '', saving: false, resp: null, notice: null, error: null};
 const PROF = {on: false, loaded: '', saving: false, life: null, persona: null, voice: null,
-  lifeErr: '', personaErr: '', voiceErr: '', notices: {life: null, persona: null, voice: null}};
+  lifeErr: null, personaErr: null, voiceErr: null, notices: {life: null, persona: null, voice: null}};
 
 const archiveDialog = document.getElementById('archiveDialog');
 const deleteDialog = document.getElementById('deleteDialog');
@@ -921,7 +986,7 @@ function renderSections() {
     reason.hidden = ok;
     node.querySelector('[data-role="section-empty"]').hidden = !(ok && s.bots.length === 0);
     const cards = node.querySelector('[data-role="section-cards"]');
-    for (const bot of s.bots) cards.appendChild(renderCard(backend, bot));
+    for (const bot of ConsoleUX.orderCards(s.bots, (DATA && DATA.backends) || [])) cards.appendChild(renderCard(backend, bot));
     box.appendChild(node);
   }
 }
@@ -988,12 +1053,13 @@ function renderDetail() {
   document.getElementById('blkHead').hidden = !has;
   document.getElementById('blkOverview').hidden = !has;
   document.title = has ? '管理台 · ' + ConsoleUX.displayName(bot) : '管理台';
-  if (!has) { GEN += 1; document.getElementById('blkFeatures').hidden = true; document.getElementById('blkProfile').hidden = true; return; }
+  if (!has) { GEN += 1; document.getElementById('blkFeatures').hidden = true; document.getElementById('blkProfile').hidden = true; renderReadonly(null, null); return; }
   // 先推进版本号再触发各块加载：loadFeatures/loadProfile 拿到的 gen 必须与响应回来看到的
   // GEN 一致，否则响应会被当成上一只 bot 的过期结果丢弃，区块永远停在「正在读取…」。
   const key = SEL.backend + '/' + SEL.botId;
   const keyChanged = key !== renderDetail._key;
   if (keyChanged) { renderDetail._key = key; GEN += 1; }
+  renderReadonly(backend, bot);
   renderHead(backend, bot);
   renderOverview(backend, bot);
   renderFeaturesArea();
@@ -1008,6 +1074,40 @@ function renderDetail() {
       setBlockMsg('displayNameMsg', '', '');
     }
   }
+}
+// 只读是界面层：显示提示、藏起写入口、把输入控件锁成只读。
+// 服务端内容写接口并不拦（只有启用/切换对迁出行返回 409 moved），见 README。
+function renderReadonly(backend, bot) {
+  const backends = (DATA && DATA.backends) || [];
+  RO = ConsoleUX.movedTo(bot, backends);
+  document.getElementById('detail').classList.toggle('ro', !!RO);
+  document.body.classList.toggle('ro', !!RO);
+  document.getElementById('roBannerText').textContent = RO
+    ? ConsoleUX.readonlyText(ConsoleUX.backendLabel(backend || {}), RO, backends) : '';
+  document.getElementById('roBanner').hidden = !RO;
+  const jump = document.getElementById('roJump');
+  const sibling = RO ? ConsoleUX.selectSibling(bot, (DATA && DATA.bots) || [], backends) : null;
+  if (sibling) {
+    const sibBackend = findBackend(sibling.backend) || {backend: sibling.backend};
+    jump.textContent = '去看在跑的那份（' + ConsoleUX.backendLabel(sibBackend) + '）';
+    jump.setAttribute('data-backend', txt(sibling.backend));
+    jump.setAttribute('data-bot-id', txt(sibling.bot_id));
+    jump.hidden = false;
+  } else {
+    jump.textContent = '';
+    jump.hidden = true;
+    jump.removeAttribute('data-backend');
+    jump.removeAttribute('data-bot-id');
+  }
+  applyRoControls();
+}
+// 生活设定与显示名会动态重建，渲染后要再锁一次；离开只读时把 select 的禁用状态交还各块自己算。
+function applyRoControls() {
+  const ro = !!RO;
+  for (const el of document.querySelectorAll('#detail input, #detail textarea')) el.readOnly = ro;
+  const vm = document.getElementById('voiceModel');
+  if (ro) { vm.disabled = true; vm.setAttribute('data-ro', '1'); }
+  else if (vm.getAttribute('data-ro') === '1') { vm.removeAttribute('data-ro'); vm.disabled = false; }
 }
 function renderHead(backend, bot) {
   document.getElementById('botName').textContent = ConsoleUX.displayName(bot);
@@ -1051,10 +1151,10 @@ function renderFeaturesArea() {
   const backend = selBackend(), bot = selBot();
   const on = !!(backend && bot && featuresOn(backend, bot));
   document.getElementById('blkFeatures').hidden = !on;
-  if (!on) { FEAT.on = false; FEAT.resp = null; FEAT.loaded = ''; FEAT.error = ''; return; }
+  if (!on) { FEAT.on = false; FEAT.resp = null; FEAT.loaded = ''; FEAT.error = null; return; }
   const key = SEL.backend + '/' + SEL.botId;
   if (!FEAT.on || FEAT.loaded !== key) {
-    FEAT.on = true; FEAT.loaded = key; FEAT.resp = null; FEAT.notice = null; FEAT.error = '';
+    FEAT.on = true; FEAT.loaded = key; FEAT.resp = null; FEAT.notice = null; FEAT.error = null;
     loadFeatures(GEN);
   }
   renderFeatures();
@@ -1065,8 +1165,9 @@ async function loadFeatures(gen) {
   const r = await getJson(botUrl(bot.backend, bot.bot_id, 'features'));
   if (gen !== GEN) return;
   const b = obj(r.body);
-  if (r.ok && b.ok === true) { FEAT.resp = b; FEAT.error = ''; }
-  else { FEAT.resp = null; FEAT.error = ConsoleUX.failureText(r); }
+  if (r.ok && b.ok === true) { FEAT.resp = b; FEAT.error = null; }
+  else if (ConsoleUX.isUnknownBot(r)) { FEAT.resp = null; FEAT.error = {text: '这一侧已经删除', kind: ''}; }
+  else { FEAT.resp = null; FEAT.error = {text: ConsoleUX.failureText(r), kind: 'err'}; }
   renderFeatures();
 }
 function renderFeatures() {
@@ -1076,9 +1177,10 @@ function renderFeatures() {
   box.replaceChildren();
   const body = FEAT.resp;
   if (!body) {
-    msg.textContent = FEAT.error || '正在读取功能开关…';
+    const err = FEAT.error;
+    msg.textContent = err ? err.text : '正在读取功能开关…';
     msg.hidden = false;
-    msg.setAttribute('data-kind', FEAT.error ? 'err' : '');
+    msg.setAttribute('data-kind', err ? err.kind : '');
     return;
   }
   const feats = obj(body.features), reqs = obj(body.requirements);
@@ -1133,6 +1235,7 @@ function renderFeatures() {
     : (lines.length ? 'warn' : ''));
 }
 async function toggleFeature(key) {
+  if (RO) return;
   const bot = selBot(), body = FEAT.resp;
   if (!bot || !body || FEAT.saving || !key) return;
   const on = obj(body.features)[key] === true;
@@ -1179,7 +1282,7 @@ function renderProfileArea() {
   const key = SEL.backend + '/' + SEL.botId;
   if (!PROF.on || PROF.loaded !== key) {
     PROF.on = true; PROF.loaded = key; PROF.life = PROF.persona = PROF.voice = null;
-    PROF.lifeErr = PROF.personaErr = PROF.voiceErr = '';
+    PROF.lifeErr = PROF.personaErr = PROF.voiceErr = null;
     PROF.notices = {life: null, persona: null, voice: null};
     loadProfile(GEN);
   }
@@ -1195,9 +1298,12 @@ async function loadProfile(gen) {
     caps.voice ? getJson(botUrl(bot.backend, bot.bot_id, 'voice')) : Promise.resolve(null)]);
   if (gen !== GEN) return;
   const take = (r, what) => {
-    if (!r) return {value: null, err: ''};
+    if (!r) return {value: null, err: null};
     const b = obj(r.body);
-    return (r.ok && b.ok === true) ? {value: b, err: ''} : {value: null, err: ConsoleUX.failureText(r) || ('读不出' + what)};
+    if (r.ok && b.ok === true) return {value: b, err: null};
+    // 本侧已没这条记录：按「这一侧已经删除」显示，不带出错样式。
+    if (ConsoleUX.isUnknownBot(r)) return {value: null, err: {text: '这一侧已经删除', kind: ''}};
+    return {value: null, err: {text: ConsoleUX.failureText(r), kind: 'err'}};
   };
   const L = take(l, '生活设定'), P = take(p, '人设'), V = take(v, '语音');
   PROF.life = L.value; PROF.lifeErr = L.err;
@@ -1218,15 +1324,15 @@ function renderProfile() {
     const n = PROF.notices[part];
     return n ? {text: n.text, kind: n.kind} : null;
   };
-  const lmsg = notice('life');
-  setMsg('lifeMsg', lmsg ? lmsg.text : PROF.lifeErr, lmsg ? lmsg.kind : (PROF.lifeErr ? 'err' : ''));
+  const lmsg = notice('life'), lerr = lmsg ? null : PROF.lifeErr;
+  setMsg('lifeMsg', lmsg ? lmsg.text : (lerr ? lerr.text : ''), lmsg ? lmsg.kind : (lerr ? lerr.kind : ''));
   document.getElementById('lifeFoot').hidden = !caps.life;
   document.getElementById('lifeSave').disabled = PROF.saving || BUSY;
   if (caps.life) {
     const box = document.getElementById('lifeRows');
     const body = PROF.life;
     if (!body) {
-      if (!box.children.length) box.innerHTML = '<div class="hint">' + (PROF.lifeErr || '正在读取生活设定…') + '</div>';
+      if (!box.children.length) box.innerHTML = '<div class="hint">' + (PROF.lifeErr ? '' : '正在读取生活设定…') + '</div>';
     } else {
       box.replaceChildren();
       for (const raw of list(body.fields)) {
@@ -1269,8 +1375,8 @@ function renderProfile() {
     }
   }
 
-  const pmsg = notice('persona');
-  setMsg('personaMsg', pmsg ? pmsg.text : PROF.personaErr, pmsg ? pmsg.kind : (PROF.personaErr ? 'err' : ''));
+  const pmsg = notice('persona'), perr = pmsg ? null : PROF.personaErr;
+  setMsg('personaMsg', pmsg ? pmsg.text : (perr ? perr.text : ''), pmsg ? pmsg.kind : (perr ? perr.kind : ''));
   document.getElementById('personaText').hidden = !caps.persona;
   document.getElementById('personaFoot').hidden = !caps.persona;
   const pta = document.getElementById('personaText');
@@ -1281,8 +1387,8 @@ function renderProfile() {
   }
   document.getElementById('personaSave').disabled = PROF.saving || BUSY;
 
-  const vmsg = notice('voice');
-  setMsg('voiceMsg', vmsg ? vmsg.text : PROF.voiceErr, vmsg ? vmsg.kind : (PROF.voiceErr ? 'err' : ''));
+  const vmsg = notice('voice'), verr = vmsg ? null : PROF.voiceErr;
+  setMsg('voiceMsg', vmsg ? vmsg.text : (verr ? verr.text : ''), vmsg ? vmsg.kind : (verr ? verr.kind : ''));
   document.getElementById('voiceFoot').hidden = !caps.voice;
   const v = obj(PROF.voice);
   if (caps.voice && PROF.voice) {
@@ -1296,6 +1402,7 @@ function renderProfile() {
   }
   document.getElementById('voiceSave').disabled = PROF.saving || BUSY;
   refreshLifeHint();
+  applyRoControls();
 }
 function lifeValues() {
   const out = {};
@@ -1309,6 +1416,7 @@ function lifeValues() {
   return out;
 }
 async function saveLife() {
+  if (RO) return;
   const bot = selBot();
   if (!bot || PROF.saving) return;
   let values;
@@ -1331,6 +1439,7 @@ async function saveLife() {
   renderProfile();
 }
 async function savePersona() {
+  if (RO) return;
   const bot = selBot(), body = PROF.persona;
   if (!bot || !body || PROF.saving) return;
   PROF.saving = true; PROF.notices.persona = null; renderProfile();
@@ -1354,6 +1463,7 @@ async function savePersona() {
   renderProfile();
 }
 async function saveVoice() {
+  if (RO) return;
   const bot = selBot();
   if (!bot || PROF.saving) return;
   const pick = (id) => { const v = document.getElementById(id).value.trim(); return v === '' ? null : v; };
@@ -1383,13 +1493,18 @@ async function loadName(gen) {
     N.loaded = txt(obj(r.body).display_name);
     document.getElementById('displayNameInput').value = N.loaded;
     setBlockMsg('displayNameMsg', '', '');
+  } else if (ConsoleUX.isUnknownBot(r)) {
+    N.on = false;
+    setBlockMsg('displayNameMsg', '这一侧已经删除', '');
   } else {
     setBlockMsg('displayNameMsg', ConsoleUX.failureText(r), 'err');
   }
   document.getElementById('displayNameInput').disabled = !N.on || BUSY;
   document.getElementById('displayNameSave').disabled = !N.on || BUSY;
+  applyRoControls();
 }
 async function saveName() {
+  if (RO) return;
   const backend = selBackend(), bot = selBot();
   if (!backend || !bot || BUSY || !N.on) return;
   const value = document.getElementById('displayNameInput').value;
@@ -1410,6 +1525,7 @@ async function saveName() {
   }
 }
 async function toggleEnabled() {
+  if (RO) return;
   const backend = selBackend(), bot = selBot();
   const tg = backend && bot ? ConsoleUX.enableToggle(backend, bot) : null;
   if (BUSY || !tg) return;
@@ -1435,6 +1551,7 @@ function selectBot(backend, botId, push) {
 }
 // 卡片「重启」：一次确认；请求进行中按钮置灰；返回后在顶部提示 message
 async function restartBot(backend, botId, name, btn) {
+  if (RO) return;
   const key = backend + '/' + botId;
   if (RESTARTING.has(key)) return;
   const bot = list(obj(DATA).bots).find((b) => obj(b).bot_id === botId && obj(b).backend === backend) || {bot_id: botId, display_name: name};
@@ -1690,12 +1807,14 @@ function openDeleteDialog() {
   deleteInput.focus();
 }
 function confirmArchive() {
+  if (RO) return;
   const backend = LCDLG.backend, bot = LCDLG.bot;
   if (!backend || !bot || BUSY) return;
   archiveDialog.close();
   startOp(botUrl(backend.backend, bot.bot_id, 'archive'), {});
 }
 function confirmDelete() {
+  if (RO) return;
   const backend = LCDLG.backend, bot = LCDLG.bot, typed = deleteInput.value;
   if (!backend || !bot || BUSY || !LifecycleUX.canConfirmDelete(bot, typed)) return;
   deleteDialog.close();
@@ -1901,6 +2020,7 @@ function openBackendSwitchDialog(backend, bot, opts) {
   document.getElementById('backendSwitchTitle').focus();
 }
 async function submitBackendSwitch() {
+  if (RO) return;
   const last = BSW.last;
   if (!last || BUSY) return;
   const to = document.getElementById('backendSwitchTarget').value;
@@ -1921,6 +2041,11 @@ for (const id of ['createDialogCancel', 'createDialogClose']) {
   document.getElementById(id).addEventListener('click', () => createDialog.close());
 }
 document.getElementById('displayNameSave').addEventListener('click', saveName);
+document.getElementById('roJump').addEventListener('click', () => {
+  const jump = document.getElementById('roJump');
+  const be = jump.getAttribute('data-backend'), id = jump.getAttribute('data-bot-id');
+  if (be && id) selectBot(be, id);
+});
 document.getElementById('toggleEnabled').addEventListener('click', toggleEnabled);
 document.getElementById('featureRows').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
