@@ -120,6 +120,7 @@ PREV_TEXT = "上一位那句独有原话甲乙丙"
 
 @pytest.fixture
 def inject_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("DIRECTOR_NO_SPAWN", "1")  # 与验收夹具一致：不真拉 worker
     monkeypatch.setattr(director, "CHANNELS_ROOT", str(tmp_path / "channels"))
     monkeypatch.setattr(director, "_is_stopped", lambda bot: False)
     monkeypatch.setattr(director, "_relations", None)
@@ -149,8 +150,22 @@ def test_导演点名正文_以按语境回复结尾_不含你可以_不引用�
     text = inject_text(**BRANCHES[name])
     assert text.startswith("[director] ")
     assert text.endswith("（你按语境回复即可）")
-    assert "你可以" not in text
+    assert "你可以" not in text.splitlines()[0]  # 只约束点名开头一行；主人批次提示另有审定句
     assert PREV_TEXT not in text
+
+
+def _owner(ts, text):
+    return {"ts": ts, "speaker": director.HUMAN_NAME, "text": text, "is_bot": False, "msg_id": str(ts)}
+
+
+def test_导演点名_主人批次提示用审定原句(inject_text):
+    # 两句提示互斥：连发多条走前一句，只说一条走后一句
+    multi = inject_text(user_batch=[_owner(11, "第一句"), _owner(12, "第二句")])
+    assert "你可以一起回复；其中如果有明确的要求，优先照做。" in multi
+    single = inject_text(user_batch=[_owner(13, "就一句")])
+    assert "其中如果有明确的要求，优先照做；只是闲聊就直接回复。" in single
+    for text in (multi, single):
+        assert text.endswith("（你按语境回复即可）")
 
 
 def test_导演点名_临近收尾附不用再开新话题(inject_text):
