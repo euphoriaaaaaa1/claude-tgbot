@@ -373,7 +373,7 @@ curl -H "Authorization: Bearer $(cat ~/.config/claude-dsh-console/adapter.token)
 
 仓库自带 84 张 sfw 表情包（`assets/stickers/sfw/`，含 `manifest.json`）。`install.sh`（Windows 为 `windows\register-tasks.ps1`）会调用 `scripts/install_stickers.py` 安装，也可以单独运行它：
 
-- 图片复制到 `STICKERS_DIR` 下的 `sfw/` 子目录。`STICKERS_DIR` 未设置时为 `~/resource/stickers`，与 dispatcher 发送表情图时认可的目录一致；自定义时须为绝对路径或以 `~/` 开头，并且与运行 dispatcher 时的取值相同。
+- 图片复制到 `STICKERS_DIR` 下的 `sfw/` 子目录。`STICKERS_DIR` 未设置时为 `~/resource/stickers`，与 dispatcher 发送表情图时认可的目录一致；自定义时须为绝对路径或以 `~/` 开头，并且与运行 dispatcher 时的取值相同。Windows 上以 `/` 或 `\` 开头而不带盘符的路径（如 `\stickers`）不算绝对路径，安装会报错退出，须写成 `D:\stickers` 这样带盘符的完整路径。
 - 生成 `~/.claude/channels/_shared/stickers.json`：`sfw` 档每条含 `id`、`tier`、`url`、`label`、`path`（复制后的绝对路径），有分类时另含 `category`；随包图片没有网络来源，`url` 为空；`nsfw` 档为空。
 - **已有清单不覆盖**：`stickers.json` 已存在时整步跳过，图片也不复制，只打印一句提示，不合并、不改动。目标目录里已有同名图片时不覆盖，清单指向已有文件。
 - 有图片复制失败时不生成清单并报错；修好后重跑会补齐图片再生成清单。重复运行结果不变。
