@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -20,7 +21,7 @@ BUNDLE = ROOT / "assets" / "stickers" / "sfw"
 
 def run(home: Path, repo: Path = ROOT, stickers_dir: str | None = None):
     env = {k: v for k, v in os.environ.items() if k != "STICKERS_DIR"}
-    env.update(HOME=str(home), USERPROFILE=str(home))
+    env.update(HOME=str(home), USERPROFILE=str(home), PYTHONUTF8="1")
     if stickers_dir is not None:
         env["STICKERS_DIR"] = stickers_dir
     return subprocess.run(
@@ -172,3 +173,59 @@ def test_安装入口已接线():
     assert "scripts/install_stickers.py" in (ROOT / "install.sh").read_text(encoding="utf-8")
     ps1 = (ROOT / "windows" / "register-tasks.ps1").read_text(encoding="utf-8-sig")
     assert "install_stickers.py" in ps1
+
+
+def load_script_module():
+    spec = importlib.util.spec_from_file_location("install_stickers_under_test", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_复制中途出错_不写清单_修好后重跑补齐(home: Path, monkeypatch):
+    module = load_script_module()
+    monkeypatch.delenv("STICKERS_DIR", raising=False)
+    real_copyfile = module.shutil.copyfile
+    calls = {"n": 0}
+
+    def flaky_copyfile(src, dst, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 10:  # 第 10 张时磁盘出错，前 9 张已复制
+            raise OSError("模拟磁盘写入失败")
+        return real_copyfile(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(module.shutil, "copyfile", flaky_copyfile)
+    argv = ["--repo", str(ROOT), "--home", str(home)]
+    assert module.main(argv) == 1
+    sticker_dir = home / "resource" / "stickers" / "sfw"
+    assert not stickers_json(home).exists()
+    assert len(list(sticker_dir.iterdir())) == 83  # 只缺出错那一张，也不留临时文件
+    monkeypatch.setattr(module.shutil, "copyfile", real_copyfile)
+    assert module.main(argv) == 0
+    assert len(list(sticker_dir.iterdir())) == 84
+    assert len(json.loads(stickers_json(home).read_text(encoding="utf-8"))["sfw"]) == 84
+
+
+def test_目标位置是同名目录_记失败不写清单(home: Path):
+    first = manifest_entries()[0]["file"]
+    sticker_dir = home / "resource" / "stickers" / "sfw"
+    (sticker_dir / first).mkdir(parents=True)
+    r = run(home)
+    assert r.returncode == 1
+    assert first in r.stderr
+    assert not stickers_json(home).exists()
+    assert (sticker_dir / first).is_dir()
+
+
+@pytest.mark.parametrize("bad_name", ["a:b.jpg", "C:evil.jpg", "x.jpg:stream"])
+def test_manifest文件名含冒号_被拒(home: Path, tmp_path: Path, bad_name: str):
+    repo = tmp_path / "repo"
+    bundle = repo / "assets" / "stickers" / "sfw"
+    shutil.copytree(BUNDLE, bundle)
+    data = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    data["files"][0]["file"] = bad_name
+    (bundle / "manifest.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    r = run(home, repo=repo)
+    assert r.returncode == 1
+    assert not stickers_json(home).exists()
+    assert not (home / "resource").exists()
