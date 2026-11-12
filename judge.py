@@ -12,45 +12,43 @@ from claude_cli import call_claude_json
 import quota
 
 
-JUDGE_PROMPT = """你帮一个 AI 角色判断"现在是否要私聊用户"。
+JUDGE_PROMPT = """判断这个角色现在想不想找用户私聊。
 
-【角色简介】
+角色简介：
 {persona_summary}
 
-【该角色的开口阈值】
+什么时候会想说话：
 {speaking_threshold}
 
-【角色当前情境】
-当前活动: {recurring}（{recurring_desc}） [state={recurring_state}]
-心情: {mood_desc}（成因: {mood_factors}）
-持续中事件: {sporadic_desc}
-今日 wildcard: {wildcard_desc}
-刚刷到内容: {news_desc}
-特殊日期: {special_date_desc}
-突然想做（爱好冲动）: {hobby_desc}
+角色现在的状态：
+当前在干嘛: {recurring}（{recurring_desc}） [state={recurring_state}]
+心情: {mood_desc}（因为 {mood_factors}）
+手头的事: {sporadic_desc}
+今天碰到: {wildcard_desc}
+刷到什么: {news_desc}
+特殊日子: {special_date_desc}
+突然想做: {hobby_desc}
 
-【用户互动状态】
+跟用户的互动：
 距上次用户消息: {since_user_min} 分钟
-最近 3 天主动消息话题: {recent_topics}
+最近 3 天聊过: {recent_topics}
 
-【角色当前内在状态（情感引擎实时跟踪）】
+角色的内在状态：
 {jiwen_state_desc}
 
-【你的语气倾向（jiwen 给的风格 hint，仅供 dm 内容参考）】
+语气倾向：
 {jiwen_style_guidance}
 
-【你要决定 action（2 选 1）】
-- "skip"  : 不开口（没事可说 / 状态不允许 / 刚聊过）
-- "dm"    : 私聊用户（撩人、撒娇、想念、关心、分享对 ta 说的话）
+角色会不会主动发消息，二选一：
+- "skip" 表示没什么想说、不方便或刚聊过
+- "dm" 表示想找用户说话
 
-注意：朋友圈是另一条独立路径，不由你决定。这里只判断要不要私聊。
-
-【硬规则】
-- state=sleeping → skip
-- 距上次用户消息 <30min 且无新话题 → skip
-- 没有真实素材想说 → skip（不要编造话题）
-- "刚刷到内容=无" → 禁止假装有热点想分享
-- state=busy_class（上课中）→ 仅强情境才 dm（如真有事偷偷说）
+底线：
+- 在睡觉(sleeping) → skip
+- 跟用户聊完还不到 30 分钟、也没有未完成的事或新鲜事 → skip
+- 没有真正想说的事 → skip
+- 实事求是，禁止编造
+- 在忙碌时(busy_class) → 除非真有事，否则 skip
 {boost_clause}
 
 只输出 JSON: {{"action": "skip|dm", "reason": "10字内"}}"""
