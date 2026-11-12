@@ -48,9 +48,15 @@ BACKUP_DIR = ".stickers-backups"
 REMOVED_DIR = ".removed"
 LOCK_WAIT_SEC = 10.0
 LOCK_RETRY_SEC = 0.05
-# Windows 上目标文件正被别的进程打开（杀毒、索引）时 os.replace 报 PermissionError：锁内短重试，仍失败才报错
+# Windows 上目标文件正被别的进程打开（杀毒、索引、锁外读它的请求）时 os.replace 报 PermissionError，反过来替换
+# 进行中去读也会报：读写都按这组次数与间隔短重试，仍失败才报错
 _REPLACE_TRIES = 10
 _REPLACE_RETRY_SEC = 0.05
+
+
+def _on_windows() -> bool:
+    """只在 Windows 上重试 PermissionError：POSIX 上它就是真的没权限，重试无益。"""
+    return os.name == "nt"
 _CHUNK = 64 * 1024
 IMG_PREFIX = "/console/stickers/img/"
 # 图片路由与改、移除的文件名规则；用 fullmatch：`$` 会放过结尾的换行
@@ -155,9 +161,17 @@ def _load():
     stickers_dir()
     path = json_path()
     try:
-        with open(path, "rb") as f:
-            mode = stat.S_IMODE(os.fstat(f.fileno()).st_mode)
-            raw = f.read()
+        for attempt in range(_REPLACE_TRIES):
+            # 锁外读：Windows 上正赶上别的请求 os.replace 这个文件时 open 会报 PermissionError，与写同口径短重试
+            try:
+                with open(path, "rb") as f:
+                    mode = stat.S_IMODE(os.fstat(f.fileno()).st_mode)
+                    raw = f.read()
+                break
+            except PermissionError:
+                if not _on_windows() or attempt == _REPLACE_TRIES - 1:
+                    raise
+                time.sleep(_REPLACE_RETRY_SEC)
     except FileNotFoundError:
         return None, {"sfw": [], "nsfw": []}, 0o644
     except OSError:
@@ -288,7 +302,7 @@ def _replace(src: str, dst: str) -> None:
             os.replace(src, dst)
             return
         except PermissionError:
-            if os.name != "nt" or attempt == _REPLACE_TRIES - 1:
+            if not _on_windows() or attempt == _REPLACE_TRIES - 1:
                 raise
             time.sleep(_REPLACE_RETRY_SEC)
 
