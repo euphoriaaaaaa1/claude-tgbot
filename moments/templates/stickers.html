@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>表情包</title>
+<style>
+/* 与 console.html 同一套颜色与控件：字体只用设备自带的，不加载任何站外资源。 */
+:root { --bg:#ededed; --card:#fff; --ink:#181818; --ink-soft:#555; --ink-faint:#888;
+  --hairline:rgba(0,0,0,0.06); --hairline-strong:rgba(0,0,0,0.12);
+  --wxgreen:#07c160; --danger:#fa5151; --warn:#c98a00; --check:rgba(0,0,0,0.05);
+  --font-body:'Noto Sans SC','Noto Sans CJK SC','Source Han Sans SC',-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,'Roboto Mono','PingFang SC','Microsoft YaHei',monospace; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#000; --card:#1c1c1e; --ink:#f0f0f0; --ink-soft:#c0c0c0; --ink-faint:#8a8a8a;
+    --hairline:rgba(255,255,255,0.08); --hairline-strong:rgba(255,255,255,0.16); --check:rgba(255,255,255,0.06); }
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+[hidden] { display:none !important; }
+body { font-family:var(--font-body); background:var(--bg); color:var(--ink);
+  line-height:1.6; font-size:15px; padding-bottom:60px; }
+.stk-top { position:sticky; top:0; z-index:10; background:var(--bg);
+  border-bottom:1px solid var(--hairline); padding:16px 20px;
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  flex-wrap:wrap;
+  max-width:900px; margin:0 auto; }
+.stk-top h1 { font-size:18px; font-weight:600; }
+/* 共用导航（_console_nav.html）在本页不吸顶：往下翻时它随页面滚走，吸顶的只有上面这条 .stk-top，提示条挂在它下面。
+   选择器只命中包在 .stk-nav 里的共用导航条，不改共用片段本身。 */
+.stk-nav > div { position:static; }
+.title-line { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; min-width:0; }
+.counts { font-size:12px; color:var(--ink-faint); font-variant-numeric:tabular-nums; }
+.btn { border:none; border-radius:8px; padding:8px 14px; font-size:14px; cursor:pointer;
+  font-family:var(--font-body); transition:opacity .15s; white-space:nowrap; text-decoration:none; display:inline-block; line-height:1.4; }
+.btn:hover { opacity:.85; }
+.btn:disabled { opacity:.45; cursor:default; }
+.btn-primary { background:var(--wxgreen); color:#fff; }
+.btn-ghost { background:transparent; color:var(--ink-soft); border:1px solid var(--hairline-strong); }
+.btn-danger { background:transparent; color:var(--danger); border:1px solid var(--danger); }
+.wrap { max-width:900px; margin:20px auto; padding:0 20px; }
+.panel { background:var(--card); border:1px solid var(--hairline); border-radius:14px;
+  padding:16px 18px; margin-bottom:16px; }
+.panel h2 { font-size:15px; font-weight:600; margin-bottom:12px; }
+.row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; min-width:0; }
+.field label { font-size:12px; color:var(--ink-soft); }
+input, select, textarea { padding:8px 10px; border-radius:8px; font-size:14px; color:var(--ink);
+  border:1px solid var(--hairline-strong); background:transparent; font-family:var(--font-body); width:100%; max-width:100%; min-width:0; }
+select { background:var(--card); }
+select option { color:var(--ink); background:var(--card); }
+textarea { min-height:96px; resize:vertical; line-height:1.6; }
+input:disabled, select:disabled, textarea:disabled { opacity:.55; }
+.mono { font-family:var(--font-mono); font-size:12px; color:var(--ink-soft);
+  overflow-wrap:anywhere; word-break:break-word; }
+.tag { display:inline-block; font-size:12px; padding:1px 7px; border-radius:20px;
+  border:1px solid var(--hairline-strong); color:var(--ink-soft); white-space:nowrap; }
+.tag.local { color:var(--warn); border-color:var(--warn); }
+.tag.ok { color:var(--wxgreen); border-color:var(--wxgreen); }
+.tag.bad { color:var(--danger); border-color:var(--danger); }
+.banner { border-radius:10px; padding:10px 14px; margin-bottom:16px; font-size:14px; overflow-wrap:anywhere; }
+.banner.warn { --tint:rgba(201,138,0,.12); background:var(--tint); color:var(--warn); }
+.banner.err { --tint:rgba(250,81,81,.12); background:var(--tint); color:var(--danger); }
+.banner.ok { --tint:rgba(7,193,96,.12); background:var(--tint); color:var(--wxgreen); }
+.hint { font-size:12px; color:var(--ink-faint); overflow-wrap:anywhere; }
+.field-err { font-size:12px; color:var(--danger); overflow-wrap:anywhere; }
+/* 文件选择框本身不显示：由旁边的按钮代点；不用 display:none，老 Safari 对隐藏的选择框不响应代点 */
+.picker { position:absolute; width:1px; height:1px; min-height:0; padding:0; border:0; opacity:0; overflow:hidden; pointer-events:none; }
+
+/* ── 图标按钮（关闭叉 / 去掉一行）：叉用两条线画，不依赖任何字体或图标库 ── */
+.icon-btn { position:relative; flex:none; width:32px; height:32px; border:none; border-radius:8px;
+  background:transparent; color:inherit; cursor:pointer; }
+.icon-btn::before, .icon-btn::after { content:""; position:absolute; left:50%; top:50%;
+  width:14px; height:1.5px; border-radius:1px; background:currentColor; }
+.icon-btn::before { transform:translate(-50%,-50%) rotate(45deg); }
+.icon-btn::after { transform:translate(-50%,-50%) rotate(-45deg); }
+.icon-btn:hover, .icon-btn:active { background:var(--hairline); }
+.icon-btn:disabled { opacity:.45; cursor:default; }
+
+/* ── 操作结果提示条：挂在吸顶的顶栏里、绝对定位悬浮在顶栏正下方，所以页面滚到哪里它都在视野内，
+   既不占顶栏按钮的位置、也不推开页面内容。淡色底下垫一层不透明的卡片色，悬浮时不透出下面的文字。 ── */
+.banner.notice { display:flex; align-items:flex-start; gap:10px; }
+.notice-text { flex:1; min-width:0; overflow-wrap:anywhere; white-space:pre-line; }
+.banner.notice .icon-btn { margin:-5px -8px -5px 0; }
+.stk-top .banner.notice { position:absolute; left:20px; right:20px; top:calc(100% + 8px); margin:0;
+  background:linear-gradient(var(--tint), var(--tint)), var(--card);
+  border:1px solid currentColor; box-shadow:0 8px 24px rgba(0,0,0,.14); }
+
+/* ── 添加区：目标档与分类一行；三个入口一行；贴链接的文本框按需展开 ── */
+.target { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:0 12px; }
+.entries { display:flex; gap:10px; flex-wrap:wrap; margin:4px 0 8px; }
+.entries .btn { flex:1 1 0; min-width:0; }
+.entries .btn[aria-expanded="true"] { border-color:var(--wxgreen); color:var(--wxgreen); }
+.links-box { border-top:1px dashed var(--hairline-strong); padding-top:10px; margin-top:6px; }
+.add-hint { margin-top:6px; padding-left:10px; border-left:2px solid var(--wxgreen); }
+
+/* ── 待加清单：每行 = 预览 + 标签框与来源 + 去掉叉；状态写在标签框下 ── */
+.pending { margin-top:14px; border-top:1px solid var(--hairline); padding-top:12px; }
+.pending-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+.pending-head h3 { font-size:14px; font-weight:600; }
+.prows { display:flex; flex-direction:column; gap:8px; }
+.prow { display:flex; align-items:flex-start; gap:10px; padding:8px; border:1px solid var(--hairline-strong); border-radius:10px; }
+.prow[data-state="added"], .prow[data-state="dup"] { border-style:dashed; }
+.prow[data-state="fail"] { border-color:var(--danger); }
+.prow-thumb { flex:none; width:56px; height:56px; border-radius:8px; overflow:hidden; display:flex; align-items:center; justify-content:center;
+  background:repeating-conic-gradient(var(--check) 0 25%, transparent 0 50%) 0 0 / 12px 12px; font-size:11px; color:var(--ink-faint); }
+.prow-thumb img { width:100%; height:100%; object-fit:contain; display:block; }
+.prow-main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:4px; }
+.prow-meta { display:flex; align-items:baseline; gap:8px; min-width:0; }
+.prow-src { flex:1 1 auto; min-width:0; }
+.prow-msg { font-size:12px; color:var(--danger); overflow-wrap:anywhere; }
+.prow[data-state="dup"] .prow-msg { color:var(--warn); }
+.prow[data-state="busy"] .tag { animation:pulse 1s ease-in-out infinite alternate; }
+@keyframes pulse { from { opacity:1; } to { opacity:.35; } }
+.pending-foot { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:12px; }
+
+/* ── 表情库：两个标签页（分段按钮）+ 搜索；卡片网格 ── */
+.lib-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+.tabs { display:inline-flex; padding:3px; gap:3px; border-radius:10px; background:var(--hairline); flex:none; }
+.tab { border:none; background:transparent; color:var(--ink-soft); font-family:var(--font-body); font-size:14px;
+  padding:6px 12px; border-radius:8px; cursor:pointer; white-space:nowrap; }
+.tab[aria-selected="true"] { background:var(--card); color:var(--ink); font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.12); }
+.tab-count { margin-left:6px; font-size:12px; font-weight:400; color:var(--ink-faint); font-variant-numeric:tabular-nums; }
+.search { flex:1 1 200px; }
+.lib-tools { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+.switch { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--ink-soft); cursor:pointer; }
+.switch input { width:auto; min-height:0; padding:0; margin:0; accent-color:var(--wxgreen); }
+.grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
+.scard { border:1px solid var(--hairline-strong); border-radius:12px; overflow:hidden; min-width:0;
+  display:flex; flex-direction:column; transition:box-shadow .15s; }
+.scard:hover { box-shadow:0 4px 14px rgba(0,0,0,.08); }
+.scard[data-busy="1"] { opacity:.6; }
+.thumb { position:relative; aspect-ratio:1 / 1; overflow:hidden; display:flex; align-items:center; justify-content:center;
+  background:repeating-conic-gradient(var(--check) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+.thumb img { width:100%; height:100%; object-fit:contain; display:block; opacity:0; transition:opacity .25s, filter .2s; }
+.thumb img[data-loaded="1"] { opacity:1; }
+.grid[data-blur="1"] .thumb img { filter:blur(14px); }
+.thumb-note { padding:8px; font-size:12px; color:var(--warn); text-align:center; }
+.scard-body { padding:8px 10px 10px; display:flex; flex-direction:column; gap:4px; flex:1 1 auto; }
+.scard-label { font-weight:600; font-size:14px; overflow-wrap:anywhere; }
+.scard-meta { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.scard-meta .tag { white-space:normal; overflow-wrap:anywhere; }
+.scard-actions { display:flex; gap:6px; margin-top:auto; padding-top:4px; }
+.scard-actions .btn { flex:1 1 0; min-width:0; padding:6px 8px; font-size:13px; }
+.scard-edit { display:flex; flex-direction:column; gap:6px; }
+.empty { padding:18px 4px; text-align:center; }
+
+@media (prefers-reduced-motion: reduce) {
+  .thumb img, .scard, .btn { transition:none; }
+  .prow[data-state="busy"] .tag { animation:none; }
+}
+
+/* ── 手机（≤430px）：窄留白、两列卡片、控件字号 16px、触控目标不小于 44px ── */
+@media (max-width:430px) {
+  .stk-top { padding:12px 14px; gap:8px; }
+  .stk-top .row { gap:8px; }
+  .wrap { padding:0 14px; margin:14px auto; }
+  .panel { padding:14px; }
+  .btn { min-height:44px; }
+  select, input, textarea { min-height:44px; font-size:16px; }
+  .icon-btn { width:44px; height:44px; }
+  .banner.notice .icon-btn { margin:-9px -10px -9px 0; }
+  .stk-top .banner.notice { left:14px; right:14px; }
+  .target { grid-template-columns:1fr; }
+  .pending-foot .btn { flex:1 1 auto; }
+  .tabs { display:flex; width:100%; }
+  .tab { flex:1 1 0; min-height:44px; }
+  .search { flex-basis:100%; }
+  .grid { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+  .scard-body { padding:8px; }
+}
+
+/* ── 桌面（≥1024px）：容器更舒展 ── */
+@media (min-width:1024px) {
+  .stk-top, .wrap { max-width:1024px; }
+}
+</style>
+</head>
+<body>
+<div class="stk-nav">{% include "_console_nav.html" %}</div>
+
+<div class="stk-top">
+  <div class="title-line"><h1>表情包</h1><span class="counts" id="countsLine"></span></div>
+  <div class="row">
+    <a class="btn btn-ghost" href="/console">总览</a>
+    <button type="button" class="btn btn-ghost" id="reloadBtn">刷新</button>
+  </div>
+  <!-- 操作结果：放在吸顶的顶栏里（悬浮在按钮下方），页面滚到哪里都看得见；留到下一次操作时被替换或被点掉。关闭只在页面内隐藏。 -->
+  <div id="opMsg" class="banner notice" role="status" hidden><span class="notice-text" id="opMsgText"></span><button type="button" class="icon-btn" id="opMsgClose" aria-label="关闭这条提示"></button></div>
+</div>
+
+<div class="wrap">
+  <div id="banners"></div>
+  <div class="hint" id="loadingHint">正在读取…</div>
+
+  <!-- 添加区：先选目标档（成人档另选分类），再从三个入口把图片放进待加清单，最后「全部加入」一行一行地传 -->
+  <section class="panel" id="addPanel" hidden>
+    <h2>添加表情</h2>
+    <div class="target">
+      <div class="field"><label for="targetGroup">加到哪一档</label><select id="targetGroup"><option value="sfw">普通（sfw）</option><option value="nsfw">成人（nsfw）</option></select></div>
+      <div class="field" id="categoryField" hidden><label for="targetCategory">分类</label><select id="targetCategory"></select></div>
+      <div class="field" id="newCategoryField" hidden><label for="newCategory">新分类</label><input type="text" id="newCategory" autocomplete="off" placeholder="写新分类的名字"></div>
+    </div>
+    <div class="entries">
+      <button type="button" class="btn btn-ghost" id="pickFilesBtn">选图片</button>
+      <button type="button" class="btn btn-ghost" id="pickFolderBtn">选文件夹</button>
+      <button type="button" class="btn btn-ghost" id="linksBtn" aria-expanded="false" aria-controls="linksBox">贴链接</button>
+    </div>
+    <input type="file" class="picker" id="filesInput" tabindex="-1" aria-hidden="true" multiple accept="image/gif,image/jpeg,image/png,image/webp,.gif,.jpg,.jpeg,.png,.webp">
+    <input type="file" class="picker" id="folderInput" tabindex="-1" aria-hidden="true" webkitdirectory multiple>
+    <div class="hint" id="folderHint" hidden></div>
+    <div class="links-box" id="linksBox" hidden>
+      <div class="field"><label for="linksInput">一行一个图片链接（http 或 https，要是图片本身的地址）</label><textarea id="linksInput" rows="4" autocomplete="off" spellcheck="false"></textarea></div>
+      <div class="row"><button type="button" class="btn btn-primary" id="addLinksBtn">加到清单</button><button type="button" class="btn btn-ghost" id="closeLinksBtn">收起</button></div>
+    </div>
+    <div class="hint add-hint" id="labelHint"></div>
+
+    <div class="pending" id="pendingBox" hidden>
+      <div class="pending-head"><h3>待加清单 <span class="counts" id="pendingCount"></span></h3><button type="button" class="btn btn-ghost" id="clearDoneBtn" hidden>清掉已完成的</button></div>
+      <div class="prows" id="pendingRows"></div>
+      <div class="pending-foot"><button type="button" class="btn btn-primary" id="addAllBtn">全部加入</button><span class="hint" id="progressLine" role="status"></span></div>
+    </div>
+  </section>
+
+  <!-- 表情库：两个标签页各一张网格；搜索只按标签和分类过滤，隐藏不匹配的卡片，不重画（缩略图不重新加载） -->
+  <section class="panel" id="libPanel" hidden>
+    <div class="lib-head">
+      <div class="tabs" role="tablist" aria-label="分档">
+        <button type="button" class="tab" role="tab" id="tab-sfw" data-group="sfw" aria-selected="true" aria-controls="grid-sfw">普通（sfw）<span class="tab-count" data-role="tab-count"></span></button>
+        <button type="button" class="tab" role="tab" id="tab-nsfw" data-group="nsfw" aria-selected="false" aria-controls="grid-nsfw">成人（nsfw）<span class="tab-count" data-role="tab-count"></span></button>
+      </div>
+      <input type="search" class="search" id="searchInput" placeholder="按标签或分类找" aria-label="按标签或分类找" autocomplete="off">
+    </div>
+    <div class="lib-tools" id="nsfwTools" hidden><label class="switch"><input type="checkbox" id="showThumbs">显示缩略图</label><span class="hint">成人档的缩略图默认模糊；这个开关不记住，下次打开仍是模糊。</span></div>
+    <div class="hint" id="incompleteHint" hidden></div>
+    <div class="grid" id="grid-sfw" role="tabpanel" aria-labelledby="tab-sfw" data-group="sfw" data-blur="0"></div>
+    <div class="grid" id="grid-nsfw" role="tabpanel" aria-labelledby="tab-nsfw" data-group="nsfw" data-blur="1" hidden></div>
+    <div class="hint empty" id="emptyHint" hidden></div>
+  </section>
+</div>
+
+<!-- 改分类时的候选（现有分类），运行期按列表接口填 -->
+<datalist id="categoryList"></datalist>
+
+<!-- 运行期由脚本克隆并填值的结构（一律以纯文本写入，不拼接任何标记）。 -->
+<template id="rowTpl"><div class="prow" data-role="row" data-key="" data-state="wait"><div class="prow-thumb" data-role="row-thumb"></div><div class="prow-main"><input type="text" data-role="row-label" placeholder="写标签：这张表达什么" aria-label="标签" autocomplete="off"><div class="prow-meta"><span class="tag" data-role="row-state"></span><span class="mono prow-src" data-role="row-src"></span></div><div class="prow-msg" data-role="row-msg" hidden></div></div><button type="button" class="icon-btn" data-role="row-del" aria-label="去掉这一行"></button></div></template>
+<template id="cardTpl"><article class="scard" data-role="card" data-id="" data-busy="0"><div class="thumb" data-role="thumb"><img data-role="thumb-img" alt="" loading="lazy" decoding="async"><div class="thumb-note" data-role="thumb-note" hidden></div></div><div class="scard-body"><div class="scard-label" data-role="label"></div><div class="scard-meta"><span class="tag" data-role="category" hidden></span><span class="hint" data-role="size"></span></div><div class="scard-edit" data-role="edit" hidden><input type="text" data-role="edit-label" aria-label="标签" autocomplete="off"><input type="text" data-role="edit-category" aria-label="分类" list="categoryList" autocomplete="off" hidden><div class="field-err" data-role="edit-err" role="alert" hidden></div><div class="scard-actions"><button type="button" class="btn btn-primary" data-role="edit-save">保存</button><button type="button" class="btn btn-ghost" data-role="edit-cancel">取消</button></div></div><div class="scard-actions" data-role="actions"><button type="button" class="btn btn-ghost" data-role="card-action" data-action="edit">改标签</button><button type="button" class="btn btn-danger" data-role="card-action" data-action="remove">移除</button></div></div></article></template>
+
+<script id="uxLogic">
+// 界面里的判断与文案：这一块只有纯函数与常量，不碰页面节点、不发请求、不读时钟，
+// 所以可以把它的原文单独交给任意 JS 引擎执行来验证。页面主脚本只通过 StickersUX.<函数> 使用它们。
+// 接口与用户输入的文字（标签、分类、链接、文件名、message）在这里只做拼接，写进页面时一律用 textContent / value。
+var StickersUX = (function () {
+  'use strict';
+
+  const GROUPS = ['sfw', 'nsfw'];
+  const GROUP_TEXT = {sfw: '普通（sfw）', nsfw: '成人（nsfw）'};
+  const GROUP_SHORT = {sfw: '普通', nsfw: '成人'};
+  const MAX_BYTES = 10485760;      // 与后端一致：单张不超过 10 MiB
+  const MAX_LABEL = 60;            // 标签、分类去首尾空白后 1 到 60 字（按字符数，不按字节）
+  const MAX_URL = 2048;
+  const IMG_PREFIX = '/console/stickers/img/';
+  const API_BASE = '/api/console/stickers';
+
+  const GENERIC_FAIL_TEXT = '操作没有成功，请稍后再试。';
+  const NETWORK_FAIL_TEXT = '网络错误，没有收到回应。';
+  const NO_CHANGE_TEXT = '没有改动。';
+  const HINT_TEXT = '标签写清这张表达什么，比如「生气 2」「害羞捂脸」，bot 靠标签挑表情。新加的表情，bot 下次读表情库时就能用上。';
+  const FOLDER_TEXT = '手机上请用「选图片」，可多选。';
+  const MISSING_TEXT = '图片文件不在了';
+  // 接口没给 message 时按错误码补一句；键与接口的错误码表一致
+  const CODE_TEXT = {invalid: '内容不合规。', too_large: '文件太大，超过上限。', unsupported_type: '不是 GIF、JPG、PNG、WEBP 图片。',
+    duplicate: '库里已经有这张了。', not_found: '找不到这一条，可能已经被移除了。', ambiguous: '同一档里有不止一条同名的，没法确定是哪一条。',
+    bad_url: '链接不对。', blocked_host: '这个地址不允许访问。', fetch_failed: '下载失败。', timeout: '下载超时。',
+    library_broken: '表情库文件坏了。', internal: '服务出错了。'};
+  // 待加清单每行的状态：短词与标签样式（样式名沿用 .tag 的 ok / local / bad）
+  const ROW_STATE = {wait: {text: '等待', kind: ''}, busy: {text: '上传中', kind: 'local'},
+    added: {text: '已加入', kind: 'ok'}, dup: {text: '已有', kind: 'local'}, fail: {text: '失败', kind: 'bad'}};
+
+  // 按 MIME 定类型；MIME 为空或是通用的二进制类型时才看扩展名
+  const MIME_KIND = {'image/gif': 'gif', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/pjpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp'};
+  const EXT_KIND = {gif: 'gif', jpg: 'jpg', jpeg: 'jpg', jfif: 'jpg', png: 'png', webp: 'webp'};
+  const HEIC_EXT = ['heic', 'heif', 'hif'];
+
+  // 名字无意义的几种情形：相机 / 截图 / 聊天软件导出的前缀；整串都是数字；十六进制串；常见的泛称
+  const CAMERA_RE = [/^img(?:[_-]|\s?\d)/i, /^dsc[a-z]?[_\s-]?\d/i, /^pxl[_-]/i, /^mvimg[_-]/i, /^vid[_-]/i,
+    /^screen\s?shot/i, /^snipaste/i, /^mmexport/i, /^wx[_-]?camera/i, /^photo[_\s-]?\d/i, /^mtxx/i, /^image[_\s-]?\d/i,
+    /^微信图片/, /^(截屏|截图|屏幕截图|屏幕快照)/, /^(qq|tim)(截图|图片)/i];
+  const GENERIC_RE = /^(image|img|photo|picture|pic|download|downloaded|unnamed|untitled|file|giphy|tenor|original|large|raw|sticker|emoji|gif|下载|图片|图像|未命名|无标题|表情|表情包)(\s?\(?\d+\)?)?$/i;
+  // 换行与控制字符（含 C1 段与 Unicode 行 / 段分隔符）
+  const CTRL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+  const text = (v) => (v === null || v === undefined ? '' : String(v));
+  const list = (v) => (Array.isArray(v) ? v : []);
+  const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+  const obj = (v) => (isObj(v) ? v : {});
+  const own = (map, key) => Object.prototype.hasOwnProperty.call(map, key);
+  const fail = (why) => ({ok: false, error: why});
+  const chars = (s) => Array.from(text(s));
+
+  // ── 档 ──
+  function isGroup(g) { return GROUPS.indexOf(text(g)) >= 0; }
+  function groupText(g) { return own(GROUP_TEXT, text(g)) ? GROUP_TEXT[text(g)] : text(g); }
+  function groupShort(g) { return own(GROUP_SHORT, text(g)) ? GROUP_SHORT[text(g)] : text(g); }
+
+  // ── 列表接口 → 页面用的形状：不合形状的条目不画；数字、布尔按约定取，缺的给安全的默认值 ──
+  function normalizeItem(group, it) {
+    const x = obj(it);
+    const file = text(x.file);
+    return {id: text(x.id) || group + '/' + file, group: group, label: text(x.label), url: text(x.url), file: file,
+      category: group === 'nsfw' && text(x.category) ? text(x.category) : null,
+      size: typeof x.size === 'number' && Number.isFinite(x.size) ? x.size : null,
+      missing: x.missing === true, img: text(x.img)};
+  }
+  function listView(body) {
+    const b = obj(body);
+    const groups = {};
+    for (const g of GROUPS) groups[g] = list(obj(b.groups)[g]).filter(isObj).map((it) => normalizeItem(g, it));
+    const seen = new Set();
+    const categories = [];
+    for (const c of list(b.categories)) {
+      const s = text(c);
+      if (s && !seen.has(s)) { seen.add(s); categories.push(s); }
+    }
+    const inc = obj(b.incomplete);
+    const lim = obj(b.limits);
+    const max = Number(lim.max_bytes);
+    return {groups: groups, categories: categories,
+      incomplete: {sfw: Math.max(0, Number(inc.sfw) || 0), nsfw: Math.max(0, Number(inc.nsfw) || 0)},
+      maxBytes: Number.isFinite(max) && max > 0 ? max : MAX_BYTES};
+  }
+  // 读列表的结果：库文件坏了单独说明，写入一律不开放
+  function loadPlan(r) {
+    const x = obj(r);
+    const b = obj(x.body);
+    const msg = text(b.message).trim();
+    if (x.ok && b.ok === true && isObj(b.groups)) return {ok: true, broken: false, text: ''};
+    if (text(b.code) === 'library_broken') {
+      return {ok: false, broken: true, text: '表情库文件读不了：' + (msg || CODE_TEXT.library_broken) + ' 修好之前，这里不能添加、修改或移除。'};
+    }
+    return {ok: false, broken: false,
+      text: '读取表情库失败：' + (msg || (x.status ? 'HTTP ' + x.status : NETWORK_FAIL_TEXT)) + ' 请刷新重试。'};
+  }
+  function countsText(view) {
+    const g = obj(obj(view).groups);
+    return GROUPS.map((k) => groupShort(k) + ' ' + list(g[k]).length).join(' · ');
+  }
+  // 标签页上的数字：没在搜时是条数；在搜时是「匹配数/条数」
+  function tabCount(shown, total, searching) {
+    return searching ? (Number(shown) || 0) + '/' + (Number(total) || 0) : String(Number(total) || 0);
+  }
+  function incompleteText(view) {
+    const inc = obj(obj(view).incomplete);
+    const parts = GROUPS.filter((g) => Number(inc[g]) > 0).map((g) => groupShort(g) + ' ' + Number(inc[g]) + ' 条');
+    if (!parts.length) return '';
+    return '另有不完整的条目（缺标签或图片路径）：' + parts.join('、') + '。这里不显示，也不会改动它们。';
+  }
+  function emptyText(group, query) {
+    const q = text(query).trim();
+    return q ? '没有符合「' + q + '」的表情。' : groupShort(group) + '这一档还没有表情。';
+  }
+
+  // ── 卡片 ──
+  function sizeText(bytes) {
+    const n = Number(bytes);
+    if (bytes === null || bytes === undefined || bytes === '' || !Number.isFinite(n) || n < 0) return '';
+    if (n < 1024) return Math.round(n) + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+  // 缩略图地址：接口给的 img 在图片路由下就用它，否则按档与文件名自己拼（两段都做百分号编码）
+  function thumbUrl(item) {
+    const it = obj(item);
+    const img = text(it.img);
+    if (img.indexOf(IMG_PREFIX) === 0 && !/[\s"'<>\\]/.test(img)) return img;
+    return IMG_PREFIX + encodeURIComponent(text(it.group)) + '/' + encodeURIComponent(text(it.file));
+  }
+  function itemApiUrl(item) {
+    const it = obj(item);
+    return API_BASE + '/' + encodeURIComponent(text(it.group)) + '/' + encodeURIComponent(text(it.file));
+  }
+  function filterItems(items, query) {
+    const terms = text(query).toLowerCase().split(/\s+/).filter(Boolean);
+    const arr = list(items);
+    if (!terms.length) return arr.slice();
+    return arr.filter((it) => {
+      const hay = (text(obj(it).label) + ' ' + text(obj(it).category)).toLowerCase();
+      return terms.every((t) => hay.indexOf(t) >= 0);
+    });
+  }
+  function removeConfirmText(item) {
+    const it = obj(item);
+    return '移除「' + text(it.label) + '」？\n图片会挪进回收目录，不会删掉；移除后 bot 就挑不到这张了。';
+  }
+
+  // ── 标签与分类 ──
+  function validateText(v, what) {
+    const s = text(v).trim();
+    if (!s) return fail('请写' + what + '。');
+    if (CTRL_RE.test(s)) return fail(what + '里不能有换行或控制字符。');
+    const n = chars(s).length;
+    if (n > MAX_LABEL) return fail(what + '最多 ' + MAX_LABEL + ' 个字，现在 ' + n + ' 个。');
+    return {ok: true, value: s};
+  }
+  function validateLabel(v) { return validateText(v, '标签'); }
+  function validateCategory(v) { return validateText(v, '分类'); }
+  // 目标档：只许 sfw / nsfw；nsfw 必须带分类，sfw 不带
+  function checkTarget(group, category) {
+    const g = text(group);
+    if (!isGroup(g)) return fail('请选要加到哪一档。');
+    if (g !== 'nsfw') return {ok: true, group: g, category: null};
+    if (!text(category).trim()) return fail('加到成人档要先选一个分类。');
+    const c = validateCategory(category);
+    return c.ok ? {ok: true, group: g, category: c.value} : c;
+  }
+  // 分类下拉：首项是「请选择分类」，中间是现有分类（去重、保持先后），末项是「新分类…」（选它时另填）
+  function categoryOptions(categories) {
+    const seen = new Set();
+    const out = [{kind: 'pick', value: '', label: '请选择分类'}];
+    for (const c of list(categories)) {
+      const s = text(c);
+      if (!s || seen.has(s)) continue;
+      seen.add(s);
+      out.push({kind: 'cat', value: s, label: s});
+    }
+    out.push({kind: 'new', value: '', label: '新分类…'});
+    return out;
+  }
+  function pickedCategory(isNew, selected, custom) { return isNew === true ? text(custom) : text(selected); }
+  // 改标签（nsfw 连同分类）：只带改了的键；原来就没有分类、这次也没填的，不算改
+  function buildPatchBody(item, input) {
+    const it = obj(item);
+    const x = obj(input);
+    const l = validateLabel(x.label);
+    if (!l.ok) return l;
+    const body = {};
+    if (l.value !== text(it.label)) body.label = l.value;
+    if (text(it.group) === 'nsfw' && !(text(x.category).trim() === '' && text(it.category) === '')) {
+      const c = validateCategory(x.category);
+      if (!c.ok) return c;
+      if (c.value !== text(it.category)) body.category = c.value;
+    }
+    if (!Object.keys(body).length) return {ok: false, unchanged: true, error: NO_CHANGE_TEXT};
+    return {ok: true, body: body};
+  }
+
+  // ── 默认标签：从文件名或链接里取；名字没有意义时给空串，让人自己写 ──
+  function stripExt(name) { return text(name).replace(/\.[A-Za-z][A-Za-z0-9]{0,4}$/, ''); }
+  function baseName(name) { const parts = text(name).split(/[\\/]/); return parts[parts.length - 1].trim(); }
+  function meaningless(raw, cleaned) {
+    if (!cleaned) return true;
+    if (CAMERA_RE.some((re) => re.test(raw))) return true;
+    if (/^[\d\s()]+$/.test(cleaned)) return true;                                   // 纯数字（含空格、括号）
+    const compact = cleaned.replace(/\s+/g, '');
+    if (/^[0-9a-f]{6,}$/i.test(compact)) return true;                                // 6 位以上的十六进制串
+    if (/^[A-Za-z0-9]{6,}$/.test(compact) && /\d/.test(compact) && /[a-z]/.test(compact) && /[A-Z]/.test(compact)) return true;  // 大小写字母混数字的随机编号
+    return GENERIC_RE.test(cleaned);
+  }
+  function defaultLabelFromName(name) {
+    const raw = stripExt(baseName(name)).trim();
+    const cleaned = raw.replace(/[_.-]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (meaningless(raw, cleaned)) return '';
+    return chars(cleaned).slice(0, MAX_LABEL).join('').trim();
+  }
+  // 链接取路径的最后一段（百分号解码），查询串与井号后面不看
+  function defaultLabelFromUrl(url) {
+    const m = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*([^?#]*)/i.exec(text(url).trim());
+    const segs = (m ? m[1] : '').split('/').filter(Boolean);
+    if (!segs.length) return '';
+    let last = segs[segs.length - 1];
+    try { last = decodeURIComponent(last); } catch (e) { /* 编码坏了就用原样 */ }
+    return defaultLabelFromName(last);
+  }
+
+  // ── 选文件、贴链接 ──
+  function fileExt(name) { const m = /\.([A-Za-z0-9]{1,5})$/.exec(text(name).trim()); return m ? m[1].toLowerCase() : ''; }
+  function fileKind(name, type) {
+    const t = text(type).trim().toLowerCase();
+    if (own(MIME_KIND, t)) return MIME_KIND[t];
+    if (t && t !== 'application/octet-stream') return '';
+    const e = fileExt(name);
+    return own(EXT_KIND, e) ? EXT_KIND[e] : '';
+  }
+  function isAcceptedFile(name, type) { return fileKind(name, type) !== ''; }
+  function isHeic(name, type) {
+    return /^image\/hei[cf](-sequence)?$/i.test(text(type).trim()) || HEIC_EXT.indexOf(fileExt(name)) >= 0;
+  }
+  function isTooLarge(size, maxBytes) {
+    const max = Number(maxBytes) > 0 ? Number(maxBytes) : MAX_BYTES;
+    return Number(size) > max;
+  }
+  function tooLargeText(maxBytes) {
+    return '超过 ' + sizeText(Number(maxBytes) > 0 ? Number(maxBytes) : MAX_BYTES) + ' 上限，不能加。';
+  }
+  function isHttpUrl(s) {
+    const v = text(s).trim();
+    return v.length > 0 && v.length <= MAX_URL && /^https?:\/\/[^\s/?#]+[^\s]*$/i.test(v);
+  }
+  // 一行一个：去空行、去首尾空白、只留 http / https、去重（各自保持先后）
+  function parseLinks(input) {
+    const ok = [];
+    const bad = [];
+    const seenOk = new Set();
+    const seenBad = new Set();
+    for (const line of text(input).split(/\r\n|\r|\n/)) {
+      const s = line.trim();
+      if (!s) continue;
+      if (isHttpUrl(s)) {
+        if (!seenOk.has(s)) { seenOk.add(s); ok.push(s); }
+      } else if (!seenBad.has(s)) { seenBad.add(s); bad.push(s); }
+    }
+    return {ok: ok, bad: bad};
+  }
+  function badLinksText(bad) {
+    const b = list(bad);
+    if (!b.length) return '';
+    const head = b.slice(0, 3).map((s) => (chars(s).length > 40 ? chars(s).slice(0, 40).join('') + '…' : text(s)));
+    return '有 ' + b.length + ' 行不是 http / https 链接，没有加：' + head.join('、') + (b.length > 3 ? ' 等' : '') + '。';
+  }
+  // 清单里认同一张的依据：文件看名字、大小、修改时间；链接看去首尾空白后的原文
+  function fileKey(name, size, lastModified) { return 'f:' + text(name) + ':' + text(size) + ':' + text(lastModified); }
+  function linkKey(url) { return 'u:' + text(url).trim(); }
+  // 选完文件 / 贴完链接后的那句话：c = {added, skipped, heic, tooLarge, already, bad}
+  function pickSummary(c, maxBytes) {
+    const x = obj(c);
+    const n = (k) => Math.max(0, Number(x[k]) || 0);
+    const parts = [];
+    if (n('added')) parts.push('加了 ' + n('added') + ' 行到待加清单');
+    if (n('skipped')) {
+      parts.push('跳过 ' + n('skipped') + ' 个不是 GIF / JPG / PNG / WEBP 的文件'
+        + (n('heic') ? '（其中 ' + n('heic') + ' 个是 HEIC，请先转成 JPG）' : ''));
+    }
+    if (n('tooLarge')) parts.push(n('tooLarge') + ' 个超过 ' + sizeText(Number(maxBytes) > 0 ? Number(maxBytes) : MAX_BYTES) + '，已标为失败');
+    if (n('already')) parts.push(n('already') + ' 个已在清单里，没再加');
+    if (n('bad')) parts.push(n('bad') + ' 行不是链接，没有加');
+    if (!parts.length) return {kind: 'warn', text: '没有选到图片。'};
+    const kind = n('added') && !n('skipped') && !n('tooLarge') && !n('bad') ? 'ok' : 'warn';
+    return {kind: kind, text: parts.join('；') + '。'};
+  }
+  function folderHint(supported, coarse) { return supported !== true || coarse === true ? FOLDER_TEXT : ''; }
+  // 读文件得到的 data: 地址 → 纯 base64；不是 base64 形式的给空串
+  function base64FromDataUrl(s) {
+    const v = text(s);
+    const i = v.indexOf(';base64,');
+    return v.indexOf('data:') === 0 && i >= 0 ? v.slice(i + 8) : '';
+  }
+
+  // ── 请求体 ──
+  // input = {group, category, label, filename, data}；键序：group, label, category?, filename, data
+  function buildUploadBody(input) {
+    const x = obj(input);
+    const t = checkTarget(x.group, x.category);
+    if (!t.ok) return t;
+    const l = validateLabel(x.label);
+    if (!l.ok) return l;
+    const data = text(x.data);
+    if (!data) return fail('读不到这个文件的内容。');
+    const body = {group: t.group, label: l.value};
+    if (t.category !== null) body.category = t.category;
+    body.filename = baseName(x.filename) || 'image';
+    body.data = data;
+    return {ok: true, body: body};
+  }
+  // input = {group, category, label, url}
+  function buildLinkBody(input) {
+    const x = obj(input);
+    const t = checkTarget(x.group, x.category);
+    if (!t.ok) return t;
+    const l = validateLabel(x.label);
+    if (!l.ok) return l;
+    const url = text(x.url).trim();
+    if (!isHttpUrl(url)) return fail('链接要以 http 或 https 开头，中间没有空格，且不超过 ' + MAX_URL + ' 个字符。');
+    const body = {group: t.group, label: l.value};
+    if (t.category !== null) body.category = t.category;
+    body.url = url;
+    return {ok: true, body: body};
+  }
+
+  // ── 结果 ──
+  // r = {ok, status, body}：以响应体里的 ok 判成败；失败优先显示接口的 message，没有就按错误码、再按 HTTP 状态
+  function failureText(r) {
+    const x = obj(r);
+    const b = obj(x.body);
+    const msg = text(b.message).trim();
+    if (msg) return '失败：' + msg;
+    if (own(CODE_TEXT, text(b.code))) return '失败：' + CODE_TEXT[text(b.code)];
+    if (!x.status) return '失败：' + NETWORK_FAIL_TEXT;
+    if (x.status === 413) return '失败：' + CODE_TEXT.too_large;
+    return '失败：' + GENERIC_FAIL_TEXT + '（HTTP ' + x.status + '）';
+  }
+  // 待加清单一行的结果：已加入 / 已有（写出库里那条的档和标签）/ 失败（附原因）
+  function addResult(r) {
+    const x = obj(r);
+    const b = obj(x.body);
+    if (x.ok && b.ok === true) return {state: 'added', text: '已加入'};
+    if (text(b.code) === 'duplicate') {
+      const e = obj(b.existing);
+      const where = groupShort(e.group);
+      const label = text(e.label).trim();
+      return {state: 'dup', text: '库里已有' + (where ? '：' + where + '档' : '') + (label ? '「' + label + '」' : '')};
+    }
+    return {state: 'fail', text: failureText(x)};
+  }
+  function rowBadge(state) {
+    const s = own(ROW_STATE, text(state)) ? ROW_STATE[text(state)] : ROW_STATE.wait;
+    return {text: s.text, kind: s.kind};
+  }
+  function isDone(state) { return state === 'added' || state === 'dup'; }
+  function shouldSend(state) { return state === 'wait' || state === 'fail'; }
+  // 离开页面要不要提醒：正在上传，或清单里还有没加成的行
+  function needsLeaveWarning(states, uploading) {
+    return uploading === true || list(states).some((s) => !isDone(s));
+  }
+  function progressText(done, total) { return '正在加入… ' + (Number(done) || 0) + '/' + (Number(total) || 0); }
+  // 全部做完后的汇总：results 是每行的状态（字符串或 {state}）
+  function summarize(results) {
+    const n = {added: 0, dup: 0, fail: 0};
+    for (const r of list(results)) {
+      const s = typeof r === 'string' ? r : text(obj(r).state);
+      if (own(n, s)) n[s] += 1;
+    }
+    const parts = [];
+    if (n.added) parts.push('已加入 ' + n.added + ' 张');
+    if (n.dup) parts.push('已有 ' + n.dup + ' 张（库里本来就有，没再加）');
+    if (n.fail) parts.push('失败 ' + n.fail + ' 张（原因写在各行）');
+    let kind = 'warn';
+    if (n.fail) kind = n.added || n.dup ? 'warn' : 'err';
+    else if (n.added) kind = 'ok';
+    return {kind: kind, text: parts.length ? parts.join('，') + '。' : '没有要加的行。', added: n.added, dup: n.dup, fail: n.fail};
+  }
+  function patchResult(r) {
+    const x = obj(r);
+    const b = obj(x.body);
+    if (x.ok && b.ok === true) return {kind: 'ok', text: '已改好。'};
+    return {kind: 'err', text: failureText(x)};
+  }
+  function removeResult(r, item) {
+    const x = obj(r);
+    const b = obj(x.body);
+    const name = '「' + text(obj(item).label) + '」';
+    if (!(x.ok && b.ok === true)) return {kind: 'err', text: failureText(x)};
+    if (b.moved === false) return {kind: 'warn', text: '已从表情库移除' + name + '，但图片没能挪进回收目录，还留在原处。'};
+    return {kind: 'ok', text: '已移除' + name + '。'};
+  }
+
+  return {
+    GROUPS, GROUP_TEXT, MAX_BYTES, MAX_LABEL, API_BASE, GENERIC_FAIL_TEXT, NETWORK_FAIL_TEXT, NO_CHANGE_TEXT, HINT_TEXT, FOLDER_TEXT, MISSING_TEXT,
+    isGroup, groupText, groupShort, normalizeItem, listView, loadPlan, countsText, tabCount, incompleteText, emptyText,
+    sizeText, thumbUrl, itemApiUrl, filterItems, removeConfirmText,
+    validateLabel, validateCategory, checkTarget, categoryOptions, pickedCategory, buildPatchBody,
+    defaultLabelFromName, defaultLabelFromUrl,
+    isAcceptedFile, isHeic, isTooLarge, tooLargeText, isHttpUrl, parseLinks, badLinksText, fileKey, linkKey, pickSummary,
+    folderHint, base64FromDataUrl, buildUploadBody, buildLinkBody,
+    failureText, addResult, rowBadge, isDone, shouldSend, needsLeaveWarning, progressText, summarize, patchResult, removeResult,
+  };
+})();
+if (typeof window !== 'undefined') window.StickersUX = StickersUX;
+</script>
+
+<script>
+const _origFetch = fetch;
+const API = StickersUX.API_BASE;
+let VIEW = null;         // 最近一次读到的表情库（StickersUX.listView 的形状）；刷新即以接口当下的返回为准
+let BROKEN = false;      // 表情库文件坏了：添加、修改、移除一律不开放
+let OP_BUSY = false;     // 改标签 / 移除在途：期间卡片上的按钮禁用，防重复点
+let UPLOADING = false;   // 「全部加入」在途：期间添加区、清单、卡片按钮都禁用
+let ACTIVE = 'sfw';      // 当前标签页
+let EDITING = '';        // 正在改标签的那张卡（键见 renderGrids），同一时刻至多一张
+const ROWS = [];         // 待加清单：{key, kind: file|link, file, url, src, label, state, msg, node, preview}
+const CARDS = new Map(); // 卡片键「档#序号」→ 节点；同档里文件名重复的条目也各有一张卡
+const FOLDER_OK = 'webkitdirectory' in document.createElement('input');
+const COARSE = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+const $ = (id) => document.getElementById(id);
+
+async function apiFetch(url, opts) {
+  // 不带请求体的写请求（移除）也按 JSON 发：服务端对浏览器发来的写请求要求 JSON 内容类型，缺了回 415
+  const method = ((opts && opts.method) || 'GET').toUpperCase();
+  if (opts && method !== 'GET' && method !== 'HEAD' && opts.body == null) {
+    opts = Object.assign({}, opts, {
+      headers: Object.assign({'Content-Type': 'application/json'}, opts.headers || {}),
+      body: '{}',
+    });
+  }
+  const res = await _origFetch(url, opts);
+  if (res.status === 401) {
+    location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+    throw new Error('unauthorized');
+  }
+  return res;
+}
+
+async function jsonFetch(url, opts) {
+  const res = await apiFetch(url, opts);
+  let body = null;
+  try { body = await res.json(); } catch (e) { body = null; }
+  return { ok: res.ok, status: res.status, body: body };
+}
+
+// 写请求：网络错误折成 {ok:false, status:0}，交给 StickersUX 统一出文案；未登录照旧跳登录页
+async function sendJson(url, opts) {
+  try {
+    return await jsonFetch(url, opts);
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+    return {ok: false, status: 0, body: null};
+  }
+}
+function postJson(url, body) { return sendJson(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); }
+function patchJson(url, body) { return sendJson(url, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); }
+function deleteJson(url) { return sendJson(url, {method: 'DELETE'}); }   // 体由 apiFetch 补成 {}
+
+function tpl(id) { return document.getElementById(id).content.firstElementChild.cloneNode(true); }
+
+// kind：ok（绿）/ warn（黄）/ err（红）。关闭叉只在页面内隐藏这一条。
+function setOpMsg(text, kind) {
+  const m = document.getElementById('opMsg');
+  m.className = 'banner notice ' + (kind || 'ok');
+  document.getElementById('opMsgText').textContent = text;
+  m.hidden = !text;
+}
+
+function showLoadError(text) {
+  const banners = document.getElementById('banners');
+  let b = banners.querySelector('[data-role="load-error"]');
+  if (!b) {
+    b = document.createElement('div');
+    b.className = 'banner err';
+    b.setAttribute('data-role', 'load-error');
+    banners.prepend(b);
+  }
+  b.textContent = text;
+}
+
+function clearLoadError() {
+  const b = document.getElementById('banners').querySelector('[data-role="load-error"]');
+  if (b) b.remove();
+}
+
+// ── 读列表：库文件坏了时两块都收起、写入不开放；只是没读到（网络等）时保留上一次的内容 ──
+async function load() {
+  let r;
+  try {
+    r = await jsonFetch(API);
+  } catch (e) {
+    if (e && e.message === 'unauthorized') throw e;
+    r = {ok: false, status: 0, body: null};
+  }
+  $('loadingHint').hidden = true;
+  const plan = StickersUX.loadPlan(r);
+  if (!plan.ok) {
+    showLoadError(plan.text);
+    if (plan.broken) { BROKEN = true; VIEW = null; }
+    renderAll();
+    return false;
+  }
+  clearLoadError();
+  BROKEN = false;
+  VIEW = StickersUX.listView(r.body);
+  renderAll();
+  return true;
+}
+
+function renderAll() {
+  const has = !!VIEW && !BROKEN;
+  $('addPanel').hidden = !has;
+  $('libPanel').hidden = !has;
+  $('countsLine').textContent = has ? StickersUX.countsText(VIEW) : '';
+  if (!has) { CARDS.clear(); EDITING = ''; updateControls(); return; }
+  fillCategories();
+  renderGrids();
+  const inc = StickersUX.incompleteText(VIEW);
+  $('incompleteHint').textContent = inc;
+  $('incompleteHint').hidden = !inc;
+  applyFilter();
+  updateControls();
+}
+
+// ── 目标档与分类 ──
+function isNewCategory() {
+  const s = $('targetCategory');
+  const o = s.options[s.selectedIndex];
+  return !!o && o.getAttribute('data-new') === '1';
+}
+function currentCategory() { return StickersUX.pickedCategory(isNewCategory(), $('targetCategory').value, $('newCategory').value); }
+function updateTarget() {
+  const nsfw = $('targetGroup').value === 'nsfw';
+  $('categoryField').hidden = !nsfw;
+  $('newCategoryField').hidden = !(nsfw && isNewCategory());
+}
+// 分类下拉按接口给的现有分类重建，尽量保住原来的选择；刚用「新分类…」加成功的，换成选中这个已有分类
+function fillCategories() {
+  const sel = $('targetCategory');
+  const prev = sel.value;
+  const prevNew = isNewCategory();
+  const typed = $('newCategory').value.trim();
+  sel.replaceChildren();
+  for (const o of StickersUX.categoryOptions(VIEW.categories)) {
+    const opt = document.createElement('option');
+    opt.value = o.value;
+    opt.textContent = o.label;
+    if (o.kind === 'new') opt.setAttribute('data-new', '1');
+    sel.appendChild(opt);
+  }
+  if (prevNew && typed && VIEW.categories.indexOf(typed) >= 0) { sel.value = typed; $('newCategory').value = ''; }
+  else if (prevNew) sel.selectedIndex = sel.options.length - 1;
+  else if (VIEW.categories.indexOf(prev) >= 0) sel.value = prev;
+  const dl = $('categoryList');
+  dl.replaceChildren();
+  for (const c of VIEW.categories) {
+    const opt = document.createElement('option');
+    opt.value = c;
+    dl.appendChild(opt);
+  }
+  updateTarget();
+}
+
+// ── 表情库：卡片 ──
+function renderGrids() {
+  CARDS.clear();
+  EDITING = '';
+  for (const g of StickersUX.GROUPS) {
+    const frag = document.createDocumentFragment();
+    VIEW.groups[g].forEach((it, i) => frag.appendChild(renderCard(it, g + '#' + i)));
+    $('grid-' + g).replaceChildren(frag);
+  }
+}
+
+function renderCard(it, key) {
+  const node = tpl('cardTpl');
+  node.setAttribute('data-id', it.id);
+  node.setAttribute('data-key', key);
+  CARDS.set(key, node);
+  node.querySelector('[data-role="label"]').textContent = it.label;
+  const cat = node.querySelector('[data-role="category"]');
+  cat.textContent = it.category || '';
+  cat.hidden = !it.category;
+  node.querySelector('[data-role="size"]').textContent = StickersUX.sizeText(it.size);
+  const img = node.querySelector('[data-role="thumb-img"]');
+  const note = node.querySelector('[data-role="thumb-note"]');
+  img.alt = it.label;
+  if (it.missing) {
+    img.hidden = true;
+    note.textContent = StickersUX.MISSING_TEXT;
+    note.hidden = false;
+  } else {
+    img.addEventListener('load', () => img.setAttribute('data-loaded', '1'));
+    img.addEventListener('error', () => { img.hidden = true; note.textContent = '缩略图读不出来'; note.hidden = false; });
+    img.src = StickersUX.thumbUrl(it);   // 模板里的 img 已带 loading="lazy"，滚到附近才加载
+  }
+  return node;
+}
+
+function itemOf(node) {
+  const key = (node && node.getAttribute('data-key')) || '';
+  const parts = key.split('#');
+  return VIEW && VIEW.groups[parts[0]] ? VIEW.groups[parts[0]][Number(parts[1])] || null : null;
+}
+
+// 搜索只隐藏不匹配的卡片，不重画；标签页上的数字在搜时写「匹配数/条数」
+function applyFilter() {
+  if (!VIEW) return;
+  const q = $('searchInput').value;
+  const searching = q.trim() !== '';
+  for (const g of StickersUX.GROUPS) {
+    const all = VIEW.groups[g];
+    const keep = new Set(StickersUX.filterItems(all, q));
+    let shown = 0;
+    all.forEach((it, i) => {
+      const n = CARDS.get(g + '#' + i);
+      if (n) n.hidden = !keep.has(it);
+      if (keep.has(it)) shown += 1;
+    });
+    $('tab-' + g).querySelector('[data-role="tab-count"]').textContent = StickersUX.tabCount(shown, all.length, searching);
+    if (g === ACTIVE) {
+      const e = $('emptyHint');
+      e.textContent = shown ? '' : StickersUX.emptyText(g, q);
+      e.hidden = shown > 0;
+    }
+  }
+}
+
+function setTab(g) {
+  ACTIVE = g;
+  for (const x of StickersUX.GROUPS) {
+    const on = x === g;
+    $('tab-' + x).setAttribute('aria-selected', on ? 'true' : 'false');
+    $('tab-' + x).tabIndex = on ? 0 : -1;
+    $('grid-' + x).hidden = !on;
+  }
+  $('nsfwTools').hidden = g !== 'nsfw';
+  applyFilter();
+}
+
+// 成人档缩略图默认模糊；开关只在这一次打开的页面里有效，不存任何地方
+function setBlur(blur) {
+  $('showThumbs').checked = !blur;
+  $('grid-nsfw').setAttribute('data-blur', blur ? '1' : '0');
+}
+
+// 所有按钮的可用与否只在这里定：写操作在途、上传在途、库坏了
+function updateControls() {
+  const lock = OP_BUSY || UPLOADING || BROKEN;
+  for (const b of document.querySelectorAll('[data-role="card-action"]')) b.disabled = lock;
+  $('reloadBtn').disabled = OP_BUSY || UPLOADING;
+  for (const id of ['targetGroup', 'targetCategory', 'newCategory', 'pickFilesBtn', 'pickFolderBtn', 'linksBtn', 'linksInput', 'addLinksBtn', 'closeLinksBtn']) {
+    $(id).disabled = UPLOADING;
+  }
+  for (const row of ROWS) paintRow(row);
+  $('addAllBtn').disabled = lock || !ROWS.some((r) => StickersUX.shouldSend(r.state));
+  $('clearDoneBtn').hidden = !ROWS.some((r) => StickersUX.isDone(r.state));
+  $('clearDoneBtn').disabled = UPLOADING;
+}
+
+// ── 改标签：原地编辑，回车保存，Esc 取消（输入法选字时的回车与 Esc 不算） ──
+function setEditErr(node, text) {
+  const e = node.querySelector('[data-role="edit-err"]');
+  e.textContent = text;
+  e.hidden = !text;
+}
+function openEdit(node, it) {
+  if (OP_BUSY || UPLOADING || BROKEN) return;
+  closeEdit();
+  EDITING = node.getAttribute('data-key');
+  const lab = node.querySelector('[data-role="edit-label"]');
+  const cat = node.querySelector('[data-role="edit-category"]');
+  lab.value = it.label;
+  cat.value = it.category || '';
+  cat.hidden = it.group !== 'nsfw';
+  setEditErr(node, '');
+  node.querySelector('[data-role="edit"]').hidden = false;
+  node.querySelector('[data-role="actions"]').hidden = true;
+  node.querySelector('[data-role="label"]').hidden = true;
+  lab.focus();
+  lab.select();
+}
+function closeEdit() {
+  const node = EDITING ? CARDS.get(EDITING) : null;
+  EDITING = '';
+  if (!node) return;
+  node.querySelector('[data-role="edit"]').hidden = true;
+  node.querySelector('[data-role="actions"]').hidden = false;
+  node.querySelector('[data-role="label"]').hidden = false;
+}
+function setOpBusy(busy, node) {
+  OP_BUSY = busy;
+  if (node) {
+    node.setAttribute('data-busy', busy ? '1' : '0');
+    for (const el of node.querySelectorAll('[data-role="edit"] input, [data-role="edit"] button')) el.disabled = busy;
+  }
+  updateControls();
+}
+async function saveEdit(node) {
+  const it = itemOf(node);
+  if (!it || OP_BUSY || UPLOADING) return;
+  const built = StickersUX.buildPatchBody(it, {
+    label: node.querySelector('[data-role="edit-label"]').value,
+    category: node.querySelector('[data-role="edit-category"]').value,
+  });
+  if (!built.ok) {
+    if (built.unchanged) closeEdit();
+    else setEditErr(node, built.error);
+    return;
+  }
+  setOpBusy(true, node);
+  const r = await patchJson(StickersUX.itemApiUrl(it), built.body);
+  setOpBusy(false, node);
+  const res = StickersUX.patchResult(r);
+  if (res.kind === 'err') { setEditErr(node, res.text); return; }
+  closeEdit();
+  setOpMsg(res.text, res.kind);
+  await load();
+}
+
+// ── 移除：先确认（框里写出这张的标签），再发请求；结果写在顶栏下的提示条，然后重新读列表 ──
+async function removeItem(node, it) {
+  if (OP_BUSY || UPLOADING || BROKEN) return;
+  if (!confirm(StickersUX.removeConfirmText(it))) return;
+  closeEdit();
+  setOpBusy(true, node);
+  const r = await deleteJson(StickersUX.itemApiUrl(it));
+  setOpBusy(false, node);
+  const res = StickersUX.removeResult(r, it);
+  setOpMsg(res.text, res.kind);
+  await load();
+}
+
+// ── 待加清单 ──
+function buildRow(row) {
+  const node = tpl('rowTpl');
+  node.setAttribute('data-key', row.key);
+  const thumb = node.querySelector('[data-role="row-thumb"]');
+  if (row.kind === 'file') {
+    row.preview = URL.createObjectURL(row.file);   // 本地文件用对象地址预览；去掉这一行时收回
+    const img = document.createElement('img');
+    img.alt = '';
+    img.src = row.preview;
+    thumb.appendChild(img);
+  } else {
+    thumb.textContent = '链接';
+  }
+  node.querySelector('[data-role="row-src"]').textContent = row.src;
+  node.querySelector('[data-role="row-label"]').value = row.label;
+  return node;
+}
+function paintRow(row) {
+  const node = row.node;
+  if (!node) return;
+  node.setAttribute('data-state', row.state);
+  const badge = StickersUX.rowBadge(row.state);
+  const tag = node.querySelector('[data-role="row-state"]');
+  tag.className = 'tag' + (badge.kind ? ' ' + badge.kind : '');
+  tag.textContent = badge.text;
+  const msg = node.querySelector('[data-role="row-msg"]');
+  msg.textContent = row.msg;
+  msg.hidden = !row.msg;
+  node.querySelector('[data-role="row-label"]').disabled = UPLOADING || StickersUX.isDone(row.state);
+  node.querySelector('[data-role="row-del"]').disabled = UPLOADING;
+}
+function renderRows() {
+  const frag = document.createDocumentFragment();
+  for (const row of ROWS) frag.appendChild(row.node || (row.node = buildRow(row)));
+  $('pendingRows').replaceChildren(frag);
+  $('pendingBox').hidden = ROWS.length === 0;
+  $('pendingCount').textContent = ROWS.length ? '共 ' + ROWS.length + ' 行' : '';
+  updateControls();
+}
+function dropRow(row) {
+  const i = ROWS.indexOf(row);
+  if (i < 0) return;
+  if (row.preview) URL.revokeObjectURL(row.preview);
+  ROWS.splice(i, 1);
+}
+function rowOf(el) {
+  const node = el.closest('[data-role="row"]');
+  const key = node ? node.getAttribute('data-key') : '';
+  return ROWS.filter((r) => r.key === key)[0] || null;
+}
+
+function maxBytes() { return VIEW ? VIEW.maxBytes : StickersUX.MAX_BYTES; }
+
+// 选图片 / 选文件夹：不是图片的跳过并计数；清单里已有的不重复加；超过上限的先标失败
+function addFiles(files) {
+  const c = {added: 0, skipped: 0, heic: 0, tooLarge: 0, already: 0};
+  const max = maxBytes();
+  for (const f of Array.from(files || [])) {
+    if (!StickersUX.isAcceptedFile(f.name, f.type)) {
+      c.skipped += 1;
+      if (StickersUX.isHeic(f.name, f.type)) c.heic += 1;
+      continue;
+    }
+    const src = f.webkitRelativePath || f.name;
+    const key = StickersUX.fileKey(src, f.size, f.lastModified);
+    if (ROWS.some((r) => r.key === key)) { c.already += 1; continue; }
+    const row = {key: key, kind: 'file', file: f, url: '', src: src, label: StickersUX.defaultLabelFromName(f.name),
+      state: 'wait', msg: '', node: null, preview: ''};
+    if (StickersUX.isTooLarge(f.size, max)) { row.state = 'fail'; row.msg = StickersUX.tooLargeText(max); c.tooLarge += 1; }
+    ROWS.push(row);
+    c.added += 1;
+  }
+  renderRows();
+  const s = StickersUX.pickSummary(c, max);
+  setOpMsg(s.text, s.kind);
+}
+
+// 贴链接：一行一个；不是链接的行留在框里，改好再加
+function addLinks() {
+  const parsed = StickersUX.parseLinks($('linksInput').value);
+  if (!parsed.ok.length && !parsed.bad.length) { setOpMsg('框里还没有链接。', 'warn'); return; }
+  const c = {added: 0, already: 0};
+  for (const url of parsed.ok) {
+    const key = StickersUX.linkKey(url);
+    if (ROWS.some((r) => r.key === key)) { c.already += 1; continue; }
+    ROWS.push({key: key, kind: 'link', file: null, url: url, src: url, label: StickersUX.defaultLabelFromUrl(url),
+      state: 'wait', msg: '', node: null, preview: ''});
+    c.added += 1;
+  }
+  $('linksInput').value = parsed.bad.join('\n');
+  renderRows();
+  const s = StickersUX.pickSummary(c, maxBytes());
+  const bad = StickersUX.badLinksText(parsed.bad);
+  if (bad && !c.added && !c.already) setOpMsg(bad, 'warn');
+  else setOpMsg(s.text + (bad ? '\n' + bad : ''), bad ? 'warn' : s.kind);
+  if (!parsed.bad.length) toggleLinks(false);
+}
+
+function toggleLinks(open) {
+  $('linksBox').hidden = !open;
+  $('linksBtn').setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) $('linksInput').focus();
+}
+
+function readAsBase64(file) {
+  return new Promise((resolve) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(StickersUX.base64FromDataUrl(fr.result));
+    fr.onerror = () => resolve('');
+    fr.readAsDataURL(file);
+  });
+}
+
+// 一行：链接直接交给服务端去下载；本地文件先查大小与标签，再读成 base64（标签不对就不读文件）
+async function sendRow(row, t) {
+  if (row.kind === 'link') {
+    const built = StickersUX.buildLinkBody({group: t.group, category: t.category, label: row.label, url: row.url});
+    if (!built.ok) return {state: 'fail', text: built.error};
+    return StickersUX.addResult(await postJson(API + '/link', built.body));
+  }
+  if (StickersUX.isTooLarge(row.file.size, maxBytes())) return {state: 'fail', text: StickersUX.tooLargeText(maxBytes())};
+  const label = StickersUX.validateLabel(row.label);
+  if (!label.ok) return {state: 'fail', text: label.error};
+  const data = await readAsBase64(row.file);
+  const built = StickersUX.buildUploadBody({group: t.group, category: t.category, label: row.label, filename: row.file.name, data: data});
+  if (!built.ok) return {state: 'fail', text: built.error};
+  return StickersUX.addResult(await postJson(API + '/upload', built.body));
+}
+
+// 全部加入：一行一行地传；某行失败不停，继续下一行；全部做完后给汇总并重新读列表
+async function addAll() {
+  if (UPLOADING || OP_BUSY || BROKEN || !VIEW) return;
+  const t = StickersUX.checkTarget($('targetGroup').value, currentCategory());
+  if (!t.ok) {
+    setOpMsg(t.error, 'err');
+    (isNewCategory() ? $('newCategory') : $('targetCategory')).focus();
+    return;
+  }
+  const todo = ROWS.filter((r) => StickersUX.shouldSend(r.state));
+  if (!todo.length) { setOpMsg('清单里没有要加的行。', 'warn'); return; }
+  for (const row of todo) { row.state = 'wait'; row.msg = ''; }
+  UPLOADING = true;
+  updateControls();
+  let done = 0;
+  $('progressLine').textContent = StickersUX.progressText(done, todo.length);
+  try {
+    for (const row of todo) {
+      row.state = 'busy';
+      paintRow(row);
+      const res = await sendRow(row, t);
+      row.state = res.state;
+      row.msg = res.state === 'added' ? '' : res.text;
+      paintRow(row);
+      done += 1;
+      $('progressLine').textContent = StickersUX.progressText(done, todo.length);
+    }
+  } catch (e) {
+    // 只有未登录会走到这里（apiFetch 已在跳登录页）：没做完的行退回「等待」，留在清单里
+    for (const row of todo) if (row.state === 'busy') row.state = 'wait';
+    throw e;
+  } finally {
+    UPLOADING = false;
+    $('progressLine').textContent = '';
+    updateControls();
+  }
+  const sum = StickersUX.summarize(todo.map((r) => r.state));
+  setOpMsg(sum.text, sum.kind);
+  await load();
+}
+
+// ── 事件 ──
+for (const g of StickersUX.GROUPS) {
+  const grid = $('grid-' + g);
+  grid.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    const node = btn && btn.closest('[data-role="card"]');
+    const it = node && itemOf(node);
+    if (!it || btn.disabled) return;
+    const role = btn.getAttribute('data-role');
+    if (role === 'card-action' && btn.getAttribute('data-action') === 'edit') openEdit(node, it);
+    else if (role === 'card-action' && btn.getAttribute('data-action') === 'remove') removeItem(node, it);
+    else if (role === 'edit-save') saveEdit(node);
+    else if (role === 'edit-cancel') closeEdit();
+  });
+  grid.addEventListener('keydown', (e) => {
+    const input = e.target.closest('[data-role="edit-label"], [data-role="edit-category"]');
+    if (!input || e.isComposing || e.keyCode === 229) return;
+    const node = input.closest('[data-role="card"]');
+    if (e.key === 'Enter') { e.preventDefault(); saveEdit(node); }
+    else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeEdit();
+      const back = node.querySelector('[data-action="edit"]');   // 焦点回到「改标签」，键盘用户不丢位置
+      if (back) back.focus();
+    }
+  });
+  $('tab-' + g).addEventListener('click', () => setTab(g));
+}
+// 标签页之间可用左右方向键切换
+document.querySelector('[role="tablist"]').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const next = StickersUX.GROUPS[(StickersUX.GROUPS.indexOf(ACTIVE) + 1) % StickersUX.GROUPS.length];
+  setTab(next);
+  $('tab-' + next).focus();
+});
+$('searchInput').addEventListener('input', applyFilter);
+$('showThumbs').addEventListener('change', (e) => setBlur(!e.target.checked));
+window.addEventListener('pageshow', (e) => { if (e.persisted) setBlur(true); });
+
+$('targetGroup').addEventListener('change', updateTarget);
+$('targetCategory').addEventListener('change', () => { updateTarget(); if (isNewCategory()) $('newCategory').focus(); });
+$('pickFilesBtn').addEventListener('click', () => { if (!UPLOADING) $('filesInput').click(); });
+$('pickFolderBtn').addEventListener('click', () => {
+  if (UPLOADING) return;
+  if (!FOLDER_OK) { setOpMsg(StickersUX.FOLDER_TEXT, 'warn'); return; }
+  $('folderInput').click();
+});
+for (const id of ['filesInput', 'folderInput']) {
+  $(id).addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
+}
+$('linksBtn').addEventListener('click', () => toggleLinks($('linksBox').hidden));
+$('closeLinksBtn').addEventListener('click', () => toggleLinks(false));
+$('addLinksBtn').addEventListener('click', addLinks);
+
+$('pendingRows').addEventListener('input', (e) => {
+  const row = e.target.matches('[data-role="row-label"]') ? rowOf(e.target) : null;
+  if (row) row.label = e.target.value;
+});
+$('pendingRows').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-role="row-del"]');
+  const row = btn && !btn.disabled ? rowOf(btn) : null;
+  if (!row || UPLOADING) return;
+  dropRow(row);
+  renderRows();
+});
+$('clearDoneBtn').addEventListener('click', () => {
+  if (UPLOADING) return;
+  for (const row of ROWS.filter((r) => StickersUX.isDone(r.state))) dropRow(row);
+  renderRows();
+});
+$('addAllBtn').addEventListener('click', () => { addAll(); });
+
+// 清单里还有没加成的行、或正在上传时，关页 / 跳走由浏览器弹原生提醒
+window.addEventListener('beforeunload', (e) => {
+  if (!StickersUX.needsLeaveWarning(ROWS.map((r) => r.state), UPLOADING)) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
+document.getElementById('opMsgClose').addEventListener('click', () => setOpMsg('', 'ok'));
+$('reloadBtn').addEventListener('click', () => { if (!UPLOADING && !OP_BUSY) load(); });
+
+$('labelHint').textContent = StickersUX.HINT_TEXT;
+const folderHintText = StickersUX.folderHint(FOLDER_OK, COARSE);
+$('folderHint').textContent = folderHintText;
+$('folderHint').hidden = !folderHintText;
+setBlur(true);
+setTab('sfw');
+load();
+</script>
+
+</body>
+</html>
