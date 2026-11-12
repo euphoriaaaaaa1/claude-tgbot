@@ -42,6 +42,7 @@ if [ "$DRY_RUN" = 1 ]; then
   say "DRY_RUN=1：只检查依赖并打印计划，不写盘、不装依赖、不注册服务"
   echo "  ② $PYTHON_BIN -m pip install -r requirements.txt；cd dispatcher && bun install"
   echo "  ③ 铺 configs/_global.yml、configs/providers.json（从 example 复制，0600）、restart-bots.sh（仅缺失时复制）"
+  echo "  ③ $PYTHON_BIN scripts/install_stickers.py（随包表情包；~/.claude/channels/_shared/stickers.json 已存在则跳过）"
   echo "  ④ 密钥体检（不写入；实际运行时可当场粘贴）"
   echo "  ⑤ $PYTHON_BIN platform_services.py register autostart --repo $PWD"
   echo "  ⑤ $PYTHON_BIN platform_services.py register provider-web --repo $PWD"
@@ -98,6 +99,16 @@ if [ ! -e configs/providers.json ]; then
     todo "缺 configs/providers.example.json，无法创建 configs/providers.json → 重新 clone 仓库或手写 {\"providers\": [], \"bindings\": {}}"
     left=1
   fi
+fi
+
+# 随包表情包：图片复制到 STICKERS_DIR/sfw（缺省 ~/resource/stickers/sfw），生成共享清单的 sfw 档。
+# 清单已存在就整步跳过，绝不覆盖或合并；同名图片也不覆盖。失败不中断安装，但要置 left。
+if "$PYTHON_BIN" scripts/install_stickers.py; then
+  ok "表情包就位（STICKERS_DIR=${STICKERS_DIR:-~/resource/stickers}）"
+else
+  rc=$?
+  left=1
+  todo "随包表情包安装失败（退出码 $rc）。手动重跑：$PYTHON_BIN scripts/install_stickers.py"
 fi
 
 # ── 语音桥共享令牌 ────────────────────────────────────────
