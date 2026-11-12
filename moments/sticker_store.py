@@ -557,19 +557,67 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _pinned(conn_class, addr: str):
-    """造连接对象的工厂：TCP 直连核对过的 addr，不再按主机名解析。连接对象的 host 仍是原主机名，
-    所以 Host 头（非默认端口带端口）、TLS 的 SNI 与证书校验都按原主机名走标准库的原有逻辑。"""
+class _SocketWatch:
+    """一次下载建过的 TCP 连接。整体期限到了由等结果的线程 close_all：shutdown 让卡在读响应头或正文的下载线程
+    立即读到连接断开、以异常结束，不再占着线程和套接字等单次限时一轮轮过去。
+
+    记的是 dup 出来的描述符：TLS 包装会把原套接字对象 detach 掉，而 shutdown 作用在底层连接上，经 dup 照样生效；
+    下载线程手里的描述符由它自己关，这里只关自己的 dup，不会关到被系统复用给别人的描述符。"""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._dups = []
+        self._closed = False
+
+    def add(self, sock) -> None:
+        with self._lock:
+            if not self._closed:
+                try:
+                    self._dups.append(sock.dup())
+                    return
+                except OSError:
+                    sock.close()
+                    raise
+        sock.close()   # 期限已过才连上：直接断掉，不再往下发请求
+        raise OSError("下载已被放弃")
+
+    def close_all(self) -> None:
+        with self._lock:
+            self._closed, dups, self._dups = True, self._dups, []
+        for d in dups:
+            with contextlib.suppress(OSError):
+                d.shutdown(socket.SHUT_RDWR)
+            d.close()
+
+
+_tls = threading.local()   # fetch 的下载线程在这里放本次下载的 _SocketWatch；别的线程没有
+
+
+def _connector(addr):
+    """顶替 http.client 的 ``_create_connection``：addr 不为 None 时 TCP 直连它、不再按主机名解析；为 None 时照常
+    连给定地址（走代理时就是代理）。连上的套接字登记给本线程的 _SocketWatch。"""
+    def create(address, *args):
+        sock = socket.create_connection(address if addr is None else (addr, address[1]), *args)
+        watch = getattr(_tls, "watch", None)
+        if watch is not None:
+            watch.add(sock)
+        return sock
+    return create
+
+
+def _pinned(conn_class, addr):
+    """造连接对象的工厂。连接对象的 host 仍是原主机名，所以 Host 头（非默认端口带端口）、TLS 的 SNI 与证书校验
+    都按原主机名走标准库的原有逻辑。"""
     def make(host, **kwargs):
         conn = conn_class(host, **kwargs)
-        # http.client 建 TCP 连接只经这一个属性（HTTPS 也是先经它连上再套 TLS）；换掉它就只改"连到哪个地址"
-        conn._create_connection = lambda address, *args: socket.create_connection((addr, address[1]), *args)
+        # http.client 建 TCP 连接只经这一个属性（HTTPS 与代理隧道也是先经它连上再套 TLS）；换掉它只改"连到哪、记下谁"
+        conn._create_connection = _connector(addr)
         return conn
     return make
 
 
 class _PinnedHTTPHandler(urllib.request.HTTPHandler):
-    def __init__(self, addr: str):
+    def __init__(self, addr):
         super().__init__()
         self._addr = addr
 
@@ -578,7 +626,7 @@ class _PinnedHTTPHandler(urllib.request.HTTPHandler):
 
 
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
-    def __init__(self, addr: str):
+    def __init__(self, addr):
         super().__init__()
         self._addr = addr
 
@@ -595,11 +643,10 @@ def open_url(req, timeout, addr):
 
     addr 是这一跳核对过的地址：TCP 直连它、不走代理，核对与建连之间不再解析主机名（防 DNS 重绑定）。
     addr 为 None（进程环境对该协议设了代理）时经环境里的代理去连，目标由代理解析。
+    两条路建的连接都登记给 fetch 下载线程的 _SocketWatch，期限到了能被主线程断开。
     """
-    if addr is None:
-        handlers = [urllib.request.ProxyHandler(urllib.request.getproxies_environment())]
-    else:
-        handlers = [urllib.request.ProxyHandler({}), _PinnedHTTPHandler(addr), _PinnedHTTPSHandler(addr)]
+    proxies = {} if addr is not None else urllib.request.getproxies_environment()
+    handlers = [urllib.request.ProxyHandler(proxies), _PinnedHTTPHandler(addr), _PinnedHTTPSHandler(addr)]
     return urllib.request.build_opener(*handlers, _NoRedirect()).open(req, timeout=timeout)
 
 
@@ -762,22 +809,27 @@ def _fetch(url: str, deadline: float) -> bytes:
 def fetch(url: str) -> bytes:
     """按链接下载，返回原始字节；类型由 add 按文件头判断。
 
-    下载放在单独的守护线程里，这里最多等到整体时限：对方逐字节慢慢回响应头时，套接字的单次限时管不住总时长。
-    超时后被放弃的线程自己受单次限时与 10 MiB 上限约束，跑完退出，结果没人要；守护线程也不拖住进程退出。
+    下载放在单独的守护线程里，这里最多等到整体时限：对方逐字节慢慢回响应头时，http.client 读状态行与头部只受
+    单次 IO 限时约束，管不住总时长。期限一到，这里先 shutdown 下载线程建过的连接，它正卡着的读取随即出错、线程
+    很快退出，不会挂着线程和套接字慢慢等对方。缺省 open_url 建的连接（直连与走代理）才登记得到；测试替换了
+    open_url 时没有这层，只剩单次限时与 10 MiB 上限约束。守护线程不拖住进程退出。
     """
     deadline = time.monotonic() + TOTAL_TIMEOUT
-    box, done = {}, threading.Event()
+    box, done, watch = {}, threading.Event(), _SocketWatch()
 
     def run():
+        _tls.watch = watch
         try:
             box["data"] = _fetch(url, deadline)
         except BaseException as e:   # 原样交回调用方线程
             box["error"] = e
         finally:
+            watch.close_all()   # 正常结束时只关登记用的 dup；连接本身已由 _fetch 关掉
             done.set()
 
     threading.Thread(target=run, name="sticker-fetch", daemon=True).start()
     if not done.wait(max(0.0, deadline - time.monotonic()) + 1.0):
+        watch.close_all()
         raise _timeout_error()
     if "error" in box:
         raise box["error"]
