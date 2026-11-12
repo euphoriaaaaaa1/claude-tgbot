@@ -43,7 +43,7 @@ from memory.memory_inject import read_memory_brief, pick_memory_hook
 from moments.post import maybe_post_moment
 
 
-MOMENT_JUST_POSTED_HINT = "（你几分钟前刚发了一条朋友圈，私聊别复述同一内容）"
+MOMENT_JUST_POSTED_HINT = "（你刚发过朋友圈，聊天时可以稍微提一下或问用户看到没有，但不细说）"
 
 
 def _asleep_reason(bot_cfg: dict, now) -> str:
