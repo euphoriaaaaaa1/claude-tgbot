@@ -274,16 +274,19 @@ class DshHttpAdapter(BackendAdapter):
         return data
 
     def set_rhythm(self, bot_id: str, set_values: dict, remove_keys: list, version: str) -> dict:
-        """``{"version", "changed"}``（去掉 ``ok``）。入参不合规不读令牌、不发请求。
+        """``{"version", "changed"}``（去掉 ``ok``）。入参不合规（含值装不进 JSON）不读令牌、不发请求。
 
         请求体恰好 ``{"set", "remove", "version"}``；超时报 down（文案说清可能已经改了），不重试。
         """
         path = self._bot_path(bot_id, "/rhythm")
         if not isinstance(set_values, dict) or not isinstance(remove_keys, list) or not _nonempty_str(version):
             raise AdapterError("invalid", 422, RHYTHM_BODY_MESSAGE)
-        data = self._request("PUT", path,
-                             body={"set": dict(set_values), "remove": list(remove_keys), "version": version},
-                             timeout=READ_TIMEOUT, timeout_message=RHYTHM_TIMEOUT_MESSAGE)
+        body = {"set": dict(set_values), "remove": list(remove_keys), "version": version}
+        try:    # 与 _request 同样的序列化，放在读令牌之前：坏值不能等读完令牌才抛原生异常
+            json.dumps(body, ensure_ascii=False).encode("utf-8")
+        except (TypeError, ValueError, RecursionError):
+            raise AdapterError("invalid", 422, RHYTHM_BODY_MESSAGE)
+        data = self._request("PUT", path, body=body, timeout=READ_TIMEOUT, timeout_message=RHYTHM_TIMEOUT_MESSAGE)
         changed = data.get("changed")
         if (not _nonempty_str(data.get("version")) or not isinstance(changed, list)
                 or not all(isinstance(k, str) for k in changed)):
