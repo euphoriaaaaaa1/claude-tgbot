@@ -510,28 +510,21 @@ def inject(bot: str, chat_id: str, history: list[dict],
     # 同群多 bot 在场的最小事实信号（排除自己与已停止的）；单 bot 群不输出。
     present_others = [BOTS[b] for b in BOTS if b != bot and not _is_stopped(b)]
     present_block = f"（群里还有 {'、'.join(present_others)} 在场。）\n" if present_others else ""
+    # 点名正文只说轮到谁、谁在场、最近的对话；上一位说的话已在最近的对话里，不在开头重复。
     if closing and prev is not None:
-        prev_name = BOTS.get(prev.get("speaker"), prev.get("speaker") or "群友")
-        prev_text = (prev.get("text") or "")[:80]
-        head = (f"[director]（这场聊天要收尾了。{prev_name} 说：「{prev_text}」"
-                "你可以说最后一句了。）")
-        guide = ""  # 收尾轮不附指导（2026-10-10 用户圈定，原"别再抛新问题"句删）
+        head = "[director] 群里这场聊天要收尾了，轮到你说最后一句。"
+        guide = ""
     elif prev is not None:
-        prev_name = BOTS.get(prev.get("speaker"), prev.get("speaker") or "群友")
-        prev_text = (prev.get("text") or "")[:80]
-        head = (f"[director]（群里正在聊天。{prev_name} 说：「{prev_text}」"
-                "你可以跟她聊天。）")
-        guide = f"你可以接着聊，别只回 {HUMAN_NAME}。"
-        if low_budget:  # 临近收尾：往回收，别再起新话头
-            guide += "（这场快聊完了，别再起新话题。）"
+        head = "[director] 群里有新消息，轮到你说话了。"
+        guide = "（这场快聊完了，不用再开新话题。）" if low_budget else ""
     elif context:
-        head = f"[director]（{context}。你可以跟她们聊起这个。）"
+        head = f"[director] {context}。"
         guide = ""
     elif initiate:
-        head = "[director]（群里安静了一阵，你可以说点什么。）"
+        head = "[director] 群里安静了一阵，轮到你说话了。"
         guide = ""
     else:
-        head = "[director]（群里正在聊天，你可以接话。）"
+        head = "[director] 群里有新消息，轮到你说话了。"
         guide = ""
     # 关系摘要块：读本 bot 对在场同伴的主观笔记 + 当前心情，拼一段注入（fail-open，任何异常都不阻断群聊）
     rel_block = ""
@@ -555,8 +548,8 @@ def inject(bot: str, chat_id: str, history: list[dict],
         f"群里最近的对话：\n{convo_line}\n"
         f"{batch_block}\n"
         f"{(rel_block + chr(10)) if rel_block else ''}"
-        f"（上面是刚才的聊天，你可以按自己的来。）{guide}\n"
-        "（按你平时的语气说话；不要旁白和动作描写，不要频繁发emoji。）"
+        f"{(guide + chr(10)) if guide else ''}"
+        "（你按语境回复即可）"
     )
     # unified inbox：写 <channel>/inbox（不再 per-chat），payload 带 chat_id + scene。
     inbox = os.path.join(CHANNELS_ROOT, BOT_DIR_NAME[bot], "inbox")
