@@ -555,6 +555,20 @@ Telegram 线路断开处理（第 13.1 节）在 macOS 上用本机假 Telegram 
 
 回复途中连发的合并、新的合并缺省值（第 5 节）和 `/stopbot`、`/startbot` 按配置目录派生名单（第 12 节）在 macOS 上跑过测试，Windows 上未真机验证。
 
+随包表情包安装（第 8.1 节）在 macOS 上于临时家目录跑过测试，Windows 上未真机验证。
+
+### 16.1 Windows 真机验证清单
+
+在 Windows 10/11 上按 §3 装好后逐条做，每条全部满足才算通过：
+
+1. **表情包首次安装**：确认 `%USERPROFILE%\.claude\channels\_shared\stickers.json` 不存在，运行 `powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1`。看：输出「已安装随包表情包 84 张」；`%USERPROFILE%\resource\stickers\sfw\` 下有 84 个文件；`stickers.json` 能用记事本正常打开，中文 label 不乱码，`path` 是 `C:\...` 形式的绝对路径且文件存在。
+2. **表情包已有清单不覆盖**：记下 `stickers.json` 的修改时间，再跑一次 `python scripts\install_stickers.py`。看：输出「表情包清单已存在，跳过」，退出码 0；`stickers.json` 与 `sfw\` 下文件的修改时间都不变。
+3. **表情包能发出**：给一只开着「表情包」功能的 bot 发一句带强烈情绪的话，等它发表情包。看：Telegram 收到图片，dispatcher 日志里没有 `file_dropped`。关掉该 bot 的「表情包」后再试，看：不发图，日志有 `sticker_feature_off`。
+4. **`/stopbot` 名单派生**：在私聊里由 `allowFrom` 内的账号发 `/stopbot <该 bot 编号>`。看：回执是「公开版请在 8767 管理台……这只 bot」的提示，不是「尚未配置可管理的 bot」；发 `/stopbot 不存在的名字` 时，用法提示里的可选名单正好是 `configs\` 下不以 `_` 开头的 `.yml` 文件名。
+5. **新建 bot 缺省值**：在管理台新建一只 bot，打开它的 `access.json`。看：含 `splitOnParagraph: true`、`paragraphDelay: 1200`、`burstWindowMs: 8000`、`burstMaxMs: 0`。
+6. **回复途中连发合并**：在 bot 回复途中连发两条文字（间隔超过 8 秒）。看：两条在本轮回完、静默满 8 秒后合成一条被回复，只收到一次针对两条合并内容的回复。
+7. **启停脚本按注册表派生名单**：`configs\` 下放两只 bot，跑 `windows\start-bots.ps1`，再跑 `windows\restart-bots.ps1 -Only <其中一只>`。看：两只都起来；单只重启只重启这一只，另一只的进程号不变；对不在注册表里的编号退出码为 2。
+
 未验证项会如实写在这里，不把“能启动”说成“全功能已验证”。
 
 ---
