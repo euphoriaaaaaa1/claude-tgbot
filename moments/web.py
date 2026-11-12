@@ -24,6 +24,7 @@ from moments.hub_forward import hub_forward_bp
 from moments.lifecycle_routes import lifecycle_bp
 from moments.params_routes import params_bp
 from moments.provider_routes import provider_bp
+from moments.sticker_routes import stickers_bp
 from moments.styles_routes import styles_bp
 from moments.voice_preview_routes import voice_preview_bp
 
@@ -48,6 +49,8 @@ app.register_blueprint(params_bp)
 app.register_blueprint(hub_forward_bp)
 # 语音试听（INTERFACE §2.12）：只做请求校验与语音桥转发，令牌只在服务端使用。
 app.register_blueprint(voice_preview_bp)
+# 表情包页（/console/stickers 与 /api/console/stickers*）：读写 stickers.json 与图片根，登录门、跨站校验与可达面闸门对本蓝图生效。
+app.register_blueprint(stickers_bp)
 from provider_config import SeamsNotConfigured as _SeamsNotConfigured  # noqa: E402
 from provider_config import SafetyGateTripped as _SafetyGateTripped  # noqa: E402
 
@@ -285,7 +288,7 @@ def _reachable_gate():
             or endpoint.startswith("console.") or endpoint.startswith("lifecycle.")
             or endpoint.startswith("features.") or endpoint.startswith("provider.")
             or endpoint.startswith("params.") or endpoint.startswith("hub_forward.")
-            or endpoint.startswith("voice_preview.")):
+            or endpoint.startswith("voice_preview.") or endpoint.startswith("stickers.")):
         return None
     abort(404)
 
