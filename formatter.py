@@ -156,16 +156,16 @@ def format_self_initiate(now, situation, world, wildcard, mood, mood_factors,
             parts.append(f"{who}: {single_line}")
 
     parts.append("")
-    parts.append(f"--- 现在想给{user_address}发一条消息 ---")
+    parts.append(f"--- 想给{user_address}发消息 ---")
     parts.append("")
 
     # ─── 模式行（最小引导；教学性说明交给各 bot 的人设与技能）────────
     if continuation_mode == "first_after_user":
         h_disp = f"{hours_since_user:.1f} 小时"
-        parts.append(f"【对话延续模式】距{user_address}上次发言已经 {h_disp}，这是你之后第一次主动开口，必须开口；接上次的话题，或另起一个话题")
+        parts.append(f"【对话延续模式】距{user_address}上次发言已经 {h_disp}，这是你之后第一次主动开口；接上次的话题，或另起一个话题")
     elif continuation_mode == "followup":
-        parts.append("【对话延续模式】上次主动跟进后对方还没有回；接上次的话题，或另起一个话题，同一话题最多再跟一次")
+        parts.append(f"【对话延续模式】上次找{user_address}说了话但对方还没回复；接上次的话题或另起一个")
     else:
-        parts.append("可以选择不说（没什么可说的，且距上次对话很近时）")
+        parts.append("没什么想说的可以不说")
 
     return "\n".join(parts)
