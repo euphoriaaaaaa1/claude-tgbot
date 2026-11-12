@@ -158,6 +158,14 @@ def test_set_rhythm_empty_set_and_remove_still_sent_and_extra_keys_kept(dsh):
     assert json.loads(dsh.requests[0]["body"]) == {"set": {}, "remove": [], "version": "11-22-33"}
 
 
+def test_set_rhythm_forwards_all_json_types_unchanged(dsh):
+    # 合法值（含中文、emoji、嵌套）不受提前序列化检查影响，原样发出
+    dsh.routes[("PUT", PATH)] = (200, {"ok": True, "version": "v1", "changed": []})
+    values = {"a": 1, "b": 0.5, "c": True, "d": None, "e": "你好😀", "f": [1, "x", {"g": [2]}]}
+    _set(dsh.adapter, set_values=values)
+    assert json.loads(dsh.requests[0]["body"].decode("utf-8"))["set"] == values
+
+
 @pytest.mark.parametrize("body", [
     {"ok": True, "changed": []}, {"ok": True, "version": "", "changed": []},
     {"ok": True, "version": "v", "changed": "a"}, {"ok": True, "version": "v", "changed": ["a", 1]},
@@ -287,6 +295,40 @@ def test_bad_body_invalid_without_token(no_token, set_values, remove_keys, versi
     assert (e.value.code, e.value.http_status, e.value.message, e.value.fields) == (
         "invalid", 422, RHYTHM_BODY_MESSAGE, {})
     assert no_token.requests == []
+
+
+def _circular():
+    d = {}
+    d["self"] = d
+    return {"k": d}
+
+
+def _too_deep():
+    v = []
+    for _ in range(10000):
+        v = [v]
+    return {"k": v}
+
+
+@pytest.mark.parametrize("set_values", [
+    {"moments.daily_post_limit_per_bot": {1, 2}}, {"k": object()}, {"k": b"x"}, {(1, 2): 1}, {"k": "\ud800"},
+    _circular(), _too_deep(),
+], ids=["set_value", "object_value", "bytes_value", "tuple_key", "lone_surrogate", "circular", "too_deep"])
+def test_unserializable_body_invalid_without_token(no_token, set_values):
+    # 值装不进 JSON：读令牌之前就报 invalid（若先读令牌，令牌没配时会错报成 unconfigured）
+    with pytest.raises(AdapterError) as e:
+        no_token.adapter.set_rhythm("d1", set_values, [], "v")
+    assert (e.value.code, e.value.http_status, e.value.message, e.value.fields) == (
+        "invalid", 422, RHYTHM_BODY_MESSAGE, {})
+    assert no_token.requests == []
+
+
+def test_unserializable_body_invalid_not_native_error_with_token(dsh):
+    # 令牌配好时，原来读完令牌后才抛原生 TypeError；现在同样是 invalid，且一个请求都没发
+    with pytest.raises(AdapterError) as e:
+        _set(dsh.adapter, set_values={"k": {1, 2}})
+    assert (e.value.code, e.value.http_status, e.value.message) == ("invalid", 422, RHYTHM_BODY_MESSAGE)
+    assert dsh.requests == []
 
 
 def test_valid_input_without_token_is_unconfigured(no_token):
