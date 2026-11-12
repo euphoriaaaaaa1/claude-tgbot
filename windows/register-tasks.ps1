@@ -17,6 +17,16 @@ $env:PYTHONUTF8 = '1'
 
 $script:RegisterFailed = $false
 
+# 0) 随包表情包（与 install.sh 同一个脚本、同一套规则）：图片复制到 STICKERS_DIR\sfw
+#    （缺省 %USERPROFILE%\resource\stickers\sfw），生成 .claude\channels\_shared\stickers.json 的 sfw 档；
+#    清单已存在则整步跳过，绝不覆盖或合并。失败只报错，不影响下面注册任务。
+$StickerScript = Join-Path $RepoDir "scripts\install_stickers.py"
+& $Py $StickerScript --repo $RepoDir
+if ($LASTEXITCODE -ne 0) {
+    [Console]::Error.WriteLine("随包表情包安装失败（退出码 $LASTEXITCODE）。手动重跑：`"$Py`" `"$StickerScript`" --repo `"$RepoDir`"")
+    $script:RegisterFailed = $true
+}
+
 # 调 platform_services.py register <name>；失败时打印任务名与手动命令，继续注册其余任务。
 function Register-Service([string]$Name, [string[]]$Extra = @()) {
     & $Py $ServiceScript register $Name --repo $RepoDir @Extra
