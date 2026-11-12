@@ -43,7 +43,7 @@ bash install.sh
 
 1. 检查 Python / Bun / Claude CLI；
 2. `pip install -r requirements.txt`，并在 `dispatcher/` 里 `bun install`；
-3. 只在文件不存在时复制 `configs/_global.example.yml` → `configs/_global.yml`、`configs/providers.example.json` → `configs/providers.json`（0600）、`restart-bots.example.sh` → `restart-bots.sh`；
+3. 只在文件不存在时复制 `configs/_global.example.yml` → `configs/_global.yml`、`configs/providers.example.json` → `configs/providers.json`（0600）、`restart-bots.example.sh` → `restart-bots.sh`；安装随包表情包（见 §8.1，已有表情包清单时跳过）；
 4. 运行 `scripts/setup_keys.sh`，逐项告诉你去哪拿、填哪里；
 5. 注册登录自启（macOS launchd / Linux systemd --user），并注册 `provider-web`（8767 管理台）。
 
@@ -128,9 +128,11 @@ powershell -ExecutionPolicy Bypass -File windows\start-bots.ps1
 # 启动 8767 管理台
 powershell -ExecutionPolicy Bypass -File windows\start-provider-web.ps1
 
-# 注册计划任务（登录自启、主动消息、情绪 tick、记忆压缩、8767、8770）
+# 注册计划任务（登录自启、主动消息、情绪 tick、记忆压缩、8767、8770），并先安装随包表情包
 powershell -ExecutionPolicy Bypass -File windows\register-tasks.ps1
 ```
+
+不注册计划任务时，表情包可单独安装：`python scripts\install_stickers.py`（规则见 §8.1）。
 
 卸载计划任务：
 
@@ -365,6 +367,16 @@ curl -H "Authorization: Bearer $(cat ~/.config/claude-dsh-console/adapter.token)
 - 文件不存在 = 八项全开；文件读不出 = 八项全关并给出 warning。
 - 改开关会让程序同步对应技能文件；部分改动需要重启 bot 才完全生效。
 - 缺前提时页面会提示缺什么（缺语音编号、缺 NovelAI 令牌、缺朋友圈库、缺私聊编号等），不会只报一个笼统失败。
+
+### 8.1 表情包库
+
+仓库自带 84 张 sfw 表情包（`assets/stickers/sfw/`，含 `manifest.json`）。`install.sh`（Windows 为 `windows\register-tasks.ps1`）会调用 `scripts/install_stickers.py` 安装，也可以单独运行它：
+
+- 图片复制到 `STICKERS_DIR` 下的 `sfw/` 子目录。`STICKERS_DIR` 未设置时为 `~/resource/stickers`，与 dispatcher 发送表情图时认可的目录一致；自定义时须为绝对路径或以 `~/` 开头，并且与运行 dispatcher 时的取值相同。
+- 生成 `~/.claude/channels/_shared/stickers.json`：`sfw` 档每条含 `id`、`tier`、`url`、`label`、`path`（复制后的绝对路径），有分类时另含 `category`；随包图片没有网络来源，`url` 为空；`nsfw` 档为空。
+- **已有清单不覆盖**：`stickers.json` 已存在时整步跳过，图片也不复制，只打印一句提示，不合并、不改动。目标目录里已有同名图片时不覆盖，清单指向已有文件。
+- 有图片复制失败时不生成清单并报错；修好后重跑会补齐图片再生成清单。重复运行结果不变。
+- 自己扩充表情库：把图片放进 `STICKERS_DIR` 下，再按上面的字段往 `stickers.json` 的 `sfw` 或 `nsfw` 档追加条目。
 
 ---
 
