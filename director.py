@@ -482,9 +482,9 @@ def inject(bot: str, chat_id: str, history: list[dict],
            low_budget: bool = False, user_batch: list[dict] | None = None) -> str:
     """往被选中 bot 的 inbox 写 [director] 消息（.tmp→rename 原子落地）。
     导演只负责"点你说话"，说什么内容完全由 bot 自己按人设决定——不给方向、不写台词。
-    prev 给定（自主场续轮）：明确让 ta 先接上一个发言 bot 的那句话。
+    prev 给定（自主场续轮）：点名正文只说群里有新消息、轮到你说话；上一位的发言只出现在最近的对话里，开头不重复。
     context 给定（自主场开场理由，如 jiwen 情绪/朋友圈）：作为起话头的背景。
-    closing=True（收尾轮）：把最后一句/问题接住、自然收尾，别再抛新问题——防对话吊在半句上。
+    closing=True 且 prev 给定（收尾轮）：点名正文说明这场聊天要收尾，轮到你说最后一句。
     user_batch 给定（user连发了几条）：明确列出让 bot 一起照顾到，别只回最新一条。
     停止的 bot（需求⑤）→ 不写 inbox、不拉起，返回 ""。"""
     if _is_stopped(bot):
