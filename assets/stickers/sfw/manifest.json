@@ -1,0 +1,425 @@
+{
+ "tier": "sfw",
+ "files": [
+  {
+   "file": "022_1bb0500050.jpg",
+   "label": "Kiss",
+   "category": null
+  },
+  {
+   "file": "115_5ef02d995b.jpg",
+   "label": "Breakdown",
+   "category": null
+  },
+  {
+   "file": "037_3d6f62764c.jpg",
+   "label": "Coming",
+   "category": null
+  },
+  {
+   "file": "028_84e8dbbb99.jpg",
+   "label": "Hi/Hello",
+   "category": null
+  },
+  {
+   "file": "gz_hd_110.jpg",
+   "label": "回答 110",
+   "category": "回答"
+  },
+  {
+   "file": "gz_hd_237.jpg",
+   "label": "回答 237",
+   "category": "回答"
+  },
+  {
+   "file": "gz_hd_175.jpeg",
+   "label": "回答 175",
+   "category": "回答"
+  },
+  {
+   "file": "gz_hd_173.jpg",
+   "label": "回答 173",
+   "category": "回答"
+  },
+  {
+   "file": "gz_dl_012.jpg",
+   "label": "大佬 12",
+   "category": "大佬"
+  },
+  {
+   "file": "gz_dl_020.jpg",
+   "label": "大佬 20",
+   "category": "大佬"
+  },
+  {
+   "file": "gz_dl_002.png",
+   "label": "大佬 2",
+   "category": "大佬"
+  },
+  {
+   "file": "gz_dl_007.jpg",
+   "label": "大佬 7",
+   "category": "大佬"
+  },
+  {
+   "file": "gz_kj_034.jpg",
+   "label": "夸奖 34",
+   "category": "夸奖"
+  },
+  {
+   "file": "gz_kj_037.jpg",
+   "label": "夸奖 37",
+   "category": "夸奖"
+  },
+  {
+   "file": "gz_kj_031.gif",
+   "label": "夸奖 31",
+   "category": "夸奖"
+  },
+  {
+   "file": "gz_kj_027.jpg",
+   "label": "夸奖 27",
+   "category": "夸奖"
+  },
+  {
+   "file": "gz_xx_009.jpg",
+   "label": "学习 9",
+   "category": "学习"
+  },
+  {
+   "file": "gz_xx_004.jpg",
+   "label": "学习 4",
+   "category": "学习"
+  },
+  {
+   "file": "gz_xx_002.jpg",
+   "label": "学习 2",
+   "category": "学习"
+  },
+  {
+   "file": "gz_xx_013.gif",
+   "label": "学习 13",
+   "category": "学习"
+  },
+  {
+   "file": "gz_hp_012.jpg",
+   "label": "害怕 12",
+   "category": "害怕"
+  },
+  {
+   "file": "gz_hp_017.gif",
+   "label": "害怕 17",
+   "category": "害怕"
+  },
+  {
+   "file": "gz_hp_024.gif",
+   "label": "害怕 24",
+   "category": "害怕"
+  },
+  {
+   "file": "gz_hp_007.jpg",
+   "label": "害怕 7",
+   "category": "害怕"
+  },
+  {
+   "file": "gz_gz_025.jpg",
+   "label": "工作 25",
+   "category": "工作"
+  },
+  {
+   "file": "gz_gz_005.jpg",
+   "label": "工作 5",
+   "category": "工作"
+  },
+  {
+   "file": "gz_gz_001.jpg",
+   "label": "工作 1",
+   "category": "工作"
+  },
+  {
+   "file": "gz_gz_022.jpg",
+   "label": "工作 22",
+   "category": "工作"
+  },
+  {
+   "file": "gz_gj_009.jpeg",
+   "label": "干架 9",
+   "category": "干架"
+  },
+  {
+   "file": "gz_gj_030.jpg",
+   "label": "干架 30",
+   "category": "干架"
+  },
+  {
+   "file": "gz_gj_063.jpg",
+   "label": "干架 63",
+   "category": "干架"
+  },
+  {
+   "file": "gz_gj_086.jpg",
+   "label": "干架 86",
+   "category": "干架"
+  },
+  {
+   "file": "gz_bz_012.jpg",
+   "label": "搬砖 12",
+   "category": "搬砖"
+  },
+  {
+   "file": "gz_bz_006.jpg",
+   "label": "搬砖 6",
+   "category": "搬砖"
+  },
+  {
+   "file": "gz_bz_009.jpg",
+   "label": "搬砖 9",
+   "category": "搬砖"
+  },
+  {
+   "file": "gz_bz_014.jpg",
+   "label": "搬砖 14",
+   "category": "搬砖"
+  },
+  {
+   "file": "gz_ch_001.jpg",
+   "label": "撤回 1",
+   "category": "撤回"
+  },
+  {
+   "file": "gz_ch_015.jpg",
+   "label": "撤回 15",
+   "category": "撤回"
+  },
+  {
+   "file": "gz_ch_003.gif",
+   "label": "撤回 3",
+   "category": "撤回"
+  },
+  {
+   "file": "gz_ch_011.jpg",
+   "label": "撤回 11",
+   "category": "撤回"
+  },
+  {
+   "file": "gz_fy_030.jpg",
+   "label": "敷衍 30",
+   "category": "敷衍"
+  },
+  {
+   "file": "gz_fy_020.jpg",
+   "label": "敷衍 20",
+   "category": "敷衍"
+  },
+  {
+   "file": "gz_fy_003.jpg",
+   "label": "敷衍 3",
+   "category": "敷衍"
+  },
+  {
+   "file": "gz_fy_028.jpg",
+   "label": "敷衍 28",
+   "category": "敷衍"
+  },
+  {
+   "file": "gz_wz_043.jpg",
+   "label": "文字 43",
+   "category": "文字"
+  },
+  {
+   "file": "gz_wz_030.jpg",
+   "label": "文字 30",
+   "category": "文字"
+  },
+  {
+   "file": "gz_wz_006.jpg",
+   "label": "文字 6",
+   "category": "文字"
+  },
+  {
+   "file": "gz_wz_045.jpg",
+   "label": "文字 45",
+   "category": "文字"
+  },
+  {
+   "file": "gz_dt_007.jpg",
+   "label": "斗图 7",
+   "category": "斗图"
+  },
+  {
+   "file": "gz_dt_003.jpg",
+   "label": "斗图 3",
+   "category": "斗图"
+  },
+  {
+   "file": "gz_dt_004.jpg",
+   "label": "斗图 4",
+   "category": "斗图"
+  },
+  {
+   "file": "gz_dt_005.jpg",
+   "label": "斗图 5",
+   "category": "斗图"
+  },
+  {
+   "file": "gz_hj_017.gif",
+   "label": "滑稽 17",
+   "category": "滑稽"
+  },
+  {
+   "file": "gz_hj_050.jpg",
+   "label": "滑稽 50",
+   "category": "滑稽"
+  },
+  {
+   "file": "gz_hj_060.jpg",
+   "label": "滑稽 60",
+   "category": "滑稽"
+  },
+  {
+   "file": "gz_hj_059.jpg",
+   "label": "滑稽 59",
+   "category": "滑稽"
+  },
+  {
+   "file": "gz_sj_016.jpg",
+   "label": "睡觉 16",
+   "category": "睡觉"
+  },
+  {
+   "file": "gz_sj_007.jpg",
+   "label": "睡觉 7",
+   "category": "睡觉"
+  },
+  {
+   "file": "gz_sj_019.jpg",
+   "label": "睡觉 19",
+   "category": "睡觉"
+  },
+  {
+   "file": "gz_sj_002.jpg",
+   "label": "睡觉 2",
+   "category": "睡觉"
+  },
+  {
+   "file": "gz_hb_014.gif",
+   "label": "红包 14",
+   "category": "红包"
+  },
+  {
+   "file": "gz_hb_016.jpg",
+   "label": "红包 16",
+   "category": "红包"
+  },
+  {
+   "file": "gz_hb_006.jpg",
+   "label": "红包 6",
+   "category": "红包"
+  },
+  {
+   "file": "gz_hb_019.jpg",
+   "label": "红包 19",
+   "category": "红包"
+  },
+  {
+   "file": "gz_zl_001.jpg",
+   "label": "自恋 1",
+   "category": "自恋"
+  },
+  {
+   "file": "gz_zl_013.jpg",
+   "label": "自恋 13",
+   "category": "自恋"
+  },
+  {
+   "file": "gz_zl_045.gif",
+   "label": "自恋 45",
+   "category": "自恋"
+  },
+  {
+   "file": "gz_zl_025.jpg",
+   "label": "自恋 25",
+   "category": "自恋"
+  },
+  {
+   "file": "gz_bq_028.jpg",
+   "label": "表情 28",
+   "category": "表情"
+  },
+  {
+   "file": "gz_bq_017.jpg",
+   "label": "表情 17",
+   "category": "表情"
+  },
+  {
+   "file": "gz_bq_123.gif",
+   "label": "表情 123",
+   "category": "表情"
+  },
+  {
+   "file": "gz_bq_096.jpg",
+   "label": "表情 96",
+   "category": "表情"
+  },
+  {
+   "file": "gz_zb_041.jpg",
+   "label": "装逼 41",
+   "category": "装逼"
+  },
+  {
+   "file": "gz_zb_022.jpeg",
+   "label": "装逼 22",
+   "category": "装逼"
+  },
+  {
+   "file": "gz_zb_008.jpg",
+   "label": "装逼 8",
+   "category": "装逼"
+  },
+  {
+   "file": "gz_zb_007.jpg",
+   "label": "装逼 7",
+   "category": "装逼"
+  },
+  {
+   "file": "gz_jq_011.jpg",
+   "label": "金钱 11",
+   "category": "金钱"
+  },
+  {
+   "file": "gz_jq_043.jpg",
+   "label": "金钱 43",
+   "category": "金钱"
+  },
+  {
+   "file": "gz_jq_012.jpg",
+   "label": "金钱 12",
+   "category": "金钱"
+  },
+  {
+   "file": "gz_jq_010.jpg",
+   "label": "金钱 10",
+   "category": "金钱"
+  },
+  {
+   "file": "gz_ng_001.jpg",
+   "label": "难过 1",
+   "category": "难过"
+  },
+  {
+   "file": "gz_ng_008.jpg",
+   "label": "难过 8",
+   "category": "难过"
+  },
+  {
+   "file": "gz_ng_007.jpg",
+   "label": "难过 7",
+   "category": "难过"
+  },
+  {
+   "file": "gz_ng_009.jpeg",
+   "label": "难过 9",
+   "category": "难过"
+  }
+ ]
+}
