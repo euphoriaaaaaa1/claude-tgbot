@@ -503,9 +503,9 @@ def inject(bot: str, chat_id: str, history: list[dict],
     batch_block = ""
     if owner_batch:
         listed = "\n".join(f"  - {_fmt_msg(m, 300)}" for m in batch_listed)
-        cond = (f"（{HUMAN_NAME} 连着说了这几句，你可以一起回；其中如果有明确的要求，优先照做。）"
+        cond = (f"（{HUMAN_NAME} 连着说了这几句，你可以一起回复；其中如果有明确的要求，优先照做。）"
                 if len(owner_batch) > 1
-                else "（其中如果有明确的要求，优先照做；只是闲聊就正常接。）")
+                else "（其中如果有明确的要求，优先照做；只是闲聊就直接回复。）")
         batch_block = f"\n（以下是 {HUMAN_NAME} 刚才说的话（原话）：）\n{cond}\n{listed}\n"
     # 同群多 bot 在场的最小事实信号（排除自己与已停止的）；单 bot 群不输出。
     present_others = [BOTS[b] for b in BOTS if b != bot and not _is_stopped(b)]
