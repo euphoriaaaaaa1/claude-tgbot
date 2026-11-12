@@ -312,6 +312,7 @@ python3 scripts/migrate_legacy_providers.py --dry-run
 - `dsh`：**外部依赖，不在本仓库内**。需要你另行安装并运行它的本机适配器：
   - 地址：`CONSOLE_DSH_ADAPTER_URL`，默认 `http://127.0.0.1:17990`，只允许回环；
   - 令牌文件：`CONSOLE_ADAPTER_TOKEN_FILE`，默认 `~/.config/claude-dsh-console/adapter.token`，只读，程序不打印、不修改；
+  - dsh 适配服务从 `DSH_CONSOLE_TOKEN_FILE` 读令牌，默认同为 `~/.config/claude-dsh-console/adapter.token`；两边的令牌内容必须一致，通常指向同一个文件。令牌用可打印 ASCII 随机串，文件建议权限 0600。dsh 适配服务每次请求都重新读取令牌文件，更换令牌不需要重启；启动时令牌文件缺失、不可读或为空则拒绝启动；
   - Windows 上给令牌文件收紧 ACL：
     ```powershell
     icacls "%USERPROFILE%\.config\claude-dsh-console\adapter.token" /inheritance:r /grant:r "%USERNAME%:R"
