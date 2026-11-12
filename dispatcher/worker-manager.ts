@@ -1768,10 +1768,10 @@ export class WorkerManager {
     inboundState = applyInboundMarks(inboundState, chatIdStr, meta, tsMs)
     const timePrefix = buildTimePrefix(tsMs, prevHuman)
     rememberInboundTs(chatIdStr, tsMs)
-    // 真人私聊消息前注入关系数值提示（群聊/peer/导演 inject 不注入——与旧行为一致）
+    // 关系数值提示：私聊与群聊（真人消息与导演点名）都带，其他 bot 转来的发言不带
     const isHumanPrivate = !isBotSender && scene === 'private'
     let relPrefix = ''
-    if (isHumanPrivate) {
+    if (!isBotSender) {
       try {
         const d = JSON.parse(readFileSync(join(CHANNEL_DIR, 'relationship.json'), 'utf8'))
         if (typeof d.prompt_snippet === 'string' && d.prompt_snippet) relPrefix = `${d.prompt_snippet}\n\n`
