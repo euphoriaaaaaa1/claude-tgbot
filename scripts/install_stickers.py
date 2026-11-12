@@ -24,7 +24,7 @@ import os
 import shutil
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 DEFAULT_STICKERS_DIR = "~/resource/stickers"
 TIER = "sfw"
@@ -50,9 +50,12 @@ def load_bundle(bundle_dir: Path) -> list[dict]:
     seen = set()
     for entry in entries:
         name = entry.get("file") if isinstance(entry, dict) else None
-        # manifest 是数据：文件名带目录分隔、..、或重复都不接受，防止写出 sfw 目录之外。
+        # manifest 是数据：文件名带目录分隔、盘符或 NTFS 流的冒号、..、或重复都不接受，
+        # 防止写出 sfw 目录之外；两种路径语义下都必须是单层文件名，Windows 上同样成立。
         if (not isinstance(name, str) or not name or name in (".", "..")
-                or "/" in name or "\\" in name or name in seen):
+                or "/" in name or "\\" in name or ":" in name
+                or PureWindowsPath(name).name != name or PurePosixPath(name).name != name
+                or name in seen):
             raise ValueError(f"manifest 里有非法或重复的文件名：{name!r}")
         if not isinstance(entry.get("label"), str) or not entry["label"].strip():
             raise ValueError(f"manifest 里 {name} 缺 label")
@@ -63,15 +66,23 @@ def load_bundle(bundle_dir: Path) -> list[dict]:
 
 
 def copy_if_absent(src: Path, dest: Path) -> bool:
-    """dest 不存在才复制（先写同目录临时文件再改名，中断不留半截图）；返回是否真的复制了。"""
+    """dest 不存在才复制（先写同目录临时文件再改名，中断不留半截图）；返回是否真的复制了。
+
+    dest 已存在但不是普通文件（目录、坏链接等）抛 OSError：清单不能指向发不出去的路径。
+    """
     if os.path.lexists(dest):
+        if not dest.is_file():
+            raise OSError(f"目标已存在但不是普通文件：{dest}")
         return False
     fd, tmp = tempfile.mkstemp(prefix=".sticker-", dir=dest.parent)
     os.close(fd)
     try:
         shutil.copyfile(src, tmp)
         if os.path.lexists(dest):  # 复制期间别处已放了同名文件：仍以它为准
+            if not dest.is_file():
+                raise OSError(f"目标已存在但不是普通文件：{dest}")
             return False
+        os.chmod(tmp, 0o644)  # mkstemp 建的是 0600；表情图要能被别的进程读（Windows 上无害）
         os.replace(tmp, dest)
         return True
     finally:
@@ -82,7 +93,8 @@ def copy_if_absent(src: Path, dest: Path) -> bool:
 def build_entry(entry: dict, dest: Path) -> dict:
     """转成 stickers.json 的条目：gif 技能按 label 挑、按 path 发；随包图片没有网络来源，url 留空。"""
     item = {
-        "id": f"{TIER}-{Path(entry['file']).stem}",
+        # 用完整文件名：同名不同后缀（a.jpg / a.gif）不会撞 id。
+        "id": f"{TIER}-{entry['file']}",
         "tier": TIER,
         "url": "",
         "label": entry["label"].strip(),
@@ -145,6 +157,7 @@ def install(repo: Path, home: Path, raw_sticker_dir: str | None) -> int:
             if os.path.lexists(manifest_path):  # 写的过程中别处生成了清单：以它为准
                 print(f"表情包清单已存在，跳过（不覆盖、不合并）：{manifest_path}")
                 return 0
+            os.chmod(tmp, 0o644)
             os.replace(tmp, manifest_path)
         finally:
             if os.path.exists(tmp):
