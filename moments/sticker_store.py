@@ -588,12 +588,19 @@ class _SocketWatch:
             if not self._closed:
                 try:
                     self._dups.append(sock.dup())
-                    return
-                except OSError:
-                    sock.close()
-                    raise
+                except OSError as e:
+                    # dup 不了（如 fd 将尽、Windows 上的老式服务提供程序）：只丢掉"期限后断连"这层增强，下载照常
+                    _log.warning("表情包：登记下载连接失败，本次下载不带期限后断连 %s", type(e).__name__)
+                return
         sock.close()   # 期限已过才连上：直接断掉，不再往下发请求
         raise OSError("下载已被放弃")
+
+    def release(self) -> None:
+        """放掉已登记的 dup（只 close，不 shutdown）：跳转分支关掉旧响应后调用，不让旧连接挂到整次下载结束。"""
+        with self._lock:
+            dups, self._dups = self._dups, []
+        for d in dups:
+            d.close()
 
     def close_all(self) -> None:
         with self._lock:
@@ -799,6 +806,9 @@ def _fetch(url: str, deadline: float) -> bytes:
         except urllib.error.HTTPError as e:
             location = e.headers.get("Location") if e.headers is not None else None
             e.close()
+            watch = getattr(_tls, "watch", None)
+            if watch is not None:
+                watch.release()   # 旧响应已关，这一跳的登记连接不必再留着
             if e.code not in _REDIRECT_CODES:
                 raise StickerError("fetch_failed", "下载失败：对方回了 HTTP %d" % e.code)
             if not location:
