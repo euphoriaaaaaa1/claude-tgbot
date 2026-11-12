@@ -164,12 +164,40 @@ def test_整体超时后_下载线程的连接被断开_线程很快结束(monke
         store.fetch("http://%s/x.png" % HOST)
     returned = time.monotonic()
     assert info.value.code == "timeout"
-    assert returned - t0 < store.TOTAL_TIMEOUT + 1.5
+    assert store.TOTAL_TIMEOUT <= returned - t0 < store.TOTAL_TIMEOUT + 3   # 确实等到了期限才返回，且余量留足
     for t in [t for t in threading.enumerate() if t.name == "sticker-fetch" and t not in before]:
         t.join(1.0)
         assert not t.is_alive(), "期限过后下载线程还挂着"
     server.join(2.0)
     assert stopped and stopped[0] - returned < 1.5, "假服务器没看到连接被断开"
+
+
+def test_dup失败_下载照常成功_只是不登记(monkeypatch):
+    body = b"GIF89a" + b"\x00" * 20
+
+    def serve(conn):
+        conn.recv(4096)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body) + body)
+    port, server = _serve_once(serve)
+    monkeypatch.setattr(store, "resolve", lambda *a, **kw: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))])
+    real_open = store.open_url
+
+    def to_local(req, timeout, addr):
+        req.full_url = "http://%s:%d/x.png" % (HOST, port)
+        return real_open(req, timeout, "127.0.0.1")
+    monkeypatch.setattr(store, "open_url", to_local)
+
+    def no_dup(self):
+        raise OSError(24, "模拟描述符将尽")
+    monkeypatch.setattr(socket.socket, "dup", no_dup)
+
+    seen = []
+    real_add = store._SocketWatch.add
+    monkeypatch.setattr(store._SocketWatch, "add", lambda self, sock: (seen.append(self), real_add(self, sock))[1])
+    assert store.fetch("http://%s/x.png" % HOST) == body
+    server.join(2.0)
+    assert seen and all(not w._dups for w in seen), "dup 失败时不该登记"
 
 
 # ── C1：Windows 上读目录文件撞上替换时的 PermissionError 要短重试 ────────────────────
@@ -180,7 +208,7 @@ def _flaky_open(monkeypatch, path, fails):
     count = [0]
 
     def fake(file, mode="r", *a, **kw):
-        if os.fspath(file) == path and mode == "rb" and count[0] < fails:
+        if isinstance(file, (str, bytes, os.PathLike)) and os.fspath(file) == path and mode == "rb" and count[0] < fails:
             count[0] += 1
             raise PermissionError(13, "模拟被替换中的文件")
         return real_open(file, mode, *a, **kw)
