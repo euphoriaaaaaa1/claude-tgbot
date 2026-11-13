@@ -17,6 +17,7 @@ import db
 import quota
 from school_calendar import IN_SESSION, TERM_LABEL_ZH
 from claude_cli import call_claude
+from moments import shell_path
 
 
 VISUAL_HOBBIES = {"想画画", "想拍照", "想看老剧", "想买花", "想烤饼干",
@@ -541,7 +542,7 @@ def _write_moment_image(bot_id: str, bot_cfg: dict, moment_id: int,
         f"请用 novelai-skill 生成【2~4 张】符合这条朋友圈场景的图：同一场景、同一时刻，"
         f"不同角度或构图（像随手拍了几张发九宫格），人物外貌前后保持一致。\n"
         f"全部生成成功后，用 Bash **一次性**把所有路径回写：\n"
-        f"  {PYBIN} {SET_IMG} {moment_id} <图1绝对路径> <图2绝对路径> [<图3> ...]\n\n"
+        f"  {shell_path(PYBIN)} {shell_path(SET_IMG)} {moment_id} <图1绝对路径> <图2绝对路径> [<图3> ...]\n\n"
         f"注意：\n"
         f"- 每张都必须真实生成，不能假装、不能复用旧图\n"
         f"- 优先按 2~4 张；实在只生出 1 张也要回写那 1 张\n"
