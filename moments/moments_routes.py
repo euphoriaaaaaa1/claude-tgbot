@@ -24,7 +24,7 @@ from flask import Blueprint, abort, current_app, jsonify, render_template, reque
 import db
 from adapters import AdapterError, AdapterUnavailable, registry, valid_bot_id
 from adapters.base import NOTIFY_STATUSES
-from moments import global_cfg
+from moments import global_cfg, sticker_store
 from moments.request_body import BodyError, json_object
 
 moments_bp = Blueprint("moments_feed", __name__)
@@ -1064,16 +1064,27 @@ def api_moment_detail(moment_id):
 # merge_slashes=False：/image//abs/path 这类带 // 的路径直接不匹配（回 404），不让框架先 308 跳到合并后的地址
 @moments_bp.route("/image/<path:filename>", merge_slashes=False)
 def serve_image(filename):
-    """filename 是相对图片根的路径（/ 分隔）。拼回后 realpath 必须在图片根之下、且是已有的普通文件；
-    绝对路径、盘符路径、.. 越界、经符号链接指到根外、目录、不存在一律 404。"""
+    """filename 是相对图片根的路径（/ 分隔）。拼回后 realpath 必须在图片根之下、且是已有的普通文件，
+    文件头还得是 PNG/JPEG/GIF/WEBP 之一；绝对路径、盘符路径、.. 越界、经符号链接指到根外、目录、不存在、
+    不是这四种图片（HTML、SVG、文本、空文件、截断的假头）一律 404。"""
     if filename.startswith(("/", "\\")) or os.path.isabs(filename) or os.path.splitdrive(filename)[0]:
         abort(404)
     root = _media_root()
     real = os.path.realpath(os.path.join(root, *filename.split("/")))
     if not _under(real, root) or not os.path.isfile(real):
         abort(404)
-    resp = send_file(real, conditional=True)
-    # 图片内容不会变（文件名带时间戳与随机后缀），让浏览器永久缓存；类型按扩展名给，不许浏览器另行嗅探
-    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    # 图片根里混进的 HTML/SVG 若照扩展名发出，会在管理台同源下执行脚本：只发文件头认得出的四种图片，
+    # Content-Type 也按文件头定，与扩展名无关
+    try:
+        with open(real, "rb") as f:
+            kind = sticker_store.sniff(f.read(12))
+    except OSError:
+        abort(404)
+    if kind is None:
+        abort(404)
+    resp = send_file(real, mimetype=sticker_store.MIMETYPES[kind], conditional=True)
+    # 图片内容不会变（文件名带时间戳与随机后缀），浏览器可永久缓存；只许私有缓存，免得经反向代理/CDN 暴露时
+    # 边缘节点把登录后才能看的图缓存下来发给未登录者；不许浏览器另行嗅探类型
+    resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
     resp.headers["X-Content-Type-Options"] = "nosniff"
     return resp
