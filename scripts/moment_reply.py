@@ -8,6 +8,7 @@
 1. 写入 moment_comments 表，from_user = bot_id，parent_id = parent_comment_id
 2. 把父评论的 pending 标志清掉
 3. 可选附图（bot 用 novelai-skill 生完图后 --image <path>）
+4. 动态不存在（用户已删掉）时静静丢掉：stdout 打一行 SKIP，退出码 0，不写库
 """
 import sys
 import os
@@ -39,12 +40,15 @@ def main():
     if not reply_text and not image_path:
         print("both empty", file=sys.stderr); sys.exit(3)
 
-    if image_path and not os.path.exists(image_path):
-        print(f"image not found: {image_path}", file=sys.stderr); sys.exit(4)
-
     moment = db.get_moment(moment_id)
     if not moment:
-        print(f"moment {moment_id} not found", file=sys.stderr); sys.exit(5)
+        # 用户在朋友圈页删掉的动态：迟到的回复静静丢掉、不算出错，不写库。
+        # 先于附图检查：动态没了，附图在不在都不再要紧，不能因附图不在报错退出。
+        print(f"SKIP: 动态 {moment_id} 不存在或已删除，回复没有发出")
+        return
+
+    if image_path and not os.path.exists(image_path):
+        print(f"image not found: {image_path}", file=sys.stderr); sys.exit(4)
 
     # 真正的 bot_id 必须从 worker 环境读（spawn-worker.sh 设了 TELEGRAM_WORKER_BOT）
     # 不能用 moment.bot_id —— 用户朋友圈 moment.bot_id='__user__'，会让 bot 评论被记成用户
