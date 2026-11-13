@@ -7,6 +7,7 @@
 1. 从环境变量 TELEGRAM_WORKER_BOT 读 bot_id（spawn-worker.sh 设的）
 2. 调 db.toggle_like(moment_id, bot_id) — 已点过会取消（toggle 语义），未点则添加
 3. 防自赞：如果 moment 是自己发的，拒绝
+4. 动态不存在（用户已删掉）时静静丢掉：stdout 打一行 SKIP，退出码 0，不写库
 """
 import sys
 import os
@@ -31,8 +32,9 @@ def main():
 
     moment = db.get_moment(moment_id)
     if not moment:
-        print(f"moment {moment_id} not found", file=sys.stderr)
-        sys.exit(5)
+        # 用户在朋友圈页删掉的动态：迟到的点赞静静丢掉、不算出错，不写库
+        print(f"SKIP: 动态 {moment_id} 不存在或已删除，没有点赞")
+        return
 
     # 防自赞：bot 不能赞自己发的圈
     if moment.get("bot_id") == bot_id:
