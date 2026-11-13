@@ -266,6 +266,7 @@ bot 的 worker 默认只加载 bot 自己的项目设置与本地设置（`--set
 - dispatcher 日志里每次拉起有一行 `WORKER-ISOLATION`：`mode=on status=ok` 表示已隔离；`status=degraded reason=<原因>` 表示这次走了旧方式；`mode=off` 表示关闭标记生效。
 - 想确认全局 `CLAUDE.md` 没进 bot：在全局 `CLAUDE.md` 里临时加一句只有你知道的话，下次 /clear 后问 bot 是否知道，确认后删掉。
 - 已在进行的会话要到下次压缩或 /clear 后才完全生效，此前会话里还留着旧的技能清单与全局说明。
+- bot 的人设 `CLAUDE.md` 只经系统提示进上下文一次；已有会话历史里早先自动加载的旧副本要到下次压缩或 /clear 后才消失。
 - 不支持 `CLAUDE_CONFIG_DIR`：dispatcher 与四条钩子都按 `~/.claude` 定位会话与设置。
 - Windows 上共享链接用目录联接（junction），这一套尚未在 Windows 真机上实测；遇到 bot 画不了图或行为异常，先建全局关闭标记。另有一个已知限制：Windows 用户名含 `&` 时，bot 可能读不到图片附件。
 
