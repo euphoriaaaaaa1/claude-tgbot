@@ -228,8 +228,7 @@ th { font-size:12px; color:var(--ink-soft); font-weight:500; }
     <a class="btn btn-ghost" href="/console">管理台</a>
     <a class="btn btn-ghost" href="/provider">供应商</a>
     <a class="btn btn-ghost" href="/console/stickers">表情包</a>
-    <!-- 供应商模式（壳，main_panel_url 只在该模式注入）：朋友圈在壳内 /moments，与 _console_nav.html 一致；默认模式仍是本进程的根 -->
-    <a class="btn btn-ghost" href="{{ '/moments' if main_panel_url is defined else '/' }}">朋友圈</a>
+    <a class="btn btn-ghost" href="/moments">朋友圈</a>
     <a class="btn btn-ghost" href="/params">系统参数</a>
     <a class="btn btn-ghost" href="{{ main_panel_url|default('') }}/styles">画风</a>
     <button class="btn btn-ghost" id="syncAllBtn">同步全部 bot</button>
