@@ -230,17 +230,21 @@ function ancestors(d: string): string[] {
   return out
 }
 
-// bot 目录与共享目录各自的祖先链，字面路径与解析链接后的真实路径各走一遍；Windows 每项写两种分隔符
-function claudeMdExcludes(dirs: string[], win: boolean): string[] {
+// bot 目录与共享目录各自的祖先链，字面路径与解析链接后的真实路径各走一遍；Windows 每项写两种分隔符。
+// 另排 bot 目录自己的 CLAUDE.md：人设已经经 --append-system-prompt-file 进了系统提示，cwd 自动加载会再注入一份。
+// 只排这一个文件名：bot 目录下的 CLAUDE.local.md、.claude/CLAUDE.md、.claude/rules/** 没走系统提示，排了就一份都没了。
+// 共享目录没有经系统提示传的说明文件，只排祖先链
+function claudeMdExcludes(botDir: string, sharedDir: string, win: boolean): string[] {
   const seen = new Set<string>()
   const add = (p: string) => {
     if (win) { seen.add(p.replace(/\//g, '\\')); seen.add(p.replace(/\\/g, '/')) } else seen.add(p)
   }
-  for (const d of dirs) {
+  for (const d of [botDir, sharedDir]) {
     let real = d
     try { real = realpathSync(d) } catch { /* 解析不出就只走字面路径 */ }
     for (const base of real === d ? [d] : [d, real]) {
       for (const a of ancestors(base)) for (const pat of CLAUDE_MD_PATTERNS) add(join(a, pat))
+      if (d === botDir) add(join(base, 'CLAUDE.md'))
     }
   }
   return [...seen]
@@ -386,7 +390,7 @@ export function prepareWorkerIsolation(opts: { botDir: string; home: string; use
     // skillOverrides = 三个自带项 + 个人技能与个人命令，合在一起按 JS 默认排序写出，同样的输入两次准备逐字相同
     const overrideNames = [...new Set([...DISABLED_BUNDLED, ...personalOverrideNames(home, botDir, engineDir)])].sort()
     const flag: Record<string, unknown> = {
-      claudeMdExcludes: claudeMdExcludes([botDir, join(home, '.claude', 'worker-shared')], win),
+      claudeMdExcludes: claudeMdExcludes(botDir, join(home, '.claude', 'worker-shared'), win),
       disableBundledSkills: true,
       skillOverrides: Object.fromEntries(overrideNames.map(n => [n, 'off'])),
     }
