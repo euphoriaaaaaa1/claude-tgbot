@@ -74,7 +74,7 @@ test('共享目录的父路径被文件占住：降级 shared_unavailable，不�
   expect(r.status).toBe('degraded'); expect(r.reason).toBe('shared_unavailable')
 })
 
-test('排除项：含家目录与频道根的 CLAUDE.md，不含 bot 自己的；bot 路径经链接时真实路径也排除', () => {
+test('排除项：含家目录与频道根的 CLAUDE.md，含 bot 自己的且恰好一次；bot 路径经链接时真实路径也排除', () => {
   const sb = sandbox(); const realRoot = join(sb.root, 'real-channels'); mkdirSync(join(realRoot, 'bot2', '.claude'), { recursive: true })
   symlinkSync(realRoot, join(sb.root, 'linked-channels'))
   const botDir = join(sb.root, 'linked-channels', 'bot2')
@@ -84,7 +84,7 @@ test('排除项：含家目录与频道根的 CLAUDE.md，不含 bot 自己的�
   expect(ex).toContain(join(sb.root, 'linked-channels', 'CLAUDE.md'))
   expect(ex).toContain(join(sb.root, 'linked-channels', '.claude', 'rules', '**'))
   expect(ex.some(e => e.endsWith(join('real-channels', 'CLAUDE.local.md')))).toBe(true)
-  expect(ex).not.toContain(join(botDir, 'CLAUDE.md'))
+  expect(ex.filter(e => e === join(botDir, 'CLAUDE.md')).length).toBe(1)
   expect(new Set(ex).size).toBe(ex.length)
 })
 
