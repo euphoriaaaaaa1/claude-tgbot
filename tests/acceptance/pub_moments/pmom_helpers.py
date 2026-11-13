@@ -22,7 +22,11 @@ REPO = Path(__file__).resolve().parents[3]
 
 USER = "__user__"
 ME = "我"                       # user_display_name 的缺省值
-ADDR = "哥哥"                   # 回落称呼
+ADDR = "用户"                   # 没填称呼时的中性写法（D5，用户 11-13 改：不回落成任何固定称呼）
+OLD_FALLBACK = "哥哥"            # 旧回落称呼：没填称呼时不得出现
+PUBLIC_HINT_NEUTRAL = "不要在回复里用你平时对用户的亲密称呼，也不要透露你和用户的私密关系"
+PRIVATE_HINT_NEUTRAL = "只有用户能看到，可以放开亲密称呼"
+REPLY_RULE_NEUTRAL = "评论里不要用「你」指代用户，按你人设里对用户的称呼直接称呼，或省略主语"
 DECODE_FAILED = "图片解析失败，请换一张图片重试"
 MiB = 1024 * 1024
 MAX_IMG = 8 * MiB               # 上传图解码后上限
