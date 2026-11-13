@@ -10,19 +10,45 @@ no_symlink = pytest.mark.skipif(sys.platform == "win32", reason="Windows 上建�
 
 
 def test_图片根下已有文件_200_内容一致(c, paths):
-    H.write_file(paths.media / "a" / "p.png", b"\x89PNG-pmom-fake")
+    data = H.png("pmom-body")
+    H.write_file(paths.media / "a" / "p.png", data)
     r = c.get("/image/a/p.png")
-    assert r.status_code == 200 and r.data == b"\x89PNG-pmom-fake"
+    assert r.status_code == 200 and r.data == data
 
 
 def test_图片响应带长期不可变缓存头(c, paths):
     H.write_file(paths.media / "a" / "p.png")
-    assert c.get("/image/a/p.png").headers.get("Cache-Control") == "public, max-age=31536000, immutable"
+    assert c.get("/image/a/p.png").headers.get("Cache-Control") == "private, max-age=31536000, immutable"
 
 
 def test_图片响应带nosniff(c, paths):
     H.write_file(paths.media / "a" / "p.png")
     assert c.get("/image/a/p.png").headers.get("X-Content-Type-Options") == "nosniff"
+
+
+@pytest.mark.parametrize("name,data,ctype", [
+    ("x.png", b"GIF89a" + b"g" * 40, "image/gif"),
+    ("y.png", b"\xff\xd8\xff\xe0" + b"j" * 40, "image/jpeg"),
+    ("z.gif", b"RIFF\x24\x00\x00\x00WEBPVP8 " + b"w" * 28, "image/webp"),
+])
+def test_Content_Type按文件头定_与扩展名无关(c, paths, name, data, ctype):
+    H.write_file(paths.media / "a" / name, data)
+    r = c.get("/image/a/" + name)
+    assert r.status_code == 200 and r.data == data
+    assert r.headers.get("Content-Type", "").split(";")[0].strip() == ctype
+
+
+@pytest.mark.parametrize("name,data", [
+    ("page.png", b"<html><script>PMOM-MARK()</script></html>"),
+    ("vec.png", b"<svg xmlns='http://www.w3.org/2000/svg'><script>PMOM-MARK()</script></svg>"),
+    ("note.png", b"PMOM-MARK plain text, not an image"),
+    ("empty.png", b""),
+    ("cut.png", b"\x89PNG" + b"PMOM-MARK"),
+])
+def test_图片根下不是图片的文件_404且正文不含文件内容(c, paths, name, data):
+    H.write_file(paths.media / "a" / name, data)
+    r = c.get("/image/a/" + name)
+    assert r.status_code == 404 and b"PMOM-MARK" not in r.data
 
 
 def test_点点越界到根外_404(c, paths):
