@@ -7,7 +7,7 @@
 T06 只落地“壳”本身：登录门、登录限速、同源 + JSON 写请求校验、安全响应头、
 ``next`` 站内路径校验，以及可启动的 ``/provider`` 占位页。console / lifecycle /
 features / providers / styles 等页面和 API 蓝图由后续任务注册；本模块不 import
-已删除的旧 Hub 模块，也不提供旧 8765 朋友圈页面。
+已删除的旧 Hub 模块。朋友圈页在本壳的 /moments（moments.moments_routes）。
 """
 import os
 import sys
@@ -22,6 +22,7 @@ from moments.console_routes import console_bp
 from moments.features_routes import features_bp
 from moments.hub_forward import hub_forward_bp
 from moments.lifecycle_routes import lifecycle_bp
+from moments.moments_routes import moments_bp
 from moments.params_routes import params_bp
 from moments.provider_routes import provider_bp
 from moments.sticker_routes import stickers_bp
@@ -51,6 +52,9 @@ app.register_blueprint(hub_forward_bp)
 app.register_blueprint(voice_preview_bp)
 # 表情包页（/console/stickers 与 /api/console/stickers*）：读写 stickers.json 与图片根，登录门、跨站校验与可达面闸门对本蓝图生效。
 app.register_blueprint(stickers_bp)
+# 朋友圈页（/moments、/api/moments 等朋友圈接口与 /image/<相对图片根的路径>）：读写朋友圈库与图片根，
+# 登录门、跨站校验与可达面闸门对本蓝图生效。
+app.register_blueprint(moments_bp)
 from provider_config import SeamsNotConfigured as _SeamsNotConfigured  # noqa: E402
 from provider_config import SafetyGateTripped as _SafetyGateTripped  # noqa: E402
 
@@ -288,7 +292,9 @@ def _reachable_gate():
             or endpoint.startswith("console.") or endpoint.startswith("lifecycle.")
             or endpoint.startswith("features.") or endpoint.startswith("provider.")
             or endpoint.startswith("params.") or endpoint.startswith("hub_forward.")
-            or endpoint.startswith("voice_preview.") or endpoint.startswith("stickers.")):
+            or endpoint.startswith("voice_preview.") or endpoint.startswith("stickers.")
+            # 朋友圈蓝图整体放行：页面、朋友圈接口与图片路由
+            or endpoint.startswith("moments_feed.")):
         return None
     abort(404)
 
