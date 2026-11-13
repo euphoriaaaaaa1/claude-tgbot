@@ -393,7 +393,7 @@ curl -H "Authorization: Bearer $(cat ~/.config/claude-dsh-console/adapter.token)
 ### 9.1 朋友圈
 
 - 页面：`/moments`。
-- 内容存在 SQLite；首次打开朋友圈页会建库。
+- 内容存在 SQLite（默认 `~/.claude-tgbot/state.db`，可用 `CLAUDEBOT_DB_PATH` 改）。登录管理台后打开朋友圈页时会自动建库、补齐朋友圈用到的表，不用手动初始化；之后每次启动管理台，第一次打开朋友圈页时再核对一次（已齐全就不动）。
 - 关掉 `moments` 后仍然可以正常私聊；关掉 `life` 后很少自己发圈，但回评论、看你的朋友圈照常。
 
 ### 9.2 画风
@@ -413,7 +413,12 @@ bot 的 worker 不加载用户级设置，生图技能经共享目录 `~/.claude
 
 ### 9.3 ComfyUI（可选）
 
-在 `configs/_global.yml` 的 `moments.image_generation` 里把 `provider` 改成 `comfyui`，填本机 `url`、workflow 路径和输出目录。默认仍可用 NovelAI；两者都只是生图后端，不影响聊天。
+生图引擎按场景分开切，在 `configs/_global.yml` 的 `moments.image_generation` 下：
+
+- `provider_moment`：朋友圈配图用哪个（`novelai` 或 `comfyui`）；
+- `provider_telegram`：聊天里发图用哪个（`novelai` 或 `comfyui`）。
+
+朋友圈配图先读 `provider_moment`，没写时才回退旧的 `provider`；样例配置里两个键都已写好，所以只改 `provider` 不会生效，要改这两个键。改成 `comfyui` 时同一节下的 `comfyui` 要填本机 `url`、workflow 路径和输出目录。可以直接编辑文件，也可以在管理台「系统参数」页（`/params`）用原文编辑改这两个键。默认仍可用 NovelAI；两者都只是生图后端，不影响文字聊天。
 
 ---
 
