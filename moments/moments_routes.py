@@ -24,7 +24,7 @@ from flask import Blueprint, abort, current_app, jsonify, render_template, reque
 import db
 from adapters import AdapterError, AdapterUnavailable, registry, valid_bot_id
 from adapters.base import NOTIFY_STATUSES
-from moments import global_cfg, sticker_store
+from moments import global_cfg, shell_path, sticker_store
 from moments.request_body import BodyError, json_object
 
 moments_bp = Blueprint("moments_feed", __name__)
@@ -698,7 +698,7 @@ def _trigger_bot_moment_reply(entry, caps, names: dict, moment: dict, user_text:
     public_warn = (
         f"这条朋友圈是公开的，所有朋友都能看到评论。{w['public_warn']}，就当回复一个普通朋友的评论。\n"
         "如果之前的历史评论里已经泄密了亲密称呼，用 Bash 工具删掉：\n"
-        f"  {PYTHON_BIN} {MOMENT_DELETE_COMMENT_SCRIPT} <comment_id>\n"
+        f"  {shell_path(PYTHON_BIN)} {shell_path(MOMENT_DELETE_COMMENT_SCRIPT)} <comment_id>\n"
     ) if is_public else (
         f"（这是私密朋友圈，{w['private_note']}。）\n"
     )
@@ -715,7 +715,7 @@ def _trigger_bot_moment_reply(entry, caps, names: dict, moment: dict, user_text:
             f"{history_block}\n"
             f"{public_warn}\n"
             f"用 Bash 工具回写朋友圈评论：\n"
-            f"{PYTHON_BIN} {MOMENT_REPLY_SCRIPT} {moment['id']} {comment_id} \"<你的回复内容>\" [--image <图绝对路径>]\n\n"
+            f"{shell_path(PYTHON_BIN)} {shell_path(MOMENT_REPLY_SCRIPT)} {moment['id']} {comment_id} \"<你的回复内容>\" [--image <图绝对路径>]\n\n"
             f"可以配图：评论场景适合配图时（{addr} 让你发图、自拍、晒东西、画面感强），"
             f"先用 novelai-skill 生图，再加 --image <路径> 参数。\n"
             f"\n"
@@ -770,7 +770,7 @@ def _trigger_bot_see_user_comment(entry, caps, running_names: dict, moment: dict
             f"{history_block}\n"
             f"要不要接话你自己决定：\n"
             f"- 想在评论里接话，用 Bash 工具回写朋友圈评论：\n"
-            f"  {PYTHON_BIN} {MOMENT_REPLY_SCRIPT} {moment['id']} {comment_id} \"<你的回复内容>\" [--image <图绝对路径>]\n"
+            f"  {shell_path(PYTHON_BIN)} {shell_path(MOMENT_REPLY_SCRIPT)} {moment['id']} {comment_id} \"<你的回复内容>\" [--image <图绝对路径>]\n"
             f"  可以配图：评论场景适合配图时（{addr} 让你发图、自拍、晒东西、画面感强），"
             f"先用 novelai-skill 生图，再加 --image <路径> 参数。\n"
             f"{DM_RULE.format(addr=addr)}\n"
@@ -876,9 +876,9 @@ def _trigger_bot_see_user_moment(entry, caps, running_names: dict, moment_id: in
         f"{history_block}{user_history_block}\n"
         f"你看到了，可以从下面四种做法里挑一个：\n"
         f"  A. 只点赞（看到了但没话说，最常见的轻互动）：\n"
-        f"     {PYTHON_BIN} {MOMENT_LIKE_SCRIPT} {moment_id}\n"
+        f"     {shell_path(PYTHON_BIN)} {shell_path(MOMENT_LIKE_SCRIPT)} {moment_id}\n"
         f"  B. 只评论：\n"
-        f"     {PYTHON_BIN} {MOMENT_REPLY_SCRIPT} {moment_id} 0 \"<你的评论>\" [--image <图>]\n"
+        f"     {shell_path(PYTHON_BIN)} {shell_path(MOMENT_REPLY_SCRIPT)} {moment_id} 0 \"<你的评论>\" [--image <图>]\n"
         f"  C. 点赞+评论（确实有话想说）：先调 A 再调 B\n"
         f"  D. 什么都不做（无感、跟自己没关系）\n"
         f"\n"
