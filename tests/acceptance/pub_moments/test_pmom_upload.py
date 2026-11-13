@@ -177,10 +177,10 @@ def test_带图接口请求体超12MiB_413_不落盘(c, paths, path):
     assert H.files_in(paths.media) == [] and H.tables(paths.db_path) == before
 
 
-def test_评论请求体恰好12MiB_不报413(c, paths):
+def test_评论请求体恰好12MiB_照常收下(c, paths):
     mid = H.user_moment(paths.db, "被评论")
     body = H.sized_json('{"moment_id": %d, "text": "x"' % mid, H.MAX_BODY)
-    assert c.post("/api/comment", data=body, content_type="application/json").status_code != 413
+    assert c.post("/api/comment", data=body, content_type="application/json").status_code == 200
 
 
 # ── 资料上传头像（27）────────────────────────────────────────────────────────
