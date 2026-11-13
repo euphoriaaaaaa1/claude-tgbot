@@ -8,7 +8,6 @@
 - 管理台壳用进程内 Flask test_client；口令与会话文件钉在临时目录。
 - 被测模块 moments.moments_routes 只在夹具里导入：还没实现时整套照样能被收集，运行时失败（红态）。
 """
-import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
