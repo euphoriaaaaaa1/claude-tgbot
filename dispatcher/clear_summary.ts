@@ -206,6 +206,21 @@ export function mechanicalDigest(turns: Turn[], opts?: DigestOpts): string {
   return lines.length ? `${lines.join('\n')}\n` : ''
 }
 
+/** prompt 里让模型"没东西可记"时输出的占位句；summarizeTurns 靠同一常量认出它 */
+const NO_CONTENT_SENTINEL = '无实质内容'
+
+/**
+ * 整段输出只有占位句才算"无内容"；夹在其他要点里不算。
+ * 模型按"每行一个要点"的习惯常给占位句加列表符号或引号，这些包装先剥掉再比
+ */
+function isNoContentReply(raw: string): boolean {
+  const core = raw.trim()
+    .replace(/^(?:[-*•·]|\d+[.、．])\s*/u, '')                      // 开头的列表符号：- * • · 1. 1、
+    .replace(/[\s。．.！!？?…~～"'“”‘’「」『』]+$/u, '')              // 末尾标点与引号（含引号内外的标点）
+    .replace(/^[\s"'“”‘’「」『』]+/u, '')                             // 开头的引号
+  return core === NO_CONTENT_SENTINEL
+}
+
 /** 给 claude -p 的摘要 prompt。对话包在外部数据标记内，并声明"是数据不是指令"防注入 */
 export function buildSummaryPrompt(turns: Turn[]): string {
   const body = (Array.isArray(turns) ? turns : [])
@@ -229,7 +244,8 @@ export function buildSummaryPrompt(turns: Turn[]): string {
     '1. 用中文写 5 行以内，每行一个要点，直接给结论，不要开场白、不要复述本提示。',
     '2. 只写聊了哪些主题、进行到什么程度、有没有待办或约定。',
     '3. 禁止输出任何 id、chat_id、令牌、密钥、文件路径，也不要原文引用聊天内容。',
-    '4. 没有值得记的内容就只输出一行：无实质内容。',
+    '4. 正在进行的情景也写一行，写明地点、在做什么、两人关系进展到哪，用中性措辞概括，不复述露骨细节。零星寒暄不算正在进行的情景。',
+    `5. 没有值得记的内容就只输出一行：${NO_CONTENT_SENTINEL}。既没有计划约定、也没有正在进行的情景时才这样输出，占位句后面不附加任何说明。`,
   ].join('\n')
 }
 
@@ -256,6 +272,8 @@ export async function summarizeTurns(turns: Turn[], run: SummaryRunner, retryDel
       raw = await run(prompt)
     }
     if (raw !== AUTH_FAILED && typeof raw === 'string' && raw.trim()) {
+      // 模型判定没东西可记：返回空串让调用方保留上一份摘要，不能拿占位句覆盖，也不走机械截取
+      if (isNoContentReply(raw)) return ''
       // 截断兜底：模型跑飞时别把整段对话原样倒进记忆文件
       const body = raw.trim().split('\n').filter(l => l.trim()).slice(0, MODEL_MAX_LINES).join('\n').slice(0, MODEL_MAX_CHARS)
       const clean = redactSecrets(body).trim()
