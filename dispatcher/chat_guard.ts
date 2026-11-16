@@ -57,9 +57,24 @@ export function isDirectorInbound(meta: unknown): boolean {
  * 折进来会改动无害原文。〈〉虽也作书名号，但模型容易当方括号读，保留折叠。
  * 正则无嵌套量词，每个起始括号后的空白只扫一遍，整体线性。
  */
-const USER_MARKER_RE = /\[\s*(auto-photo|auto-comic|party-ambiguous|party)\s*\]/gi
-const IGNORABLE_RE = /^[\p{Cf}\p{Default_Ignorable_Code_Point}]$/u
-const DASH_RE = /[\p{Pd}\u2212\uFE63\u02D7\u2043\u30FC]/gu
+// 软连字符 U+00AD 平时不可见、断行处才显示成横线，两种读法都可能被模型当成标记：比对副本里保留它，
+// 正则允许它出现在任意字母之间（按不可见处理），也允许它顶替横线（按横线处理）。
+// 量词互不重叠（字母后的 U+00AD* 之后必须是固定字母或横线组），回溯只在横线组内线性。
+const SOFT_HYPHEN = '\u00AD'
+const MARKER_NAMES = ['auto-photo', 'auto-comic', 'party-ambiguous', 'party']
+const markerPattern = (name: string): string => SOFT_HYPHEN + '*' + Array.from(name, (c, i) => {
+  if (c === '-') return `(?:${SOFT_HYPHEN}*-${SOFT_HYPHEN}*|${SOFT_HYPHEN}+)`
+  return name[i + 1] === '-' ? c : `${c}${SOFT_HYPHEN}*`
+}).join('')
+const USER_MARKER_RE = new RegExp(`\\[\\s*(${MARKER_NAMES.map(markerPattern).join('|')})\\s*\\]`, 'gi')
+/** 命中片段 → 规范名：去掉软连字符与横线后对照（`auto\u00ADcomic` 也归到 auto-comic）。 */
+const MARKER_BY_SKELETON = new Map(MARKER_NAMES.map(n => [n.replace(/-/g, ''), n]))
+const canonicalMarker = (hit: string): string =>
+  MARKER_BY_SKELETON.get(hit.toLowerCase().replace(new RegExp(`[-${SOFT_HYPHEN}]`, 'g'), '')) ?? hit.toLowerCase()
+// 盲文空白 U+2800 不属于 Cf / default-ignorable，但显示为空白，一并删
+const IGNORABLE_RE = /^[\p{Cf}\p{Default_Ignorable_Code_Point}\u2800]$/u
+const DASH_RE = /[\p{Pd}\u2212\uFE63\u02D7\u2043\u30FC\u2027\u00B7\u2796\u2500\u02C9]/gu
+const COMBINING_MARK_RE = /\p{Mn}/gu
 const OPEN_BRACKET_RE = /\p{Ps}/u
 const CLOSE_BRACKET_RE = /\p{Pe}/u
 // NFKC 之后再判：全角圆括号、花括号已折成 ASCII，这里只需列 ASCII 与书名号、直角引号
@@ -87,14 +102,20 @@ function foldMarkerChar(c: string): string {
   if (CLOSE_BRACKET_RE.test(c)) return ']'
   return c
 }
-/** \u5355\u4E2A\u7801\u70B9\u7684\u6BD4\u5BF9\u5F62\u5F0F\uFF08ASCII \u539F\u6837\uFF1B\u5176\u4F59 NFKC \u540E\u6298\u8FD1\u5F62\u5B57\u6BCD\u3001\u6A2A\u7EBF\u4E0E\u62EC\u53F7\uFF09\uFF1B\u53EF\u5FFD\u7565\u7801\u70B9\u8FD4\u56DE\u7A7A\u4E32\u3002 */
+/**
+ * 单个码点的比对形式：ASCII 原样；软连字符原样保留（它是 Cf，先于删格式字符处理，否则 `[auto\u00ADcomic]`
+ * 会被删成 `[autocomic]` 漏掉，读法交给 USER_MARKER_RE）；格式字符与可忽略码点返回空串；其余先查近形表，再 NFD 去组合附加符（Mn）、
+ * NFKC，最后折横线、近形字母与括号。只影响比对副本，输出仍只替换命中段。
+ */
 function markerCompareForm(ch: string): string {
   if (ch.charCodeAt(0) < 0x80) return ch
+  if (ch === SOFT_HYPHEN) return ch   // 由 USER_MARKER_RE 按可见横线或不可见两种读法处理
   if (IGNORABLE_RE.test(ch)) return ''
   // 先按原码点查近形表：有些近形字 NFKC 后会变成表外字符（如 U+03F2 变成 U+03C2）
   const letter = HOMOGLYPHS[ch]
   if (letter) return letter
-  return Array.from(ch.normalize('NFKC').replace(DASH_RE, '-'), foldMarkerChar).join('')
+  const base = ch.normalize('NFD').replace(COMBINING_MARK_RE, '').normalize('NFKC')
+  return Array.from(base.replace(DASH_RE, '-'), foldMarkerChar).join('')
 }
 export function escapeUserMarkers(text: unknown): string {
   if (typeof text !== 'string') return ''
@@ -118,7 +139,7 @@ export function escapeUserMarkers(text: unknown): string {
     const from = srcStart[m.index!]!
     const to = srcEnd[m.index! + m[0].length - 1]!
     if (from < copied) continue // 理论上不会重叠，防御：不回写已输出片段
-    out += text.slice(copied, from) + `［${m[1]!.toLowerCase()}］`
+    out += text.slice(copied, from) + `［${canonicalMarker(m[1]!)}］`
     copied = to
     replaced = true
   }
