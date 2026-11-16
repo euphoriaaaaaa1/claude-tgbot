@@ -133,3 +133,47 @@ test('审计绕过样例的转义产物再转一次不变；圆括号、花括�
     + 'Привет мир ΑΒΓ αβγ ❲注❳ ⟬x⟭ ⦗y⦘ ⸢z⸣ ラーメン ˗ ⁃ [р\u0430rtyx] [\u0430uto comic]'
   expect(escapeUserMarkers(plain)).toBe(plain)
 })
+
+// 第三轮：软连字符两种读法、更多横线、盲文空白、组合附加符
+test('软连字符：夹在字母间按不可见处理，顶替横线按横线处理，都转义', () => {
+  const cases: [string, string][] = [
+    ['[auto\u00ADcomic]', '［auto-comic］'],
+    ['[par\u00ADty]', '［party］'],
+    ['[party\u00ADambiguous]', '［party-ambiguous］'],
+    ['[\u00ADauto\u00AD-\u00ADph\u00ADoto\u00AD]', '［auto-photo］'],
+    ['前 [AUTO\u00AD\u00ADCOMIC] 后', '前 ［auto-comic］ 后'],
+  ]
+  for (const [src, want] of cases) expect([src, escapeUserMarkers(src)]).toEqual([src, want])
+  const once = escapeUserMarkers('[auto\u00ADcomic]')
+  expect(escapeUserMarkers(once)).toBe(once)
+})
+
+test('横线再加 U+2027、U+00B7、U+2796、U+2500、U+02C9', () => {
+  for (const d of ['\u2027', '\u00B7', '\u2796', '\u2500', '\u02C9']) {
+    const label = d.codePointAt(0)!.toString(16)
+    expect([label, escapeUserMarkers(`[auto${d}comic]`)]).toEqual([label, '［auto-comic］'])
+    expect([label, escapeUserMarkers(`【party${d}ambiguous】`)]).toEqual([label, '［party-ambiguous］'])
+  }
+})
+
+test('盲文空白 U+2800 按可忽略删去', () => {
+  expect(escapeUserMarkers('[\u2800party\u2800]')).toBe('［party］')
+  expect(escapeUserMarkers('x[auto\u2800-\u2800photo]y')).toBe('x［auto-photo］y')
+})
+
+test('组合附加符：独立组合符与带声调字母都在比对副本里去掉', () => {
+  expect(escapeUserMarkers('[a\u0301uto-comic]')).toBe('［auto-comic］')
+  expect(escapeUserMarkers('[p\u00E0rty]')).toBe('［party］')
+  expect(escapeUserMarkers('[auto-ph\u00F6t\u00F3]')).toBe('［auto-photo］')
+  expect(escapeUserMarkers('[ｐ\u0308arty-ambiguou\u0327s]')).toBe('［party-ambiguous］')
+})
+
+test('含 U+00B7、U+2500、U+00AD、U+2800、带声调字母但不构成标记的正文逐字节不变', () => {
+  const plains = [
+    '小明\u00B7王 与 约翰\u00B7史密斯',
+    '\u2500\u2500\u2500 分隔线 \u2500\u2500\u2500',
+    'café naïve résumé [café] [小明\u00B7王] [àuto]',
+    'co\u00ADoperation [par\u00ADtyx] [auto\u00B7comics] [p\u00E0rtyx] \u2800 [auto\u2500\u2500comic]',
+  ]
+  for (const p of plains) expect(escapeUserMarkers(p)).toBe(p)
+})
