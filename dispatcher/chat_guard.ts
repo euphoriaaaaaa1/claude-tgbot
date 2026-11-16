@@ -49,25 +49,52 @@ export function isDirectorInbound(meta: unknown): boolean {
 /**
  * 用户正文里的系统标记转全角；worker 只信投递件 meta 追加的标记（party-camera 与漫画模式）。
  * 不分大小写、容忍括号内空白（模型对 `[ AUTO-Comic ]` 同样会当标记读），统一换成小写规范名的全角形式。
- * 识别在比对副本上做：逐码点 NFKC，删去全部格式字符（Cf）与 default-ignorable 码点（零宽、双向控制、
- * 软连字符、不可见运算符、变体选择符等夹塞），横线类（Pd、U+2212、U+FE63）折成 `-`，方括号、方头括号、
- * 角括号类近形括号折成 `[` `]`。替换落回原文对应片段，未命中处逐字节不变。
- * 已是转义产物的 `［x］` 规范化后同样命中，换出来仍是 `［x］`，幂等。
- * 圆括号、花括号、书名号与直角引号不折：`(party)`、《party》、「party」是常见正文写法，折进来会改动无害原文。
+ * 识别在比对副本上做，逐码点处理：删去全部格式字符（Cf）与 default-ignorable 码点（零宽、双向控制、
+ * 软连字符、不可见运算符、变体选择符等夹塞）；其余做 NFKC，再把标记用到的字母的西里尔/希腊/小型大写近形字
+ * 折成拉丁字母，横线类（Pd、U+2212、U+FE63、U+02D7、U+2043、U+30FC）折成 `-`，开闭括号（Ps/Pe）折成 `[` `]`。
+ * 替换落回原文对应片段，未命中处逐字节不变。已是转义产物的 `［x］` 规范化后同样命中，换出来仍是 `［x］`，幂等。
+ * 括号里不折圆括号、花括号、书名号《》与直角引号「」『』：`(party)`、《party》、「party」是常见正文写法，
+ * 折进来会改动无害原文。〈〉虽也作书名号，但模型容易当方括号读，保留折叠。
  * 正则无嵌套量词，每个起始括号后的空白只扫一遍，整体线性。
  */
 const USER_MARKER_RE = /\[\s*(auto-photo|auto-comic|party-ambiguous|party)\s*\]/gi
 const IGNORABLE_RE = /^[\p{Cf}\p{Default_Ignorable_Code_Point}]$/u
-const DASH_RE = /[\p{Pd}−﹣]/gu
-// 近形开/闭括号：全角方括号、【】、〔〕、〖〗、〘〙、〚〛、⟦⟧、⁅⁆、⦋⦌、⦍⦎、⦏⦐、〈〉、⟨⟩、⦑⦒、﹝﹞
-// （NFKC 已把 ［］﹇﹈ 折成 [ ]、把 〈〉 U+2329/U+232A 折成 〈〉 U+3008/U+3009、把 ﹝﹞ 折成 〔〕，这里列全以防万一）
-const OPEN_BRACKET_RE = /[［【〔〖〘〚⟦⁅⦋⦍⦏〈⟨⦑﹝]/gu
-const CLOSE_BRACKET_RE = /[］】〕〗〙〛⟧⁆⦌⦎⦐〉⟩⦒﹞]/gu
-/** 单个码点的比对形式（ASCII 原样；其余 NFKC 后折横线与括号）；可忽略码点返回空串。 */
+const DASH_RE = /[\p{Pd}\u2212\uFE63\u02D7\u2043\u30FC]/gu
+const OPEN_BRACKET_RE = /\p{Ps}/u
+const CLOSE_BRACKET_RE = /\p{Pe}/u
+// NFKC 之后再判：全角圆括号、花括号已折成 ASCII，这里只需列 ASCII 与书名号、直角引号
+const UNFOLDED_BRACKETS = new Set(['(', ')', '{', '}', '\u300A', '\u300B', '\u300C', '\u300D', '\u300E', '\u300F'])
+// 标记里出现的字母（p a r t y u o h c m i b g s）的近形字：西里尔、希腊、拉丁小型大写与无点 i
+const HOMOGLYPHS: Record<string, string> = {
+  // 西里尔
+  '\u0430': 'a', '\u0410': 'a', '\u043E': 'o', '\u041E': 'o', '\u0440': 'p', '\u0420': 'p', '\u0441': 'c', '\u0421': 'c',
+  '\u0443': 'y', '\u0423': 'y', '\u04AF': 'y', '\u04AE': 'y', '\u0442': 't', '\u0422': 't', '\u043C': 'm', '\u041C': 'm',
+  '\u0456': 'i', '\u0406': 'i', '\u04CF': 'i', '\u0455': 's', '\u0405': 's', '\u04BB': 'h', '\u04BA': 'h', '\u041D': 'h',
+  '\u043D': 'h', '\u0412': 'b', '\u044C': 'b', '\u0432': 'b', '\u050D': 'g', '\u0261': 'g',
+  // 希腊
+  '\u03B1': 'a', '\u0391': 'a', '\u03BF': 'o', '\u039F': 'o', '\u03C1': 'p', '\u03A1': 'p', '\u03C4': 't', '\u03A4': 't',
+  '\u03C5': 'u', '\u03BC': 'u', '\u03A5': 'y', '\u03B3': 'y', '\u03B9': 'i', '\u0399': 'i', '\u039C': 'm', '\u0397': 'h',
+  '\u0392': 'b', '\u03B2': 'b', '\u03F2': 'c', '\u03F9': 'c',
+  // 拉丁小型大写与无点 i
+  '\u1D00': 'a', '\u0280': 'r', '\u1D18': 'p', '\u1D1B': 't', '\u028F': 'y', '\u1D1C': 'u', '\u1D0F': 'o', '\u029C': 'h',
+  '\u1D04': 'c', '\u1D0D': 'm', '\u026A': 'i', '\u0299': 'b', '\u0262': 'g', '\uA731': 's', '\u0131': 'i',
+}
+function foldMarkerChar(c: string): string {
+  const letter = HOMOGLYPHS[c]
+  if (letter) return letter
+  if (UNFOLDED_BRACKETS.has(c)) return c
+  if (OPEN_BRACKET_RE.test(c)) return '['
+  if (CLOSE_BRACKET_RE.test(c)) return ']'
+  return c
+}
+/** \u5355\u4E2A\u7801\u70B9\u7684\u6BD4\u5BF9\u5F62\u5F0F\uFF08ASCII \u539F\u6837\uFF1B\u5176\u4F59 NFKC \u540E\u6298\u8FD1\u5F62\u5B57\u6BCD\u3001\u6A2A\u7EBF\u4E0E\u62EC\u53F7\uFF09\uFF1B\u53EF\u5FFD\u7565\u7801\u70B9\u8FD4\u56DE\u7A7A\u4E32\u3002 */
 function markerCompareForm(ch: string): string {
   if (ch.charCodeAt(0) < 0x80) return ch
   if (IGNORABLE_RE.test(ch)) return ''
-  return ch.normalize('NFKC').replace(DASH_RE, '-').replace(OPEN_BRACKET_RE, '[').replace(CLOSE_BRACKET_RE, ']')
+  // 先按原码点查近形表：有些近形字 NFKC 后会变成表外字符（如 U+03F2 变成 U+03C2）
+  const letter = HOMOGLYPHS[ch]
+  if (letter) return letter
+  return Array.from(ch.normalize('NFKC').replace(DASH_RE, '-'), foldMarkerChar).join('')
 }
 export function escapeUserMarkers(text: unknown): string {
   if (typeof text !== 'string') return ''
