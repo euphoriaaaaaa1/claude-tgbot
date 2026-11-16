@@ -819,6 +819,12 @@ const REPLY_REMINDER =
   + '必须调用 reply 工具发送——直接输出文本用户是看不到的。'
   + '（若你按当下人设选择不回复，那就不调 reply、直接结束本轮，这没问题。）'
 
+// 投递标记固定文案（只由 meta + /photo_round、/comic_round 返回值追加；用户原文里的同名写法已转全角）。
+const AUTO_PHOTO_MARK = (round: number) =>
+  `[auto-photo] 第${round}轮：本轮回复按 image 技能的「旁观摄影机视角」规则生图并附上 2 张（同一场景不同机位）；正文不写镜头、拍照或动作描述。`
+const AUTO_COMIC_MARK = (round: number) =>
+  `[auto-comic] 第${round}轮：本轮回复按 image 技能出两页漫画，第一页第三人称、第二页 user 的第一视角，user 不在场时只出第一页；写法按 novelai-skill 的「漫画写法」；正文不写分镜、画格或生图过程。`
+
 export class WorkerManager {
   private proc: ChildProcessWithoutNullStreams | null = null
   // 状态机相位：stopped|starting|running|stopping。stopping 期间 ensure() 不再起新进程。
@@ -1559,16 +1565,17 @@ export class WorkerManager {
     if (plan.merge.length === 0) return
     const merged = plan.merge.map(p => metas.get(p)!).filter(Boolean)
     const content = this.buildDeliveryContent(merged)
-    // 拍照轮次只在投递时经 /photo_round 增加；要等它的返回决定轮次，故单独走异步分支。
+    // 拍照/漫画轮次只在投递时经 /photo_round、/comic_round 增加；要等返回决定轮次，故单独走异步分支。
+    // 以批内最后一条带模式指令的 meta 为准（与 burst 合并同口径），两种模式互斥、同一投递最多调一个端点。
     // 失败/关闭照常投递、不追加标记；等待期间 pumping 挡住下一次投递。
-    const photo = this.photoRequestFor(merged[0])
-    if (photo) {
+    const modeMeta = this.lastModeMeta(merged)
+    const comic = this.comicRequestFor(modeMeta)
+    const modeReq = comic ?? this.photoRequestFor(modeMeta)
+    if (modeReq) {
       this.pumping = true
-      void this.photoRound(photo.chatId, photo.deliveryKey)
+      void this.modeRound(comic ? '/comic_round' : '/photo_round', modeReq.chatId, modeReq.deliveryKey)
         .then(round => {
-          const mark = round != null
-            ? `[auto-photo] 第${round}轮：本轮回复按 image 技能的「旁观摄影机视角」规则生图并附上 2 张（同一场景不同机位）；正文不写镜头、拍照或动作描述。`
-            : ''
+          const mark = round == null ? '' : comic ? AUTO_COMIC_MARK(round) : AUTO_PHOTO_MARK(round)
           this.finishFileDelivery(plan, merged, mark ? this.injectDeliveryMarks(content, [mark]) : content)
         })
         .catch(() => this.finishFileDelivery(plan, merged, content))
@@ -1613,6 +1620,16 @@ export class WorkerManager {
     return block + content
   }
 
+  /** 批内最后一条带模式指令（photo_mode/comic_mode 为 active，或 *_off 为 true）的 meta；都没有则取首条。 */
+  private lastModeMeta(metas: any[]): any {
+    const active = (v: any) => !!v && typeof v === 'object' && v.active === true
+    for (let i = metas.length - 1; i >= 0; i--) {
+      const m = metas[i]
+      if (m && (active(m.photo_mode) || m.photo_mode_off === true || active(m.comic_mode) || m.comic_mode_off === true)) return m
+    }
+    return metas[0]
+  }
+
   /** 该投递件是否要增加拍照轮次；不满足则返回 null。 */
   private photoRequestFor(meta: any): { chatId: string; deliveryKey: string } | null {
     if (!meta || !meta.photo_mode || typeof meta.photo_mode !== 'object' || meta.photo_mode.active !== true || meta.photo_mode_off === true) return null
@@ -1621,22 +1638,31 @@ export class WorkerManager {
     return { chatId: String(meta.chat_id ?? ''), deliveryKey }
   }
 
-  /** POST /photo_round（本机 dispatcher）；非 2xx/网络失败返回 null，只记状态码。 */
-  private async photoRound(chatId: string, deliveryKey: string): Promise<number | null> {
+  /** 该投递件是否要增加漫画轮次；判定与投递键同拍照。 */
+  private comicRequestFor(meta: any): { chatId: string; deliveryKey: string } | null {
+    if (!meta || !meta.comic_mode || typeof meta.comic_mode !== 'object' || meta.comic_mode.active !== true || meta.comic_mode_off === true) return null
+    const deliveryKey = photoDeliveryKeyFromMeta(meta)
+    if (deliveryKey === '') return null
+    return { chatId: String(meta.chat_id ?? ''), deliveryKey }
+  }
+
+  /** POST /photo_round 或 /comic_round（本机 dispatcher）；非 2xx/网络失败返回 null，只记状态码或错误名。 */
+  private async modeRound(path: '/photo_round' | '/comic_round', chatId: string, deliveryKey: string): Promise<number | null> {
+    const failCode = path === '/comic_round' ? 'comic_round_failed' : 'photo_round_failed'
     try {
       const token = readFileSync(join(this.channelDir, '.api-token'), 'utf8').trim()
       if (!token) return null
-      const r = await fetch(`${DISPATCHER_URL}/photo_round`, {
+      const r = await fetch(`${DISPATCHER_URL}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Api-Token': token },
         body: JSON.stringify({ chat_id: chatId, delivery_key: deliveryKey }),
         signal: AbortSignal.timeout(3000),
       })
-      if (!r.ok) { process.stderr.write(`worker-manager: photo_round_failed status=${r.status}\n`); return null }
+      if (!r.ok) { process.stderr.write(`worker-manager: ${failCode} status=${r.status}\n`); return null }
       const out = await r.json() as any
       return out && out.ok === true && out.active === true && typeof out.round === 'number' && Number.isFinite(out.round) ? out.round : null
     } catch (e) {
-      process.stderr.write(`worker-manager: photo_round_failed reason=${e instanceof Error ? e.name : 'unknown'}\n`)
+      process.stderr.write(`worker-manager: ${failCode} reason=${e instanceof Error ? e.name : 'unknown'}\n`)
       return null
     }
   }
