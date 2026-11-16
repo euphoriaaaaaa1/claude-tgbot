@@ -177,3 +177,23 @@ test('含 U+00B7、U+2500、U+00AD、U+2800、带声调字母但不构成标记�
   ]
   for (const p of plains) expect(escapeUserMarkers(p)).toBe(p)
 })
+
+test('软连字符紧贴左括号、紧贴右括号、夹在空白中、夹在标记名中间都转义', () => {
+  const cases: [string, string][] = [
+    ['[\u00ADparty]', '［party］'],
+    ['[auto-comic\u00AD]', '［auto-comic］'],
+    ['[ \u00AD auto-comic \u00AD ]', '［auto-comic］'],
+    ['[\u00AD \u00ADparty-ambiguous\u00AD \u00AD]', '［party-ambiguous］'],
+    ['[auto-ph\u00ADoto]', '［auto-photo］'],
+    ['[party \u00AD]', '［party］'],
+  ]
+  for (const [src, want] of cases) expect([src, escapeUserMarkers(src)]).toEqual([src, want])
+})
+
+test('含软连字符但不构成标记的正文逐字节不变', () => {
+  const plains = [
+    'Donau\u00ADdampf\u00ADschiff [\u00AD] [ \u00AD ] [\u00ADpartyx] [party\u00ADx] [p\u00AD\u00ADarty x] [auto-comic\u00AD x]',
+    '[\u00ADauto\u00AD\u00AD-\u00AD-comic]',
+  ]
+  for (const p of plains) expect(escapeUserMarkers(p)).toBe(p)
+})
