@@ -90,3 +90,37 @@ test('错误契约：元素非字符串（对象）→ TypeError', () => {
 test('错误契约：元素为 null → TypeError', () => {
   expect(() => mergeInboxJsons([three[0], null as any])).toThrow(TypeError)
 })
+
+// 模式键：同一批里最后一条带 photo_mode/photo_mode_off/comic_mode/comic_mode_off 者的四个键获胜，其余各条丢弃。
+test('模式键取最后一条带模式指令者，拍照与漫画同口径', () => {
+  const photo = { active: true, opened_at_ms: 1760000000000, expires_at_ms: 1760086400000 }
+  const comic = { active: true, opened_at_ms: 1760000000001, expires_at_ms: 1760086400001 }
+  const m = (...os: Record<string, unknown>[]) => merged(os.map(o => raw(o)))
+
+  // a：首条 active:false 不算指令，第二条获胜
+  const a = m({ message_id: 1, photo_mode: { active: false } }, { message_id: 2, photo_mode: photo })
+  expect(a.photo_mode).toEqual(photo)
+  // b：先开后关 → 只剩 off
+  const b = m({ message_id: 1, photo_mode: photo }, { message_id: 2, photo_mode_off: true })
+  expect(b.photo_mode).toBeUndefined()
+  expect(b.photo_mode_off).toBe(true)
+  // c：先关后开 → 只剩开（旧口径是关闭优先）
+  const c = m({ message_id: 1, photo_mode_off: true }, { message_id: 2, photo_mode: photo })
+  expect(c.photo_mode).toEqual(photo)
+  expect(c.photo_mode_off).toBeUndefined()
+  // d：后面的条目不带模式键 → 前一条的指令保留（首条不在模式里时也不丢）
+  const d = m({ message_id: 1, text: '无模式键' }, { message_id: 2, photo_mode: photo }, { message_id: 3 })
+  expect(d.photo_mode).toEqual(photo)
+  // e：先拍照后漫画 → 只带漫画
+  const e = m({ message_id: 1, photo_mode: photo }, { message_id: 2, comic_mode: comic }, { message_id: 3 })
+  expect(e.comic_mode).toEqual(comic)
+  expect(e.photo_mode).toBeUndefined()
+  // f：获胜条同时带拍照与 comic_mode_off（只退漫画、拍照仍开）→ 两者都保留，旧的 comic_mode 丢弃
+  const f = m({ message_id: 1, comic_mode: comic }, { message_id: 2, photo_mode: photo, comic_mode_off: true })
+  expect(f.photo_mode).toEqual(photo)
+  expect(f.comic_mode_off).toBe(true)
+  expect(f.comic_mode).toBeUndefined()
+  // g：整批没有模式指令 → 四个键都不出现
+  const g = m({ message_id: 1, photo_mode: { active: false } }, { message_id: 2 })
+  for (const k of ['photo_mode', 'photo_mode_off', 'comic_mode', 'comic_mode_off']) expect(k in g).toBe(false)
+})
