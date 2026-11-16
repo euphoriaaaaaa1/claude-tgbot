@@ -30,9 +30,11 @@ test('幂等：转义产物再过一遍不变', () => {
 })
 
 test('无标记正文逐字节不变；近似但非标记的不转；非字符串返回空串', () => {
-  for (const plain of ['é ﬁ ① ＡＢＣ 正文\u200B [auto-comics] 【partyx】 [àuto-comic]', '戊 参考 [1] 与 a[b]c 和 [momentum] 以及 【注】', '']) {
+  for (const plain of ['é ﬁ ① ＡＢＣ 正文\u200B [auto-comics] 【partyx】', '戊 参考 [1] 与 a[b]c 和 [momentum] 以及 【注】', '']) {
     expect(escapeUserMarkers(plain)).toBe(plain)
   }
+  // 带声调的近形字母去掉组合附加符后同样识别（比对副本先 NFD 去 Mn）
+  expect(escapeUserMarkers('x [àuto-comic] y')).toBe('x ［auto-comic］ y')
   expect(escapeUserMarkers(undefined)).toBe('')
   expect(escapeUserMarkers(42)).toBe('')
 })
