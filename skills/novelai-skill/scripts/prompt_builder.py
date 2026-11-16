@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,24 @@ REASON_PREVIOUS_INVALID = "上一张记录里的 characters 不合法"
 REASON_REVISE_NEW_PROMPT = "修改模式写了新提示词但没写 characters"
 # 这三种 bot 照着能改，stderr 带写法指引；没写 characters 等其余情形不写，免得旧规则会话乱改。
 GUIDED_REASONS = (REASON_LEGACY, REASON_PREVIOUS_INVALID, REASON_REVISE_NEW_PROMPT)
+# 漫画模式：comic 生效时角色上限放宽，画风前缀里挡分格、挡文字的标签本次剔掉。
+MAX_COMIC_CHARACTERS = 20
+COMIC_STRIP_TAGS = (
+    "text", "no text", "speech bubble", "speech bubbles", "thought bubble", "comic",
+    "2koma", "4koma", "multiple views", "border", "negative space", "blank page",
+)
+COMIC_FIELD_EXAMPLES = {
+    "comic": '正确写法示例："comic": true（出一页漫画）；普通出图不写这个键。',
+    "auto_compose": (
+        '正确写法示例："auto_compose": false（第一视角与多人图不让脚本补景别、镜头与运动词）；不写等于 true。'
+    ),
+}
+# 两个开关的缺省值：只有偏离缺省的值才沿用、才记进结果（缺省时输出与改前逐字节相同）。
+COMIC_FIELD_DEFAULTS = {"comic": False, "auto_compose": True}
+COMIC_REVISE_HINTS = {
+    "comic": "修改模式写了新提示词但没写 comic，本张按普通出图",
+    "auto_compose": "修改模式写了新提示词但没写 auto_compose，本张按 true 处理",
+}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -250,6 +269,58 @@ def dedupe_nsfw_tags(text: str) -> str:
     return normalize_tag(result)
 
 
+def canonical_tag_name(name: str) -> str:
+    """整名比较用的规范名：NFKC、小写、下划线换空格、合并空白。"""
+    name = unicodedata.normalize("NFKC", str(name)).lower().replace("_", " ")
+    return MULTISPACE_PATTERN.sub(" ", name).strip()
+
+
+def strip_named_tags(text: str, names: Any) -> tuple[str, list[str]]:
+    """删掉规范名与 names 中任一项整名相等的标签，返回 (改写后的文本, 被删标签的原文列表)。
+
+    不看权重正负（压制写法也删）；权重块里还剩别的标签时保留块头块尾，块里只剩被删标签时整块删，
+    与 dedupe_nsfw_tags 同一套切法。没有命中时原样返回文本。
+    """
+    wanted = {canonical_tag_name(name) for name in names}
+    tags, blocks = parse_prompt_tags(text)
+    hits = [tag for tag in tags if canonical_tag_name(tag["name"]) in wanted]
+    if not hits:
+        return text, []
+    hit_ids = {id(tag) for tag in hits}
+    removed: list[str] = []
+    spans: list[tuple[int, int]] = []
+    whole_blocks: set[int] = set()
+    whole_block_spans: dict[int, tuple[int, int]] = {}
+    for index, block in enumerate(blocks):
+        members = [tag for tag in tags if tag["block"] == index]
+        if members and all(id(tag) in hit_ids for tag in members):
+            whole_blocks.add(index)
+            block_end = block["end"] if block["end"] is not None else members[-1]["end"]
+            whole_block_spans[index] = (block["start"], block_end)
+            spans.append(_separator_cut(text, block["start"], block_end))
+    for tag in hits:
+        if tag["block"] in whole_blocks:
+            # 整块删时记整块原文（含权重头尾，如 `1.3::speech bubble::`），同一块只记一次。
+            block_span = whole_block_spans.pop(tag["block"], None)
+            if block_span is not None:
+                removed.append(text[block_span[0]:block_span[1]].strip())
+            continue
+        cut_start, cut_end = _tag_cut_span(text, tag["start"], tag["end"])
+        removed.append(text[cut_start:cut_end])
+        spans.append(_separator_cut(text, cut_start, cut_end))
+    result = text
+    # 分隔符切法可能让相邻两段重叠（两个相邻标签都被删），合并后再删，免得误删中间的保留内容。
+    merged: list[list[int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    for start, end in reversed(merged):
+        result = result[:start] + result[end:]
+    return normalize_tag(result), removed
+
+
 def build_prompt_from_parts(intermediate: dict[str, Any]) -> str:
     summary = (
         intermediate.get("summary")
@@ -401,6 +472,66 @@ def _shown(value: Any) -> str:
     return text if len(text) <= SHOWN_VALUE_LIMIT else text[:SHOWN_VALUE_LIMIT] + "…"
 
 
+class ComicFieldError(ValueError):
+    """intermediate 的 comic 或 auto_compose 不是 JSON 布尔；example 是 stderr 第二行的正确写法。"""
+
+    def __init__(self, key: str, value: Any) -> None:
+        self.key = key
+        self.example = COMIC_FIELD_EXAMPLES[key]
+        super().__init__(f"{key} 不合法：{key} 只能是 true 或 false，收到 {_shown(value)}")
+
+
+def check_comic_fields(source: Any) -> dict[str, bool]:
+    """校验本次写出的 comic、auto_compose（先 comic 后 auto_compose，遇到第一个错就抛 ComicFieldError）。
+
+    返回本次显式写了的键及其值；没写的键不在结果里。字符串 intermediate 没有这两个键。
+    """
+    written: dict[str, bool] = {}
+    if not isinstance(source, dict):
+        return written
+    for key in COMIC_FIELD_DEFAULTS:
+        if key not in source:
+            continue
+        value = source[key]
+        if not isinstance(value, bool):
+            raise ComicFieldError(key, value)
+        written[key] = value
+    return written
+
+
+def resolve_comic_fields(
+    intermediate: dict[str, Any] | str,
+    normalized: dict[str, Any],
+    previous_state: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """定本张 comic、auto_compose 的生效值（方案 2），返回 {comic, auto_compose, hints}，不打印。
+
+    本次写了用本次值；修改模式没写且沿用上一张正文时沿用上一张 normalized_intermediate 里偏离缺省的值
+    （记录值不是布尔按缺省）；修改模式写了新提示词不沿用，上一张偏离缺省时给一句提示。
+    """
+    written = check_comic_fields(intermediate)
+    previous = (previous_state or {}).get("normalized_intermediate")
+    previous = previous if isinstance(previous, dict) else {}
+    revising = normalized.get("mode") == "revise"
+    resolved: dict[str, Any] = {"hints": []}
+    for key, default in COMIC_FIELD_DEFAULTS.items():
+        value = written.get(key, default)
+        previous_differs = previous.get(key) is (not default)
+        if key not in written and revising and previous_differs:
+            if normalized.get("new_prompt_written"):
+                resolved["hints"].append(COMIC_REVISE_HINTS[key])
+            else:
+                value = not default
+        resolved[key] = value
+    return resolved
+
+
+def comic_character_limit(source: Any) -> int:
+    """按 source（本次生效值或上一张 normalized_intermediate）的 comic 定角色上限。"""
+    comic = source.get("comic") if isinstance(source, dict) else False
+    return MAX_COMIC_CHARACTERS if comic is True else MAX_CHARACTERS
+
+
 def classify_characters(source: Any) -> str:
     """characters 的新旧写法判定：absent（没有这个键）、legacy（旧的 tags/traits 写法）、new（其余一律按新写法校验）。
 
@@ -423,16 +554,19 @@ def _is_unit_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
 
 
-def validate_characters(raw: Any, position_mode: str) -> list[dict[str, Any]]:
+def validate_characters(
+    raw: Any, position_mode: str, max_characters: int = MAX_CHARACTERS
+) -> list[dict[str, Any]]:
     """校验新写法的 characters：一次查完再抛 CharactersError，通过则返回规范化列表。
 
     规范化后每项只有 positive（去首尾空白），manual 且角色 ≥ 2 时另有 float 坐标的 center，其余键忽略。
-    不是列表或多于 MAX_CHARACTERS 项时只报这一条，不再逐项查。
+    不是列表或多于 max_characters 项时只报这一条，不再逐项查（漫画模式上限 20，报错写明是漫画模式）。
     """
     if not isinstance(raw, list):
         raise CharactersError([f"characters 必须是列表，收到 {type(raw).__name__}"])
-    if len(raw) > MAX_CHARACTERS:
-        raise CharactersError([f"角色最多 {MAX_CHARACTERS} 个，收到 {len(raw)} 个"])
+    if len(raw) > max_characters:
+        label = "漫画模式角色" if max_characters == MAX_COMIC_CHARACTERS else "角色"
+        raise CharactersError([f"{label}最多 {max_characters} 个，收到 {len(raw)} 个"])
     with_center = position_mode == "manual" and len(raw) >= 2
     reasons: list[str] = []
     characters: list[dict[str, Any]] = []
@@ -466,7 +600,9 @@ def validate_characters(raw: Any, position_mode: str) -> list[dict[str, Any]]:
     return characters
 
 
-def check_characters(source: Any) -> tuple[list[dict[str, Any]] | None, str]:
+def check_characters(
+    source: Any, max_characters: int = MAX_CHARACTERS
+) -> tuple[list[dict[str, Any]] | None, str]:
     """校验 source 的 position_mode 与 characters，不合法抛 CharactersError，一次列全原因。
 
     返回 (规范化角色列表, 生效的 position_mode)：没有 characters 键或是旧写法时列表为 None；
@@ -485,7 +621,7 @@ def check_characters(source: Any) -> tuple[list[dict[str, Any]] | None, str]:
     characters = None
     if classify_characters(source) == "new":
         try:
-            characters = validate_characters(source["characters"], position_mode)
+            characters = validate_characters(source["characters"], position_mode, max_characters)
         except CharactersError as exc:
             reasons.extend(exc.reasons)
     if reasons:
@@ -499,6 +635,7 @@ def resolve_characters(
     intermediate: dict[str, Any] | str,
     normalized: dict[str, Any],
     previous_state: dict[str, Any] | None,
+    max_characters: int = MAX_CHARACTERS,
 ) -> dict[str, Any]:
     """定本张发哪些角色（方案 2.1）：本次写了新写法就用本次的，修改模式没写时按规则沿用上一张，其余降级。
 
@@ -506,7 +643,7 @@ def resolve_characters(
     本次输入不合法抛 CharactersError；上一张记录不合法只降级（错的不是本次输入）。
     修改模式写了新提示词就不沿用上一张的角色：新画面配旧角色会互相矛盾。
     """
-    characters, position_mode = check_characters(intermediate)
+    characters, position_mode = check_characters(intermediate, max_characters)
     reason = ""
     kind = classify_characters(intermediate)
     if kind == "legacy":
@@ -522,7 +659,8 @@ def resolve_characters(
                 reason = REASON_NO_PREVIOUS
             else:
                 try:
-                    characters, position_mode = check_characters(previous)
+                    # 沿用上一张的角色按上一张自己的 comic 定上限（上一张是漫画才放宽到 20）。
+                    characters, position_mode = check_characters(previous, comic_character_limit(previous))
                 except CharactersError:
                     reason = REASON_PREVIOUS_INVALID
     if reason:
@@ -550,8 +688,14 @@ def build_prompts(
     intermediate: dict[str, Any] | str,
     previous_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    # 角色字段不合法时最先报出，先于下面的提示与"缺少 prompt"（接口 4.2：stderr 首行固定）。
-    check_characters(intermediate)
+    # comic、auto_compose 不合法最先报，其次角色字段，都先于下面的提示与"缺少 prompt"（接口 4.2：stderr 首行固定）。
+    # 角色上限按 comic 生效值（含修改模式沿用）定，所以要先定 comic；normalize_intermediate 无副作用，可提前算。
+    check_comic_fields(intermediate)
+    normalized = normalize_intermediate(intermediate)
+    previous_state = previous_state or {}
+    comic_fields = resolve_comic_fields(intermediate, normalized, previous_state)
+    max_characters = MAX_COMIC_CHARACTERS if comic_fields["comic"] else MAX_CHARACTERS
+    check_characters(intermediate, max_characters)
     # 放在最开头：之后无论正文为空、缺令牌还是上游报错，这行线索都已经输出。
     if isinstance(intermediate, dict):
         for key in RETIRED_NSFW_KEYS:
@@ -560,7 +704,6 @@ def build_prompts(
                     f"[novelai] 提示：intermediate 里的 {key} 字段已不参与判定，"
                     "是否色图只看 prompt 里有没有 nsfw 标签\n"
                 )
-    normalized = normalize_intermediate(intermediate)
     # 写了新提示词时 revision_instruction 不拼进正文（否则它也参与色图判定，违背"只看新提示词"），
     # 留一行线索免得静默丢内容。触发词在 reply_text 里剩下的文字同样不用，但不提示。
     revision_field = intermediate.get("revision_instruction") if isinstance(intermediate, dict) else None
@@ -569,11 +712,16 @@ def build_prompts(
             "[novelai] 提示：本次写了新提示词，revision_instruction 未使用，"
             "修改模式下写了新提示词只按新提示词出图\n"
         )
-    previous_state = previous_state or {}
+    for hint in comic_fields["hints"]:
+        sys.stderr.write(f"[novelai] 提示：{hint}\n")
+    # 只记偏离缺省的生效值：下一张 revise 靠它沿用；缺省时 normalized 与改前相同（显式写的原样回显）。
+    for key, default in COMIC_FIELD_DEFAULTS.items():
+        if comic_fields[key] != default:
+            normalized[key] = comic_fields[key]
 
     # 角色只走 char_captions，不进正文：守卫、画风前缀与 nsfw 判定都只看 base（方案 2.1）。
     # 生效的角色记进 normalized，last_request 留下本张实际用的角色，下一张 revise 才能链式沿用。
-    roles = resolve_characters(intermediate, normalized, previous_state)
+    roles = resolve_characters(intermediate, normalized, previous_state, max_characters)
     if roles["characters"] is not None:
         normalized["characters"] = roles["characters"]
         normalized["position_mode"] = roles["position_mode"]
@@ -648,6 +796,8 @@ def build_prompts(
         "use_coords": roles["use_coords"],
         "degraded": roles["degraded"],
         "degraded_reason": roles["degraded_reason"],
+        "comic": comic_fields["comic"],
+        "auto_compose": comic_fields["auto_compose"],
     }
 
 
