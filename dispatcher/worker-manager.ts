@@ -1771,12 +1771,13 @@ export class WorkerManager {
     if (meta.message_id != null) notifMeta.message_id = String(meta.message_id)
     if (meta.sender_username) notifMeta.sender_username = meta.sender_username
     if (meta.image_path) notifMeta.image_path = meta.image_path
-    if (meta.voice_text) notifMeta.voice_text = meta.voice_text
+    // 语音转写与附件名同样是用户可控文字：系统标记先转全角（属性值的引号、尖括号由 escapeChannelAttr 另行处理）
+    if (meta.voice_text) notifMeta.voice_text = escapeUserMarkers(meta.voice_text)
     if (meta.attachment_kind) notifMeta.attachment_kind = meta.attachment_kind
     if (meta.attachment_file_id) notifMeta.attachment_file_id = meta.attachment_file_id
     if (meta.attachment_size != null) notifMeta.attachment_size = String(meta.attachment_size)
     if (meta.attachment_mime) notifMeta.attachment_mime = meta.attachment_mime
-    if (meta.attachment_name) notifMeta.attachment_name = meta.attachment_name
+    if (meta.attachment_name) notifMeta.attachment_name = escapeUserMarkers(meta.attachment_name)
     if (meta.reply_to != null) notifMeta.reply_to = String(meta.reply_to)
 
     const sceneTag = scene === 'group' ? '【群聊】' : '【私聊】'
