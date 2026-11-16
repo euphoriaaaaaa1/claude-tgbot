@@ -2,6 +2,8 @@
 // 真 dispatcher 子进程（内含 worker-manager）+ 本机假 Telegram + 假 claude。
 // 假 claude 只把收到的每行 stdin 记进临时文件并回 result 事件；这里读那个文件，看 bot 实际收到的正文。
 import { test, expect, afterEach } from 'bun:test'
+import { chmodSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { CHATS, comicHarness, settle, stopAll } from './_comic_harness.ts'
 import type { Comic } from './_comic_harness.ts'
 
@@ -99,26 +101,27 @@ test('同批先漫画后停_合并件两种标记都没有_漫画状态已删', 
 }, 150000)
 
 // ─── 行为 14：/comic_round 失败照常投递 ───────────────────────────────────
+// 对外造 500：漫画开启后把该 bot 的漫画状态目录与状态文件改成只读，下一次投递时轮次写不进去，
+// /comic_round 应回 500 state_write_failed。（"连不上"分支不在验收范围，见接口文件锁前补充。）
 test('comic_round返回500_消息照常投递不带标记_日志comic_round_failed_status', async () => {
-  const srv = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('{"ok":false}', { status: 500 }) })
+  const c = await comicHarness({ fakeWorker: true })
+  const file = c.comicPath(CHATS[0])
+  const dir = dirname(file)
   try {
-    const c = await comicHarness({ fakeWorker: true, workerDispatcherUrl: `http://127.0.0.1:${srv.port}` })
     c.say('（漫画）')
+    await c.stateAppears(file)
     await waitDeliveries(c, 1, '首次投递')
-    expect(c.deliveries()[0]).toContain('（漫画）')
-    expect(c.deliveries()[0]).not.toContain('[auto-comic]')
-    await c.eventually(() => /comic_round_failed status=500/.test(c.h.stderr()), '日志 comic_round_failed status=500', 10000)
-  } finally { srv.stop(true) }
-}, 150000)
-
-test('comic_round连不上_消息照常投递不带标记_日志comic_round_failed_reason', async () => {
-  const dead = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('') })
-  const port = dead.port
-  dead.stop(true)   // 释放端口：之后这里无人监听，连接会被拒
-  const c = await comicHarness({ fakeWorker: true, workerDispatcherUrl: `http://127.0.0.1:${port}` })
-  c.say('（漫画）')
-  await waitDeliveries(c, 1, '首次投递')
-  expect(c.deliveries()[0]).toContain('（漫画）')
-  expect(c.deliveries()[0]).not.toContain('[auto-comic]')
-  await c.eventually(() => /comic_round_failed reason=\S+/.test(c.h.stderr()), '日志 comic_round_failed reason=', 10000)
+    chmodSync(file, 0o444)
+    chmodSync(dir, 0o555)
+    c.say('你好')
+    await waitDeliveries(c, 2, '状态写不成时的投递')
+    const d2 = c.deliveries()[1]
+    expect(d2).toContain('你好')
+    expect(d2).not.toContain('[auto-comic]')
+    await c.eventually(() => c.h.stderr().includes('worker-manager: comic_round_failed status=500'),
+      '日志 worker-manager: comic_round_failed status=500', 10000)
+  } finally {
+    try { chmodSync(dir, 0o755) } catch {}
+    try { chmodSync(file, 0o644) } catch {}
+  }
 }, 150000)
