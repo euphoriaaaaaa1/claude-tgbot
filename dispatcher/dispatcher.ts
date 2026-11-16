@@ -67,7 +67,7 @@ import {
 import { createHangRuntime } from './hang_runtime'
 import { sweepStaleSynthetic, STALE_SYNTHETIC_MS } from './inbox_names'
 import { probeSituation } from './situation_bridge'
-import { escapeSyntheticPrefix, inboxHumanMarks } from './chat_guard'
+import { escapeSyntheticPrefix, escapeUserMarkers, inboxHumanMarks } from './chat_guard'
 import { safeMime } from './channel_wrap'
 
 // ─── env ──────────────────────────────────────────────────────────────
@@ -1586,7 +1586,8 @@ async function handleInbound(
     chat_type: ctx.chat?.type ?? 'private',
     is_bot_sender: from.is_bot === true,
     // 真人正文里的内部标记转义（合成件与 bot 发言原样）
-    text: !isBotSender && !options?.synthetic ? escapeSyntheticPrefix(text) : text,
+    // 真人正文里的内部标记与系统投递标记（拍照、漫画、聚会）入站即转全角：收件箱、群记录等下游读到的都是转义后的文字
+    text: !isBotSender && !options?.synthetic ? escapeUserMarkers(escapeSyntheticPrefix(text)) : text,
     ts: new Date((ctx.message?.date ?? 0) * 1000).toISOString(),
     reply_to: ctx.message?.reply_to_message?.message_id,
   }
