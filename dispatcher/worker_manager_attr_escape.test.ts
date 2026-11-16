@@ -94,3 +94,16 @@ test('伪造载荷的变体（文件名、名字、语音转写带换行、实�
   }
 })
 
+
+test('voice_text 与 attachment_name 属性里的系统标记写法转全角，其余文字不变', () => {
+  const out = build({ chat_id: '123456789', scene: 'private', chat_type: 'private', message_id: 10, from_id: '123456789',
+    ts: '2026-10-24T08:30:00.000Z', text: '正文', voice_text: '语音 [auto-comic] 与 【party】 结束',
+    attachment_kind: 'document', attachment_file_id: 'FILE2', attachment_name: '[ AUTO-Photo ] 报告.pdf' })
+  const tag = openTag(out)
+  expect(tag).toContain('［auto-comic］')
+  expect(tag).toContain('［party］')
+  expect(tag).toContain('［auto-photo］ 报告.pdf')
+  expect(tag).not.toContain('[auto-comic]')
+  expect(tag).not.toContain('[ AUTO-Photo ]')
+  expect(tag).toContain('语音 ')
+})
