@@ -47,6 +47,7 @@ import {
   deletePhotoState, isValidPhotoChatId, isPhotoExit, nextPhotoRound, nowMsFromEnv, parsePhotoTrigger,
   photoExpiresAtMs, photoMeta, photoModeRoot, photoStatePath, readPhotoState, triggerPhotoState, writePhotoState,
 } from './photo_mode'
+import { comicModeRoot, isComicExit, isValidModeBotName, parseComicTrigger, writeComicState } from './comic_mode'
 import {
   deletePartyState, inboundItemSendersAllOwner, isPartyEndPhrase, isPartyOptOutPrefix, isValidGroupId,
   newPartyState, normalizePartyChatId, normalizePartyNote, ownerOf, ownerWindowOpen, participatingPartyGroups,
@@ -231,6 +232,11 @@ function allowedFileRoots(): string[] {
 // ─── party-camera：状态目录与 owner 观测 ─────────────────────────────
 // 拍照按 bot/chat 独立；聚会是群级共享（文件名不含 bot）。
 const PHOTO_MODE_DIR = photoModeRoot(CHANNEL_DIR)
+// 漫画模式：状态形状与读写同拍照，按 bot/chat 独立，与拍照互斥。
+const COMIC_MODE_DIR = comicModeRoot(CHANNEL_DIR)
+// 两种模式的状态路径都由 BOT_NAME 拼接：名不合规时整套不读不写，启动时记一次。
+const CAMERA_MODES_ENABLED = isValidModeBotName(BOT_NAME)
+if (!CAMERA_MODES_ENABLED) process.stderr.write(`dispatcher[${BOT_NAME}]: camera_modes_disabled reason=bot_name\n`)
 const PARTY_MODE_DIR = partyModeRoot()
 // owner 判定只认 dispatcher 亲见的群消息（不信任 worker 自报）：预筛后记录本群最后一条
 // 真人消息发送者与 owner 最近发言时刻；/party 要求两者都在 10 分钟窗口内。
@@ -1226,10 +1232,54 @@ type AttachmentMeta = { kind: string; file_id: string; size?: number; mime?: str
 
 // ─── party-camera：入站判定（gate 之后、写 inbox 之前）──────────────────
 // 只按 meta 给 worker 打标；日志只记聊天号/轮次/原因码，绝不带用户正文。
-function logPhotoStateProblem(chatId: string, status: 'unreadable' | 'clock_skew' | 'expired'): void {
+type CameraModeKind = 'photo' | 'comic'
+function modeStatePath(kind: CameraModeKind, chatId: string): string {
+  return photoStatePath(kind === 'comic' ? COMIC_MODE_DIR : PHOTO_MODE_DIR, BOT_NAME, chatId)
+}
+// 漫画写入不放宽已存在目录的权限（见 writeComicState）；拍照沿用原写法。
+function writeModeState(kind: CameraModeKind, path: string, state: Parameters<typeof writePhotoState>[1]): boolean {
+  return kind === 'comic' ? writeComicState(path, state) : writePhotoState(path, state)
+}
+
+function logModeStateProblem(kind: CameraModeKind, chatId: string, status: 'unreadable' | 'clock_skew' | 'expired'): void {
   const reason = status === 'clock_skew' ? 'state_clock_skew'
-    : status === 'expired' ? 'photo_state_expired' : 'photo_state_unreadable'
-  process.stderr.write(`dispatcher[${BOT_NAME}]: ${reason} kind=photo chat=${chatId}\n`)
+    : status === 'expired' ? `${kind}_state_expired` : `${kind}_state_unreadable`
+  process.stderr.write(`dispatcher[${BOT_NAME}]: ${reason} kind=${kind} chat=${chatId}\n`)
+}
+
+/** 删一种模式的状态（幂等）；原本存在才记 logLine（互斥切换、image 关时用）。 */
+function dropModeState(kind: CameraModeKind, chatId: string, logLine: string): void {
+  const path = modeStatePath(kind, chatId)
+  const existed = existsSync(path)
+  deletePhotoState(path)
+  if (existed) process.stderr.write(`dispatcher[${BOT_NAME}]: ${logLine} chat=${chatId}\n`)
+}
+
+/** 触发：同一 trigger_message_id 重复到达不重置；否则建/覆盖为 rounds=0。写不进返回 null。 */
+function triggerModeState(kind: CameraModeKind, chatId: string, messageId: string, nowMs: number) {
+  const path = modeStatePath(kind, chatId)
+  const current = readPhotoState(path, nowMs)
+  if (current.status === 'ok' && current.state && messageId !== '' && current.state.trigger_message_id === messageId) {
+    return photoMeta(current.state)
+  }
+  const state = triggerPhotoState(chatId, messageId, nowMs)
+  if (!writeModeState(kind, path, state)) {
+    process.stderr.write(`dispatcher[${BOT_NAME}]: ${kind}_state_write_failed chat=${chatId}\n`)
+    return null
+  }
+  return photoMeta(state)
+}
+
+/** 读一种模式的有效状态；过期/不可读/时钟回拨 → 记码并删除，返回 null。 */
+function activeModeMeta(kind: CameraModeKind, chatId: string, nowMs: number) {
+  const path = modeStatePath(kind, chatId)
+  const current = readPhotoState(path, nowMs)
+  if (current.status === 'ok' && current.state) return photoMeta(current.state)
+  if (current.status !== 'missing') {
+    logModeStateProblem(kind, chatId, current.status)
+    deletePhotoState(path)
+  }
+  return null
 }
 
 /** 聚会状态不可用：不可读/时钟回拨/过期各记固定原因码，只带聊天号。 */
@@ -1240,41 +1290,52 @@ function logPartyStateProblem(chatId: string, status: string): void {
   if (reason !== '') process.stderr.write(`dispatcher[${BOT_NAME}]: ${reason} kind=party chat=${chatId}\n`)
 }
 
-/** 拍照：image 关 → 删状态；退出 → photo_mode_off；触发 → 建/重置状态；否则读状态给 active。 */
-function inboundPhotoMeta(chatId: string, messageId: string, text: string, nowMs: number): Record<string, unknown> | null {
+/**
+ * 拍照与漫画（互斥）：bot 名/chat_id 不合规 → 不读不写；image 关 → 两状态都删；退出 → 对应 *_off
+ *（"停"两个都退；只退漫画时拍照仍有效则同带 photo_mode）；漫画触发 → 先删拍照再建漫画；
+ * 拍照触发 → 先删漫画再建拍照；否则先读漫画、再读拍照。
+ */
+function inboundCameraMeta(chatId: string, messageId: string, text: string, nowMs: number): Record<string, unknown> | null {
+  if (!CAMERA_MODES_ENABLED) return null
   if (!isValidPhotoChatId(chatId)) return null
-  const path = photoStatePath(PHOTO_MODE_DIR, BOT_NAME, chatId)
   if (!featureOn(botFeatures(), 'image')) {
-    if (existsSync(path)) {
-      deletePhotoState(path)
-      process.stderr.write(`dispatcher[${BOT_NAME}]: photo_feature_off chat=${chatId}\n`)
-    }
+    dropModeState('comic', chatId, 'comic_feature_off')
+    dropModeState('photo', chatId, 'photo_feature_off')
     return null
   }
-  if (isPhotoExit(text)) {
-    deletePhotoState(path)
-    return { photo_mode_off: true }
+  const comicExit = isComicExit(text)
+  const photoExit = isPhotoExit(text)
+  if (comicExit || photoExit) {
+    const off: Record<string, unknown> = {}
+    if (comicExit) {
+      deletePhotoState(modeStatePath('comic', chatId))
+      off.comic_mode_off = true
+    }
+    if (photoExit) {
+      deletePhotoState(modeStatePath('photo', chatId))
+      off.photo_mode_off = true
+      return off
+    }
+    // 只属于漫画的退出词（正常聊、不画了…）不关拍照：拍照仍开着时本件照常带 photo_mode，
+    // 否则这一轮的 [auto-photo] 会被吞掉。
+    const photo = activeModeMeta('photo', chatId, nowMs)
+    if (photo) off.photo_mode = photo
+    return off
+  }
+  if (parseComicTrigger(text)) {
+    dropModeState('photo', chatId, 'photo_off reason=comic')
+    const comic = triggerModeState('comic', chatId, messageId, nowMs)
+    return comic ? { comic_mode: comic } : null
   }
   if (parsePhotoTrigger(text)) {
-    const current = readPhotoState(path, nowMs)
-    // 同一 trigger_message_id 重复到达：不重置轮次与开启时刻
-    if (current.status === 'ok' && current.state && messageId !== '' && current.state.trigger_message_id === messageId) {
-      return { photo_mode: photoMeta(current.state) }
-    }
-    const state = triggerPhotoState(chatId, messageId, nowMs)
-    if (!writePhotoState(path, state)) {
-      process.stderr.write(`dispatcher[${BOT_NAME}]: photo_state_write_failed chat=${chatId}\n`)
-      return null
-    }
-    return { photo_mode: photoMeta(state) }
+    dropModeState('comic', chatId, 'comic_off reason=photo')
+    const photo = triggerModeState('photo', chatId, messageId, nowMs)
+    return photo ? { photo_mode: photo } : null
   }
-  const current = readPhotoState(path, nowMs)
-  if (current.status === 'ok' && current.state) return { photo_mode: photoMeta(current.state) }
-  if (current.status !== 'missing') {
-    logPhotoStateProblem(chatId, current.status)
-    deletePhotoState(path)
-  }
-  return null
+  const comic = activeModeMeta('comic', chatId, nowMs)
+  if (comic) return { comic_mode: comic }
+  const photo = activeModeMeta('photo', chatId, nowMs)
+  return photo ? { photo_mode: photo } : null
 }
 
 /** 聚会改投：只对 owner 私聊；逃生口前缀只打 party_opt_out；多个有效群 → party_ambiguous。 */
@@ -1542,11 +1603,11 @@ async function handleInbound(
   }
   // crossmem 已作废：unified session 天然跨场景（群+私聊同一会话、记忆相通），
   // 不再需要把"另一个场景"的尾巴当背景注入。此处不做任何注入。
-  // party-camera：只在「已过 gate 的真人、非合成、非斜杠」上判定；入站只决定是否处于拍照
-  // 模式（不增加轮次）；轮次由投递时的 /photo_round 增加。
+  // party-camera 与漫画模式：只在「已过 gate 的真人、非合成、非斜杠」上判定；入站只决定是否处于
+  // 拍照/漫画模式（不增加轮次）；轮次由投递时的 /photo_round、/comic_round 增加。
   if (!meta.is_bot_sender && !options?.synthetic && !originalText.trim().startsWith('/')) {
     const nowMs = nowMsFromEnv()
-    Object.assign(meta, inboundPhotoMeta(chatId, msgId != null ? String(msgId) : '', originalText, nowMs) ?? {})
+    Object.assign(meta, inboundCameraMeta(chatId, msgId != null ? String(msgId) : '', originalText, nowMs) ?? {})
     if (!isGroup) Object.assign(meta, inboundPartyMeta(chatId, originalText, nowMs, access) ?? {})
   }
   const inboxKey = msgId != null ? String(msgId) : `t${Date.now()}-${++__inboxFallbackSeq}`
@@ -1847,7 +1908,7 @@ function guardApi(req: Request, apiToken: string, boundPort: number): Response |
 
 // ─── HTTP server for workers ─────────────────────────────────────────
 // 已知 POST 端点集合：非 POST 方法只在这些路径上判 405；未列出路径放行落入兜底 404。
-const KNOWN_POST_PATHS = new Set(['/promise', '/send', '/react', '/download', '/add_group_alias', '/peer_inbound', '/party', '/photo_round', '/inject'])
+const KNOWN_POST_PATHS = new Set(['/promise', '/send', '/react', '/download', '/add_group_alias', '/peer_inbound', '/party', '/photo_round', '/comic_round', '/inject'])
 
 // ─── party-camera API（/party、/photo_round）──────────────────────────
 const PARTY_ERROR_MESSAGE: Record<string, string> = {
@@ -1923,6 +1984,19 @@ async function handlePartyRequest(req: Request): Promise<Response> {
 }
 
 export async function handlePhotoRoundRequest(req: Request): Promise<Response> {
+  return handleModeRoundRequest(req, 'photo')
+}
+
+export async function handleComicRoundRequest(req: Request): Promise<Response> {
+  return handleModeRoundRequest(req, 'comic')
+}
+
+/**
+ * /photo_round 与 /comic_round 共用（漫画同形）。active:false 一律回固定形状（含 round/expires_at_ms）。
+ * bot 名不合规时不读不写，按无状态处理；漫画另加：image 功能关时删状态、返回 active:false。
+ */
+async function handleModeRoundRequest(req: Request, kind: CameraModeKind): Promise<Response> {
+  const inactive = () => Response.json({ ok: true, active: false, round: 0, expires_at_ms: 0 })
   const bad = (detail: 'body' | 'chat_id' | 'delivery_key') =>
     Response.json({ ok: false, error: 'bad_request', detail }, { status: 400 })
   let raw: string
@@ -1937,21 +2011,29 @@ export async function handlePhotoRoundRequest(req: Request): Promise<Response> {
   const deliveryKey = body.delivery_key
   if (typeof deliveryKey !== 'string' || deliveryKey === '' || Array.from(deliveryKey).length > 512) return bad('delivery_key')
 
+  if (!CAMERA_MODES_ENABLED) return inactive()
+  if (kind === 'comic' && !featureOn(botFeatures(), 'image')) {
+    dropModeState('comic', chatId, 'comic_feature_off')
+    return inactive()
+  }
   const now = nowMsFromEnv()
-  const path = photoStatePath(PHOTO_MODE_DIR, BOT_NAME, chatId)
+  const path = modeStatePath(kind, chatId)
   const current = readPhotoState(path, now)
   if (current.status !== 'ok' || !current.state) {
     if (current.status !== 'missing') {
-      logPhotoStateProblem(chatId, current.status)
+      logModeStateProblem(kind, chatId, current.status)
       deletePhotoState(path)
     }
-    return Response.json({ ok: true, active: false, round: 0, expires_at_ms: 0 })
+    return inactive()
   }
   if (deliveryKey === current.state.last_delivery_key) {
     return Response.json({ ok: true, active: true, round: current.state.rounds, expires_at_ms: photoExpiresAtMs(current.state) })
   }
   const next = nextPhotoRound(current.state, deliveryKey, now)
-  if (!writePhotoState(path, next)) return Response.json({ ok: false, error: 'state_write_failed' }, { status: 500 })
+  if (!writeModeState(kind, path, next)) {
+    process.stderr.write(`dispatcher[${BOT_NAME}]: ${kind}_state_write_failed chat=${chatId}\n`)
+    return Response.json({ ok: false, error: 'state_write_failed' }, { status: 500 })
+  }
   return Response.json({ ok: true, active: true, round: next.rounds, expires_at_ms: photoExpiresAtMs(next) })
 }
 
@@ -2001,6 +2083,7 @@ async function handleApiRequest(req: Request, apiToken: string, boundPort: numbe
       // party-camera：坏 JSON/超长的 400/413 契约要赶在通用 req.json() 之前接住。
       if (url.pathname === '/party') return await handlePartyRequest(req)
       if (url.pathname === '/photo_round') return await handlePhotoRoundRequest(req)
+      if (url.pathname === '/comic_round') return await handleComicRoundRequest(req)
 
       let body: any
       try { body = await req.json() } catch (e) {
