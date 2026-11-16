@@ -1,8 +1,10 @@
 /**
  * 漫画模式 · 解析与状态根。
  *
- * 契约：公开版 pub-comic 接口（B1、B5）。状态文件的读写删、计轮、meta、投递键、chat_id 校验
- * 全部复用 photo_mode.ts（形状同拍照：v=1、24 小时、60 秒时钟偏差），这里只放漫画特有的部分。
+ * 契约：整条消息恰为一对同类括号、括号内是 漫画/分镜/四格/漫画模式 之一时开启；退出词剥一层括号后整句匹配；
+ * 状态文件 <根>/<BOT_NAME>/<chat_id>.json，根为 DISPATCHER_COMIC_MODE_DIR 或 <CHANNEL_DIR>/.comic-mode。
+ * 状态的读写删、计轮、meta、投递键、chat_id 校验全部复用 photo_mode.ts（形状同拍照：v=1、24 小时、
+ * 60 秒时钟偏差），这里只放漫画特有的部分。
  * 本模块不打印日志（调用方按原因码记，绝不带用户正文）。
  */
 import { chmodSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
