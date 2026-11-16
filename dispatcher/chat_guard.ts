@@ -59,14 +59,17 @@ export function isDirectorInbound(meta: unknown): boolean {
  */
 // 软连字符 U+00AD 平时不可见、断行处才显示成横线，两种读法都可能被模型当成标记：比对副本里保留它，
 // 正则允许它出现在任意字母之间（按不可见处理），也允许它顶替横线（按横线处理）。
-// 量词互不重叠（字母后的 U+00AD* 之后必须是固定字母或横线组），回溯只在横线组内线性。
+// 括号内首尾的空白与软连字符都可忽略（[\s U+00AD]*）。量词互不重叠：字母之间的 U+00AD* 之后必须是固定字母，
+// 首尾字母不带 U+00AD*（交给两端的 [\s U+00AD]*），回溯只在横线组内线性。
 const SOFT_HYPHEN = '\u00AD'
 const MARKER_NAMES = ['auto-photo', 'auto-comic', 'party-ambiguous', 'party']
-const markerPattern = (name: string): string => SOFT_HYPHEN + '*' + Array.from(name, (c, i) => {
+const markerPattern = (name: string): string => Array.from(name, (c, i) => {
   if (c === '-') return `(?:${SOFT_HYPHEN}*-${SOFT_HYPHEN}*|${SOFT_HYPHEN}+)`
-  return name[i + 1] === '-' ? c : `${c}${SOFT_HYPHEN}*`
+  const next = name[i + 1]
+  return next === undefined || next === '-' ? c : `${c}${SOFT_HYPHEN}*`
 }).join('')
-const USER_MARKER_RE = new RegExp(`\\[\\s*(${MARKER_NAMES.map(markerPattern).join('|')})\\s*\\]`, 'gi')
+const EDGE = `[\\s${SOFT_HYPHEN}]*`
+const USER_MARKER_RE = new RegExp(`\\[${EDGE}(${MARKER_NAMES.map(markerPattern).join('|')})${EDGE}\\]`, 'gi')
 /** 命中片段 → 规范名：去掉软连字符与横线后对照（`auto\u00ADcomic` 也归到 auto-comic）。 */
 const MARKER_BY_SKELETON = new Map(MARKER_NAMES.map(n => [n.replace(/-/g, ''), n]))
 const canonicalMarker = (hit: string): string =>
