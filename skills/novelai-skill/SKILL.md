@@ -52,6 +52,7 @@ compatibility:
 ## 语言要求：
 - prompt主体必须是英文
 - 中文只允许出现在 `reply_text`字段，不要出现在 `prompt`
+- 漫画模式下，`Text:` 之后的对白原句使用当前聊天语言；其余部分仍为英文。
 
 **重要：避免模板循环**
 - 每次生成 intermediate.json 时，必须创建全新的内容
@@ -59,7 +60,7 @@ compatibility:
 - 如果用户没有指定具体场景，要创造多样化的场景（不同地点、姿势、服装、视角）
 - 避免重复使用相同的提示词模板
 
-中间稿最少要有 `prompt`。可选字段为 `characters`、`position_mode`、`reply_text`、`mode`、`revision_instruction`、`override_full_prompt`。
+中间稿最少要有 `prompt`。可选字段为 `characters`、`position_mode`、`reply_text`、`mode`、`revision_instruction`、`override_full_prompt`、`comic`、`auto_compose`。`comic` 与 `auto_compose` 只能写 true 或 false：`comic: true` 出一页漫画（见「漫画写法」）；`auto_compose: false` 让脚本不补景别、镜头与运动词（见「多人互动」「第一视角」）。
 
 推荐结构：
 
@@ -87,7 +88,7 @@ compatibility:
 
 ## Prompt 主体的撰写规则
 ### 基本约束
-- `prompt` 与全部角色 `positive` 合计约 512 token，角色最多 6 个。
+- `prompt` 与全部角色 `positive` 合计约 512 token。普通出图角色最多 6 个；漫画模式最多 20 个。
 - `tag_separator`: `,`
 - NSFW 场景前缀：`nsfw,`
 
@@ -104,28 +105,11 @@ compatibility:
 - 如果是 NSFW 场景，当轮 `prompt` 必须含 `nsfw,`（这是唯一的色图开关）；续图（revise）时写在 `revision_instruction` 或新 `prompt` 的开头，否则这张按正常图出（只写 `revision_instruction` 时会沿用上一张正文，上一张里的 `nsfw` 也会一起带上；要转回正常图就写新 `prompt`）。`nsfw` 不写在角色的 `positive` 里。
 
 ### 权重规则
-- 可用范围：`0.5 - 3`
-- 核心元素：`2 - 3`
-- 重要细节：`1.2 - 2`
-- 环境元素：`0.5 - 1.2`
-
-推荐分类：
-- `main_character`: `2`
-- `minor_character`: `1.2 - 1.3`
-- `poses`: `1.5 - 2.5`
-- `scene`: `2 - 2.2`
-- `atmosphere`: `1 - 1.5`
-- `details`: `1.5`
-
-使用示例：
-- 强调：`1.5::rain, night::`
-- 弱化：`0.5::coat::`
-
-不要把所有 tag 都加权，但每个角色的 `positive` 都要给权重，不允许任何角色裸写。需要加权的有以下几类。
-- **每个角色的身份和外观**：写在各自的 `positive` 里，主角从 `2` 起，同框的其他角色从 `1.2 - 1.3` 起；模型按权重分配画面注意力，**没权重的角色会被裁出画面或只留局部**（实测：同框的"用户"消失，就是只给主角加权造成的）
-- 主动作和关键姿势
-- 主场景
-- 关键镜头和关键细节
+- 权重范围 1 至 1.5，任何标签不超过 1.5。
+- 每个角色的外貌与服装整体加权：主角 1.3，同框其他角色 1.2；每个角色的 `positive` 都要加权，没有权重的角色容易被裁出画面或只留局部。
+- 主动作与体位标签 1.1 至 1.3；场景、光照不加权或 1 至 1.1。
+- 不对运动、镜头类标签加权。
+- 写法：`1.3::long silver hair, blue eyes::`。
 
 ### 角色分段（characters）
 - 画面里每个可见角色写一项，单人画面也写一项；画面里没有人时写 `"characters": []`。
@@ -211,16 +195,15 @@ compatibility:
 每个角色的 `positive` 第一项是不带数字的 `girl`、`boy` 或 `other`。
 
 高权重外貌示例：
-- `2::long_silver_hair::`
-- `1.8::blue_eyes::`
+- `1.3::long_silver_hair::`
+- `1.2::blue_eyes::`
 - `1.3::curvy::`
-- `1.55::small_breasts::`
+- `1.2::small_breasts::`
 - `large_breasts`
-- `2::mature female::`
-- `1.5::teenager::`
+- `1.3::mature female::`
 
 服装示例：
-- `1.8::china_dress::`
+- `1.2::china_dress::`
 - `black_lingerie`
 - `military_uniform`
 - `sailor_collar`
@@ -234,7 +217,7 @@ compatibility:
 表情和动作示例：
 - `1.2::smiling::`
 - `blushing`
-- `1.4::lustful_expression::`
+- `1.2::lustful_expression::`
 - `embarrassed`
 - `standing`
 - `sitting`
@@ -242,55 +225,79 @@ compatibility:
 - `lying`
 - `on_back`
 - `straddling`
-- `1.8::riding::`
+- `1.2::riding::`
 - `hands_on_own_chest`
 - `arms_behind_back`
 - `hands_on_lap`
 - `covering_own_mouth`
-- `1.4::hands_between_legs::`
+- `1.2::hands_between_legs::`
 
 环境交互示例：
 - `sitting_on_bed`
 - `sitting_in_tree`
-- `2.5::spread_legs::`
+- `1.2::spread_legs::`
 - `lotus_position`
 
-角色互动写法（**必须写清"谁对谁做"**，这是最容易画反的地方）：
+### 多人互动
+- 下笔前先为每个角色确定三项：身体朝向、头部朝向、与谁的哪个部位接触；镜头在这三项确定后选择，与之冲突的镜头不用。
+- 头部朝向须与身体朝向相容。身体背向镜头时不写 looking at viewer；需要回看时写 looking back 与 over shoulder，并在 `prompt` 中写明回头。趴卧、侧卧时写 face turned to the side，不写正对镜头。
+- 三人及以上的性行为与群体互动，用整组标签写在 `prompt` 中，如 ffm threesome、mmf threesome、harem、group sex、cooperative fellatio、cooperative paizuri、spitroast、teamwork。同一动作不在多个角色的 `positive` 中重复书写。
+- `source#`、`target#`、`mutual#` 只用于两名角色之间的单个动作，每个动作只写一组；三人及以上共同参与的动作改用上一条的整组标签。
+- 体位方向用体位标签确定，如 cowgirl position 与 reverse cowgirl position、missionary、doggystyle、upright straddle、sex from behind，不以描述句代替。
+- 生殖器在 `prompt` 的空间描述中写一次并标明归属与位置，不在多个角色项中各写一次。需要画出交合部位时，写明可见的部位与插入状态。
+- 身体部位一律带归属，写成 girl's、boy's、the man's、the woman's 加部位名，不写裸的部位名。
+- `prompt` 用一句英文写清每个角色的位置、朝向与接触点，角色项的 `center` 与这句描述一致。
+- 两人及以上有肢体接触的画面，镜头取平视、略俯、略仰、正面、侧面、三分之四侧面之一；不用 worm's-eye、bird's-eye、top-down、fisheye、ultra wide-angle、Dutch angle。景别按姿势选择，全身、膝上、腰上均可，不强制 full body。
+- 不写 dynamic pose、motion blur、mid-motion、bouncing、swaying 等运动词。
+- 两人及以上有肢体接触的画面，中间稿写 `"auto_compose": false`，景别与镜头由 `prompt` 自行写明。
+- 写完后逐个角色核对：动作的发起方与承受方是否与用户原话一致，每个生殖器是否只出现一次，每个角色的头与身体朝向是否相容。
 
-- 语法：`<角色是谁>#<动作>`，**同一个动作两边各标一次**，分别写进各自角色的 `positive`：
-  - `source#动作` = 这个角色是动作的**发起方**（他/她在做）
-  - `target#动作` = 这个角色是动作的**承受方**（动作落在他/她身上）
-  - `mutual#动作` = 双方对等（接吻、拥抱、互相抚摸）
-- 示例：
-  - `2.0::source#princess carry::`（这段的角色是抱人那个）
-  - `2.0::target#vaginal_penetration::`（这段的角色是被进入那个）
-  - `mutual#kissing` / `mutual#hugging`
-  - **`mutual#` 的完整写法 = 同样两边各写一次**（对等动作，各自的 `positive` 里写自己那一半的身体归属，绝不只写一边）：
-    - 接吻：`角色的 positive：1.8::mutual#kissing:: the girl's lips pressed against the boy's lips` ＋ `用户的 positive：1.8::mutual#kissing:: the boy's lips meeting the girl's lips, the boy's hand cupping the girl's cheek`
-    - 拥抱：`角色的 positive：2.0::mutual#hugging:: the girl's arms wrapped around the boy's back` ＋ `用户的 positive：2.0::mutual#hugging:: the boy's arms holding the girl's waist, her cheek against his chest`
+### 第一视角
+- 第一视角下观看者就是镜头，不在 `characters` 中为观看者写项；观看者只以身体局部出现，写在 `prompt` 中，如 pov hands、pov crotch，以及标明归属的手、胸口、生殖器。
+- 镜头随观看者姿势确定：站立时 from above，仰躺时 lying on back 与 from below，坐姿时 from above 或平视。不叠加 fisheye、ultra wide-angle、Dutch angle 与 full body。
+- 画面中的角色写 looking at viewer 或看向观看者身体的具体部位。
+- 第一视角的中间稿写 `"auto_compose": false`。
+- 观看者的身体局部只以静止状态出现在画面下缘或两侧边缘，不写观看者伸手、伸舌或伸出肢体去触碰对方。动作需要观看者的肢体伸入画面时，不用第一视角，改用低角度或高角度的第三人称机位，并让观看者出现在画面边缘。
 
-**三道防线（缺一就容易画反，三道都要做）：**
+### 特写
+- 特写画面与漫画特写格写出镜头窗口内可见的全部内容，不只写焦点对象；焦点所在身体区域的全貌、相邻的身体部位与物体都要写出。
+- 用 above、below、in the foreground、in the background、partially visible at the edge of the frame 等方位词锚定各元素的位置。
+- 接吻特写写明双方脸部的朝向与相对位置；手部特写写明手接触的对象与周围物体；身体局部特写写明相邻部位处于画面的哪个方位。
+- 特写格放大的是主格中的某一区域时，该区域在主格中可见的人物与物体在特写格中照样写出。
+- 一个特写只呈现一个动作，不在同一特写中描述两组不同的人物互动。
 
-1. **动作写进"做动作那个角色"的 `positive` 里**，不要只写在 `prompt` 里。动作写在谁的 `positive` 里，模型就更可能认为是谁在动。
-2. **身体部位必须带归属**：写 `girl's nipples` / `boy's nipples` / `the woman's neck`，**绝不写裸的 `nipples` / `mouth` / `hand`**——不带归属时模型会自己挑一边，往往挑错。
-3. **禁止主语不明的裸动名词**：只写 `licking nipples` / `sucking` / `caressing` 而不写谁对谁做，模型默认按"被画面主体做"来画，最容易与用户意图相反。
+### 构图可行性
+- 每张图与每个画格只有一个机位，构图须是该机位一眼能看到的画面。
+- 不写需要穿透或绕过遮挡才能看到的构图：透过某人的腿间、臂弯或缝隙看到另一人的脸；从某人背后看到其前方另一人的表情；三人及以上的精确前后叠压。描述中需要用 through、between、gap、behind and facing toward 这类穿透空间的词时，改换机位。
+- 想呈现多人互动全貌时用侧面机位，让各人沿画面横向排开。
+- 仰角或俯角的强透视只用于一到两人，不在强透视中放入第三人。
+- 某人在另一人身后做动作时，让其脸部从对方的腰侧或臀侧露出，不写藏在身后需要穿透才能看到的位置。
+- 前后遮挡最多两层。
 
-**按用户原话的施受关系写，不要按画面惯例猜：**
+### 漫画写法
+进入条件：消息带漫画模式系统标记，或用户在本条消息中明确要一页漫画。
 
-- 用户说「**我来**舔她 / 我服侍她 / 我摸她」→ **用户的 positive** 标 `source#`，**角色的 positive** 标 `target#`
-  `角色的 positive：2.0::target#nipple_licking:: the girl's nipples` + `用户的 positive：2.0::source#nipple_licking::`
-- 用户说「**让她**舔我 / 她服侍我 / 她摸我」→ 反过来：**角色的 positive** 标 `source#`，**用户的 positive** 标 `target#`
-  `用户的 positive：2.0::target#nipple_licking:: the boy's nipples` + `角色的 positive：2.0::source#nipple_licking::`
-
-**写完自检一句**：把 prompt 读一遍，问自己"这段里到底是谁在动？"——与用户原话对不上就重写，不要指望模型自己纠正。
+- 中间稿写 `"comic": true`，每份中间稿出一页，用 `--ratio portrait`；横向两格或三格时用 `--ratio landscape`。
+- 漫画模式每轮出两页时，两页各写一份中间稿，串行生成，各用随机种子，不加 `--reuse-seed`。第一页为第三人称机位，呈现本轮完整情节；第二页为观看者的第一视角，呈现同一情节中观看者眼中的画面。两页的场景、服装与人物外貌一致。
+- 第一视角页的每一格按「第一视角」写：观看者不写角色项，其身体局部写在该格描述中，`characters` 只为画面中的人物写项。观看者的话不写进图中，只写画面中人物的对白。
+- `prompt` 依次写：nsfw（如适用）、comic、格数标签（仅竖排四格写 4koma）、文字标签（按对白语言写 chinese text、japanese text 或 english text）、full color、一句英文完整句描述整页布局，随后按阅读顺序逐格描述，每格以 Panel 1、Panel 2 开头并写明位置与大小，最后写全页人数标签（按不同人物去重）。
+- 每格描述写明景别、镜头、场景以及该格所有可见人物的动作与位置；特写格按「特写」写。同一格只写一个时刻。
+- `characters` 为每一格中每一个可见人物各写一项。同一人物出现在几格就写几项，每项完整写出外貌与服装。`position_mode` 写 manual，`center` 落在该人物所在格的区域内。
+- 对白写在说话人那一项的末尾，格式为 `speech bubble. Text: 原句`；心声用 thought bubble，拟音用 sound effects。`Text:` 之后只写原句，不加引号或括号，不再写任何视觉词；一项只写一个 `Text:`，同一人在同一格说多句时用空行分隔。对白不写在 `prompt` 中。
+- 同一格内有两人及以上时，说话人那一项的气泡写成 `speech bubble on the left side of her head, tail pointing to her. Text: 原句`；说话人在格内偏右时写 right，男性写 his 与 him。
+- 同一格内不说话的人物，在该人物项和分格描述里都写 listening、closed mouth，不写说话、夸口、比划讲话这类动作，也不写气泡。
+- 单句对白不超过约 20 字，过长时拆成同一人的连续两句。全页对白合计不超过 750 个字符。
+- 一页的角色项不超过约 12 个。各角色项的 `center` 决定分格的排布，同一格内各项的 `center` 落在该格区域内，不同格的 `center` 不交叉。
+- 分镜风格按剧情选一种，写进整页布局句：四格（等高横格、起承转合）；轻松日常（规整横格、留白均匀）；恋爱（大格人物特写配装饰与花瓣）；成人向（一个主大格呈现全貌，角上嵌入局部特写小格）；动作（主格占半页以上、相邻格斜切边框）。
+- 写完核对：布局句中的格数与逐格描述的格数一致；每格的可见人物都有对应的角色项；每句对白都在说话人的项里；同一人物在各格的外貌一致，不同人物的区分特征没有互换。
 
 
 ### Prompt 顺序
 `prompt` 按此顺序：画面简述、NSFW 前缀（如适用）、人数标签、风格标签、构图、环境、光照、配色。角色识别与详细描述写进各自的 `characters` 项。标签越靠前影响越强。
 
 语言示例：
-- 正确：`prompt` 写 `medium shot, taking a mirror selfie in bedroom, standing by bed, warm morning light, 1girl`，`characters[0].positive` 写 `girl, 2::mature female::, floral midi dress, shy expression`
-- 正确：`prompt` 写 `close-up selfie, lying in bed, cozy bedroom, soft bedside lamp, 1girl`，`characters[0].positive` 写 `girl, 2::messy hair::, sleepy expression`
+- 正确：`prompt` 写 `medium shot, taking a mirror selfie in bedroom, standing by bed, warm morning light, 1girl`，`characters[0].positive` 写 `girl, 1.3::mature female::, floral midi dress, shy expression`
+- 正确：`prompt` 写 `close-up selfie, lying in bed, cozy bedroom, soft bedside lamp, 1girl`，`characters[0].positive` 写 `girl, 1.3::messy hair::, sleepy expression`
 - 错误：`某角色名，42岁成熟人妻，站在卧室床边自拍`
 - 错误：`mature woman 在卧室自拍，表情羞涩`
 
@@ -351,7 +358,8 @@ compatibility:
 | 用户说 | mode | --reuse-seed | 行为 |
 |---|---|---|---|
 | 第一次开新场景（"在床上自拍"） | `new` | ❌ 不传 | 新 seed，从头建场景 |
-| "再来一张" / "换个表情" / "换个角度" / "换个动作" / "脱了" / "腿张开" | `revise` | ✅ **必传** | 同 seed，沿用环境，仅改局部 |
+| "再来一张" / "换个表情" / "换个角度" / "脱了" / "腿张开" | `revise` | ✅ **必传** | 同 seed，沿用环境，仅改局部 |
+| 换姿势、换体位、换朝向（转过来面对面、改成从背后）、换成谁对谁做 | `revise`，并重写完整 `prompt` 与 `characters` | ✅ **必传** | 同 seed 保留场景；不用 `revision_instruction` 在上一张正文后追加，上一张里与新姿势冲突的描述一律不保留 |
 | "去客厅" / "换个房间" / "出门" / "换衣服" / 任何场景跳变 | `new` | ❌ 不传 | 新 seed，新场景 |
 | "再拍同样姿势但拉远" | `revise` | ✅ 必传 | 改 ratio 不改 seed |
 | "重做一张更骚的" / 用户对刚才那张不满意 | `revise` | ✅ 必传 | 锁同 seed 微调 |
@@ -363,7 +371,7 @@ compatibility:
 { "prompt": "lying on bed, white sheets, ...", "characters": [{"positive": "girl, ..."}] }
 ```
 
-**同场景续图（mode=revise）**：只写要改的部分，环境会自动从上次沿用。
+**同场景续图（mode=revise）**：只写要改的部分，环境会自动从上次沿用。换姿势、换体位、换朝向或换成谁对谁做时不适用本写法：`mode` 仍写 `revise` 并加 `--reuse-seed`，但必须重写完整的 `prompt` 与 `characters`。
 ```json
 { "mode": "revise", "revision_instruction": "nsfw, spread legs, lift skirt" }
 ```

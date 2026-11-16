@@ -22,10 +22,25 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from prompt_builder import CharactersError, build_prompts, check_characters, load_json  # noqa: E402
+from prompt_builder import (  # noqa: E402
+    COMIC_STRIP_TAGS,
+    MAX_CHARACTERS,
+    MAX_COMIC_CHARACTERS,
+    CharactersError,
+    ComicFieldError,
+    build_prompts,
+    check_characters,
+    check_comic_fields,
+    load_json,
+    normalize_intermediate,
+    resolve_comic_fields,
+    strip_named_tags,
+)
 
 # 分角色的四个新键（接口 4.4）：返回 JSON、last_request 与 history 都有，取值以最终成功的请求体为准。
 CHARACTER_RESULT_KEYS = ("characters_used", "use_coords", "degraded", "degraded_reason")
+# 漫画与构图开关的顶层键：只在生效值偏离缺省时出现，缺省时输出与改前逐字节相同。
+COMIC_RESULT_KEYS = ("comic", "comic_removed_tags", "auto_compose")
 CHARACTERS_OFF_REASON = "分角色已关闭"
 FLAT_400_REASON = "主请求被拒（HTTP 400），按整段提示词重试"
 FLAT_5XX_REASON = "主请求连续 5xx，按整段提示词重试"
@@ -681,6 +696,15 @@ def load_previous_state(output_dir: Path) -> dict[str, Any] | None:
     return state
 
 
+def _peek_previous_state(state_dir: Path) -> dict[str, Any] | None:
+    """静默读上一张记录（只给角色上限前定 comic 用）：读不出一律返回 None，不打印。"""
+    try:
+        state = load_json(state_dir / "last_request.json")
+    except (OSError, ValueError):
+        return None
+    return state if isinstance(state, dict) else None
+
+
 def _write_json_atomic(path: Path, record: dict[str, Any]) -> None:
     """同目录临时文件 + 原子改名：进程中途被杀也不会留下半个 JSON。"""
     data = json.dumps(record, ensure_ascii=False, indent=2) + "\n"
@@ -721,6 +745,7 @@ def save_generation_state(
         "generated_at": timestamp,
     }
     record.update({key: result[key] for key in CHARACTER_RESULT_KEYS if key in result})
+    record.update({key: result[key] for key in COMIC_RESULT_KEYS if key in result})
     history_path = history_dir / f"{timestamp}_{uuid.uuid4().hex[:8]}.json"
     _write_json_atomic(history_path, record)
     _write_json_atomic(state_dir / "last_request.json", record)
@@ -736,17 +761,43 @@ def generate_image(
     state_dir: Path | None = None,
     agent_name: str | None = None,
 ) -> dict[str, Any]:
-    # 角色字段不合法时最先报出：早于画风参数告警等一切 stderr，也早于读令牌、发请求、写文件（接口 4.2）。
-    check_characters(intermediate)
+    # comic、auto_compose 不合法最先报，其次角色字段：早于画风参数告警等一切 stderr，
+    # 也早于读令牌、发请求、写文件（接口 4.2）。角色上限要看 comic 生效值（含修改模式沿用上一张），
+    # 所以这里静默读一次上一张，只取两个开关；读不出按缺省，提示行仍由下面的 load_previous_state 打。
+    check_comic_fields(intermediate)
     actual_state_dir = state_dir or output_dir
+    early_fields = resolve_comic_fields(
+        intermediate, normalize_intermediate(intermediate), _peek_previous_state(actual_state_dir)
+    )
+    check_characters(intermediate, MAX_COMIC_CHARACTERS if early_fields["comic"] else MAX_CHARACTERS)
     previous_state = load_previous_state(actual_state_dir)
     config = apply_active_style(config, agent_name)
+    # 漫画：本次从画风正负前缀剔掉挡分格、挡文字的标签（只改本进程 config，不写 styles.json、不动正文）。
+    # 与 build_prompts 算出的 comic 同源同输入（同一份上一张记录），两者一致；之后的平铺与精简重试都用剔过的提示词。
+    comic_removed_tags: list[str] = []
+    if early_fields["comic"]:
+        for key in ("positive_prefix", "negative_prefix"):
+            stripped, removed = strip_named_tags(str(config.get(key, "")), COMIC_STRIP_TAGS)
+            if removed:
+                config[key] = stripped
+                comic_removed_tags.extend(removed)
     # 先把 seed 定下来：镜头守卫按它选角度，主请求体与精简重试也都用这同一个。
     config["seed"] = resolve_seed(config)
     prompts = build_prompts(config, intermediate, previous_state=previous_state)
-    prompts = ensure_shot_size(prompts)     # 每张有景别：正文写了照它来，漏写才补全身
-    prompts = ensure_camera_angle(prompts, seed=config["seed"])  # 漏写才补，角度由 seed 定
-    prompts = ensure_dynamic_feel(prompts)  # 强制每张有动态感（漏写才补，治僵硬静态图）
+    # 漫画、auto_compose 为假、有效角色 ≥ 2 时不补景别、镜头与运动词：多人与分格画面里强补全身、
+    # 极端机位和运动词会扭曲肢体、丢格。角色数按 resolve_characters 结果（开关文件平铺之前）计。
+    skip_compose = (
+        prompts["comic"] or not prompts["auto_compose"] or len(prompts.get("characters") or []) >= 2
+    )
+    if not skip_compose:
+        prompts = ensure_shot_size(prompts)     # 每张有景别：正文写了照它来，漏写才补全身
+        prompts = ensure_camera_angle(prompts, seed=config["seed"])  # 漏写才补，角度由 seed 定
+        prompts = ensure_dynamic_feel(prompts)  # 强制每张有动态感（漏写才补，治僵硬静态图）
+    comic_fields: dict[str, Any] = {}
+    if prompts["comic"]:
+        comic_fields.update({"comic": True, "comic_removed_tags": comic_removed_tags})
+    if not prompts["auto_compose"]:
+        comic_fields["auto_compose"] = False
     token = read_token()
     endpoint = os.getenv(
         "NOVELAI_IMAGE_ENDPOINT", "https://image.novelai.net/ai/generate-image"
@@ -819,6 +870,7 @@ def generate_image(
             "mode": prompts.get("mode", "new"),
             "source_request_path": source_request_path,
             **character_fields,
+            **comic_fields,
         },
         prompts,
         source_request,
@@ -845,6 +897,7 @@ def generate_image(
         ),
         "saved_state": state,
         **character_fields,
+        **comic_fields,
     }
 
 
@@ -1001,8 +1054,13 @@ def main() -> None:
             state_dir=Path(args.state_dir).expanduser() if args.state_dir else None,
             agent_name=agent_name,
         )
+    except ComicFieldError as exc:
+        # 退出码 3 = "intermediate 的字段写错，按首行改了重跑"：comic、auto_compose 与角色字段共用。
+        sys.stderr.write(f"[novelai] {exc}\n")
+        sys.stderr.write(f"[novelai] {exc.example}\n")
+        sys.exit(3)
     except CharactersError as exc:
-        # 退出码 3 专指"intermediate 的角色字段写错，按首行改了重跑"（1 = 生图失败，2 = 参数或文件问题）。
+        # 退出码 3 专指"intermediate 的字段写错，按首行改了重跑"（1 = 生图失败，2 = 参数或文件问题）。
         # 第二行给一段可照抄的正确写法：dsh 网关把这段 stderr 原文（限 600 字）转给模型，示例只在这里维护一份。
         sys.stderr.write(f"[novelai] {exc}\n")
         sys.stderr.write(
