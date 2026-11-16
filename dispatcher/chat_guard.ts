@@ -49,12 +49,26 @@ export function isDirectorInbound(meta: unknown): boolean {
 /**
  * 用户正文里的系统标记转全角；worker 只信投递件 meta 追加的标记（party-camera 与漫画模式）。
  * 不分大小写、容忍括号内空白（模型对 `[ AUTO-Comic ]` 同样会当标记读），统一换成小写规范名的全角形式。
- * 识别在"逐码点 NFKC + 去零宽字符"的副本上做（拦全角字母、零宽夹塞、【】），替换落回原文对应片段，
- * 未命中处逐字节不变。已是转义产物的 `［x］` 规范化后同样命中，换出来仍是 `［x］`，幂等。
+ * 识别在比对副本上做：逐码点 NFKC，删去全部格式字符（Cf）与 default-ignorable 码点（零宽、双向控制、
+ * 软连字符、不可见运算符、变体选择符等夹塞），横线类（Pd、U+2212、U+FE63）折成 `-`，方括号、方头括号、
+ * 角括号类近形括号折成 `[` `]`。替换落回原文对应片段，未命中处逐字节不变。
+ * 已是转义产物的 `［x］` 规范化后同样命中，换出来仍是 `［x］`，幂等。
+ * 圆括号、花括号、书名号与直角引号不折：`(party)`、《party》、「party」是常见正文写法，折进来会改动无害原文。
  * 正则无嵌套量词，每个起始括号后的空白只扫一遍，整体线性。
  */
-const USER_MARKER_RE = /[\[【]\s*(auto-photo|auto-comic|party-ambiguous|party)\s*[\]】]/gi
-const ZERO_WIDTH_RE = /^[​-‍﻿⁠]$/
+const USER_MARKER_RE = /\[\s*(auto-photo|auto-comic|party-ambiguous|party)\s*\]/gi
+const IGNORABLE_RE = /^[\p{Cf}\p{Default_Ignorable_Code_Point}]$/u
+const DASH_RE = /[\p{Pd}−﹣]/gu
+// 近形开/闭括号：全角方括号、【】、〔〕、〖〗、〘〙、〚〛、⟦⟧、⁅⁆、⦋⦌、⦍⦎、⦏⦐、〈〉、⟨⟩、⦑⦒、﹝﹞
+// （NFKC 已把 ［］﹇﹈ 折成 [ ]、把 〈〉 U+2329/U+232A 折成 〈〉 U+3008/U+3009、把 ﹝﹞ 折成 〔〕，这里列全以防万一）
+const OPEN_BRACKET_RE = /[［【〔〖〘〚⟦⁅⦋⦍⦏〈⟨⦑﹝]/gu
+const CLOSE_BRACKET_RE = /[］】〕〗〙〛⟧⁆⦌⦎⦐〉⟩⦒﹞]/gu
+/** 单个码点的比对形式（ASCII 原样；其余 NFKC 后折横线与括号）；可忽略码点返回空串。 */
+function markerCompareForm(ch: string): string {
+  if (ch.charCodeAt(0) < 0x80) return ch
+  if (IGNORABLE_RE.test(ch)) return ''
+  return ch.normalize('NFKC').replace(DASH_RE, '-').replace(OPEN_BRACKET_RE, '[').replace(CLOSE_BRACKET_RE, ']')
+}
 export function escapeUserMarkers(text: unknown): string {
   if (typeof text !== 'string') return ''
   // normalized 的每个 UTF-16 单元记下它来自原文哪个码点片段 [srcStart, srcEnd)
@@ -65,7 +79,7 @@ export function escapeUserMarkers(text: unknown): string {
   for (const ch of text) {
     const end = pos + ch.length
     // 逐码点规范化：跨字符组合（如字母 + 组合附加符）不会被合成 ASCII，只会让标记不命中原样保留
-    const piece = ZERO_WIDTH_RE.test(ch) ? '' : ch.charCodeAt(0) < 0x80 ? ch : ch.normalize('NFKC')
+    const piece = markerCompareForm(ch)
     for (let i = 0; i < piece.length; i++) { srcStart.push(pos); srcEnd.push(end) }
     normalized += piece
     pos = end
