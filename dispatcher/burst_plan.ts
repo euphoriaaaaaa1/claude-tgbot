@@ -111,5 +111,21 @@ export function mergeInboxJsons(rawJsons: string[]): string {
   const ids = objs.map(o => o.message_id).filter(v => v != null).map(String)
   const out: Record<string, unknown> = { ...first, text, ts: 'ts' in last ? last.ts : first.ts }
   if (ids.length > 1) out.merged_message_ids = ids
+  // 模式键（拍照与漫画）：同一批里最后一条有效模式指令获胜——取最后一条带有效
+  // photo_mode/photo_mode_off/comic_mode/comic_mode_off 者的这四个键，其余各条丢弃（含 {...first} 带进来的）。
+  // 每条入站都在前一条改过状态之后才判定，所以最后一条的结果就是磁盘终态。
+  const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+    v !== null && typeof v === 'object' && !Array.isArray(v)
+  const activeMode = (v: unknown) => isPlainObject(v) && v.active === true
+  const hasModeDirective = (o: Record<string, unknown>) =>
+    activeMode(o.photo_mode) || o.photo_mode_off === true || activeMode(o.comic_mode) || o.comic_mode_off === true
+  const modeWinner = [...objs].reverse().find(hasModeDirective)
+  for (const [modeKey, offKey] of [['photo_mode', 'photo_mode_off'], ['comic_mode', 'comic_mode_off']] as const) {
+    delete out[modeKey]
+    delete out[offKey]
+    if (!modeWinner) continue
+    if (modeWinner[offKey] === true) out[offKey] = true
+    else if (activeMode(modeWinner[modeKey])) out[modeKey] = modeWinner[modeKey]
+  }
   return JSON.stringify(out)
 }
