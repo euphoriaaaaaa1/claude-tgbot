@@ -156,13 +156,17 @@ test('modeRound：连不上 → 返回 null 并记 comic_round_failed reason=<�
   writeFileSync(join(m.channelDir, '.api-token'), 'unit' + '0'.repeat(60))
   const lines: string[] = []
   const orig = process.stderr.write.bind(process.stderr)
+  const origFetch = globalThis.fetch
+  // 只替换传输层造"连不上"：本机代理环境下死端口可能回 502 或超时，结果不稳定
+  ;(globalThis as any).fetch = async () => { throw Object.assign(new Error('connect failed'), { name: 'ConnectionRefused' }) }
   ;(process.stderr as any).write = (chunk: any, ...rest: any[]) => { lines.push(String(chunk)); return orig(chunk, ...rest) }
   try {
     expect(await m.modeRound('/comic_round', '123456789', 'k1')).toBeNull()
     expect(await m.modeRound('/photo_round', '123456789', 'k1')).toBeNull()
   } finally {
     ;(process.stderr as any).write = orig
+    ;(globalThis as any).fetch = origFetch
   }
-  expect(lines.some(l => /^worker-manager: comic_round_failed reason=\S+/.test(l))).toBe(true)
-  expect(lines.some(l => /^worker-manager: photo_round_failed reason=\S+/.test(l))).toBe(true)
-}, 20000)   // 每次请求自带 3 秒超时，死端口可能等满超时
+  expect(lines).toContain('worker-manager: comic_round_failed reason=ConnectionRefused\n')
+  expect(lines).toContain('worker-manager: photo_round_failed reason=ConnectionRefused\n')
+})
