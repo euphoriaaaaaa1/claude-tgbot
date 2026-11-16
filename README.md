@@ -564,7 +564,7 @@ powershell -ExecutionPolicy Bypass -File windows\unregister-tasks.ps1
 |---|---|---|
 | macOS | 实跑验证 | 安装、8767、新建 bot、供应商、功能开关、party/photo、双门禁测试 |
 | Linux | 静态检查 | 脚本与路径按 POSIX 检查；未在真实发行版上完整跑通 |
-| Windows | VM 先验 + 真机复验清单 | 已做路径/编码/计划任务三项先验；管理台全流程、语音、聚会/摄像、长稳运行仍需真机复验 |
+| Windows | VM 先验 + 真机复验清单 | 已做路径/编码/计划任务三项先验；管理台全流程、语音、聚会/摄像/漫画、长稳运行仍需真机复验 |
 
 Telegram 线路断开处理（第 13.1 节）在 macOS 上用本机假 Telegram 跑过验收测试，Windows 上未真机验证。
 
