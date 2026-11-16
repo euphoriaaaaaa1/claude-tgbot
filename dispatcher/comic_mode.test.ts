@@ -32,7 +32,7 @@ test('退出：裸词或剥一层括号后整句匹配；句中出现不算', ()
 })
 
 test('bot 名：与 photoBotDir 同口径（字母数字下划线短横，1 到 64 个字符）', () => {
-  for (const n of ['demo-bot', 'bot2', '_x', '-x', 'a'.repeat(64)]) expect([n, isValidModeBotName(n)]).toEqual([n, true])
+  for (const n of ['demo-bot', 'my-bot', '_x', '-x', 'a'.repeat(64)]) expect([n, isValidModeBotName(n)]).toEqual([n, true])
   for (const n of ['', 'A.b_c-1', 'demo.bot', '.hidden', '..', 'a/b', 'a b', 'a'.repeat(65), '漫画', undefined, 7]) {
     expect([n, isValidModeBotName(n)]).toEqual([n, false])
   }
