@@ -46,13 +46,42 @@ export function isDirectorInbound(meta: unknown): boolean {
   return isObj(meta) && (meta.from_username === 'director' || meta.sender_username === 'director')
 }
 
-/** 用户正文里的系统标记转全角；worker 只信投递件 meta 追加的标记（party-camera）。 */
+/**
+ * 用户正文里的系统标记转全角；worker 只信投递件 meta 追加的标记（party-camera 与漫画模式）。
+ * 不分大小写、容忍括号内空白（模型对 `[ AUTO-Comic ]` 同样会当标记读），统一换成小写规范名的全角形式。
+ * 识别在"逐码点 NFKC + 去零宽字符"的副本上做（拦全角字母、零宽夹塞、【】），替换落回原文对应片段，
+ * 未命中处逐字节不变。已是转义产物的 `［x］` 规范化后同样命中，换出来仍是 `［x］`，幂等。
+ * 正则无嵌套量词，每个起始括号后的空白只扫一遍，整体线性。
+ */
+const USER_MARKER_RE = /[\[【]\s*(auto-photo|auto-comic|party-ambiguous|party)\s*[\]】]/gi
+const ZERO_WIDTH_RE = /^[​-‍﻿⁠]$/
 export function escapeUserMarkers(text: unknown): string {
   if (typeof text !== 'string') return ''
-  return text
-    .replaceAll('[party-ambiguous]', '［party-ambiguous］')
-    .replaceAll('[auto-photo]', '［auto-photo］')
-    .replaceAll('[party]', '［party］')
+  // normalized 的每个 UTF-16 单元记下它来自原文哪个码点片段 [srcStart, srcEnd)
+  let normalized = ''
+  const srcStart: number[] = []
+  const srcEnd: number[] = []
+  let pos = 0
+  for (const ch of text) {
+    const end = pos + ch.length
+    // 逐码点规范化：跨字符组合（如字母 + 组合附加符）不会被合成 ASCII，只会让标记不命中原样保留
+    const piece = ZERO_WIDTH_RE.test(ch) ? '' : ch.charCodeAt(0) < 0x80 ? ch : ch.normalize('NFKC')
+    for (let i = 0; i < piece.length; i++) { srcStart.push(pos); srcEnd.push(end) }
+    normalized += piece
+    pos = end
+  }
+  let out = ''
+  let copied = 0
+  let replaced = false
+  for (const m of normalized.matchAll(USER_MARKER_RE)) {
+    const from = srcStart[m.index!]!
+    const to = srcEnd[m.index! + m[0].length - 1]!
+    if (from < copied) continue // 理论上不会重叠，防御：不回写已输出片段
+    out += text.slice(copied, from) + `［${m[1]!.toLowerCase()}］`
+    copied = to
+    replaced = true
+  }
+  return replaced ? out + text.slice(copied) : text
 }
 
 /** 恢复后补发提醒件（resend_plan 注入）的正文前缀。 */
