@@ -16,8 +16,6 @@ export const CHATS = ['123456789', '123456790', '123456791', '123456792', '12345
 export interface ComicOpts {
   bot?: string
   imageOn?: boolean
-  /** 让 worker 的 dispatcher 地址指向这里（用来造 /comic_round 失败） */
-  workerDispatcherUrl?: string
   extraEnv?: Record<string, string>
   /** 起进程前再预置文件 */
   preStart?: (h: Harness) => void
@@ -141,7 +139,6 @@ export async function comicHarness(o: ComicOpts = {}): Promise<Comic> {
         chmodSync(p, 0o755)
         extra.CLAUDE_BIN = p
       }
-      if (o.workerDispatcherUrl) { extra.TELEGRAM_DISPATCHER_URL = o.workerDispatcherUrl; extra.DISPATCHER_URL = o.workerDispatcherUrl }
       o.preStart?.(hh)
     },
   })
