@@ -1295,7 +1295,7 @@ function logPartyStateProblem(chatId: string, status: string): void {
  *（"停"两个都退；只退漫画时拍照仍有效则同带 photo_mode）；漫画触发 → 先删拍照再建漫画；
  * 拍照触发 → 先删漫画再建拍照；否则先读漫画、再读拍照。
  */
-function inboundCameraMeta(chatId: string, messageId: string, text: string, nowMs: number): Record<string, unknown> | null {
+export function inboundCameraMeta(chatId: string, messageId: string, text: string, nowMs: number): Record<string, unknown> | null {
   if (!CAMERA_MODES_ENABLED) return null
   if (!isValidPhotoChatId(chatId)) return null
   if (!featureOn(botFeatures(), 'image')) {
@@ -1314,6 +1314,12 @@ function inboundCameraMeta(chatId: string, messageId: string, text: string, nowM
     if (photoExit) {
       deletePhotoState(modeStatePath('photo', chatId))
       off.photo_mode_off = true
+      // 只属于拍照的退出词（别拍了、正常拍照…）不关漫画：漫画仍开着时本件照常带 comic_mode，
+      // 否则这一轮的 [auto-comic] 会被吞掉、不计轮。"停"两个都退，comicExit 已成立，不再读。
+      if (!comicExit) {
+        const comic = activeModeMeta('comic', chatId, nowMs)
+        if (comic) off.comic_mode = comic
+      }
       return off
     }
     // 只属于漫画的退出词（正常聊、不画了…）不关拍照：拍照仍开着时本件照常带 photo_mode，
