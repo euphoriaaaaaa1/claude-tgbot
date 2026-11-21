@@ -41,6 +41,7 @@ CJK_CHAR_PATTERN = re.compile(
 )
 # 分角色提示词（novelai-characters 方案 2.1，接口 4.1-4.5）。
 MAX_CHARACTERS = 6
+MAX_CHARACTER_NEGATIVE = 1000  # 单个角色 negative 去首尾空白后最多几个字符
 POSITION_MODES = ("auto", "manual")
 CHARACTERS_REASON_LIMIT = 10  # 报错首行最多列几条原因
 SHOWN_VALUE_LIMIT = 40  # 原因里回显的值（repr）最多几个字符
@@ -559,7 +560,8 @@ def validate_characters(
 ) -> list[dict[str, Any]]:
     """校验新写法的 characters：一次查完再抛 CharactersError，通过则返回规范化列表。
 
-    规范化后每项只有 positive（去首尾空白），manual 且角色 ≥ 2 时另有 float 坐标的 center，其余键忽略。
+    规范化后每项有 positive（去首尾空白），manual 且角色 ≥ 2 时另有 float 坐标的 center，
+    negative 合法且去空白后非空时另有 negative（去首尾空白），其余键忽略。
     不是列表或多于 max_characters 项时只报这一条，不再逐项查（漫画模式上限 20，报错写明是漫画模式）。
     """
     if not isinstance(raw, list):
@@ -594,6 +596,18 @@ def validate_characters(
                 )
                 if not bad_axes:
                     character["center"] = {"x": float(center["x"]), "y": float(center["y"])}
+        # negative 可选：缺省、null、全空白都当没有，不出这个键，请求与记录才与没写时逐字节相同。
+        negative = item.get("negative")
+        if negative is not None and not isinstance(negative, str):
+            reasons.append(f"第 {index} 个角色的 negative 必须是字符串，收到 {type(negative).__name__}")
+        elif isinstance(negative, str) and negative.strip():
+            negative = negative.strip()
+            if len(negative) > MAX_CHARACTER_NEGATIVE:
+                reasons.append(
+                    f"第 {index} 个角色的 negative 太长：最多 {MAX_CHARACTER_NEGATIVE} 字，收到 {len(negative)} 字"
+                )
+            else:
+                character["negative"] = negative
         characters.append(character)
     if reasons:
         raise CharactersError(reasons)
