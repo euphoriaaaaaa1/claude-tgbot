@@ -1,9 +1,11 @@
 """NovelAI 画风预设管理（Flask Blueprint）。
 
-管理 ``$NOVELAI_SKILL_ROOT/assets/styles.json``（默认
-``~/.claude/skills/novelai-skill``）：
+技能目录为 ``$NOVELAI_SKILL_ROOT``（默认仓库内 ``skills/novelai-skill``）。画风读本地
+``assets/styles.local.json``，没有再读出厂 ``assets/styles.json``；保存只写本地文件（不进 git），
+出厂文件只读：
 - 网页 /styles 展示所有预设卡片，可新建/编辑/删除/设为当前/生成示例图
-- generate_novelai_image.py 通过 apply_active_style() 在生图前读取该文件生效
+- generate_novelai_image.py 通过 apply_active_style() 在生图前按同样的先后读取生效
+- 选中的画风文件读不出或格式不对时页面 500、``/api/*`` 回 ``{"error": "internal_server_error"}``，不写盘
 
 公开版约束：provider 模式下本蓝图只有页面与样式管理端点可达，密钥端点
 ``/api/novelai_key`` 不在白名单内（恒 404）；令牌用
@@ -51,10 +53,10 @@ def _scrub_secrets(text: str) -> str:
     return _SECRET_RE.sub("***", text or "")[-2000:]
 
 
-# 路径可用 NOVELAI_SKILL_ROOT 覆盖：测试通过真实 HTTP 接口读写 styles.json，
+# 路径可用 NOVELAI_SKILL_ROOT 覆盖：测试通过真实 HTTP 接口读写画风文件，
 # 若测试实例与生产共用同一份文件，跑一次测试就会改乱真实的 bot 画风绑定。
 SKILL_ROOT = Path(os.environ.get("NOVELAI_SKILL_ROOT")
-                  or os.path.expanduser("~/.claude/skills/novelai-skill"))
+                  or Path(__file__).resolve().parent.parent / "skills" / "novelai-skill")
 STYLES_PATH = SKILL_ROOT / "assets" / "styles.json"
 DEFAULT_CONFIG_PATH = SKILL_ROOT / "assets" / "default_config.json"
 GENERATE_SCRIPT = SKILL_ROOT / "scripts" / "generate_novelai_image.py"
@@ -163,26 +165,71 @@ def _validate_text(body, field, limit):
     return value, None
 
 
+class StylesFileError(ValueError):
+    """选中的画风文件读不出、不是合法 UTF-8 JSON 或结构不对。消息只含文件名，不含内容。"""
+
+
+@styles_bp.errorhandler(StylesFileError)
+def _styles_file_error(_exc):
+    # 蓝图自带的 500：不依赖挂载它的主应用有没有错误处理。坏文件不回退、不覆盖，留给人去修。
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "internal_server_error"}), 500
+    return "Internal Server Error", 500
+
+
+def _local_styles_path() -> Path:
+    """本地画风文件：与出厂 STYLES_PATH 同目录，调用时现算（夹具只换 STYLES_PATH 即同时隔离）。"""
+    return STYLES_PATH.with_name("styles.local.json")
+
+
+def _styles_structure_ok(data) -> bool:
+    """与 generate_novelai_image.py 同一口径：顶层是对象；styles 存在时是对象数组；
+    active_by_bot 存在时是对象；active 存在时是字符串。"""
+    if not isinstance(data, dict):
+        return False
+    styles = data.get("styles", [])
+    if not isinstance(styles, list) or not all(isinstance(s, dict) for s in styles):
+        return False
+    if "active_by_bot" in data and not isinstance(data["active_by_bot"], dict):
+        return False
+    if "active" in data and not isinstance(data["active"], str):
+        return False
+    return True
+
+
 def _load_styles() -> dict:
-    """读 styles.json；文件缺失 → 干净底稿。坏 JSON/IO 异常按读失败向上抛。"""
-    if not STYLES_PATH.exists():
+    """读生效的画风：本地在就只读本地，否则读出厂，都没有 → 空白底稿。
+
+    "在"按路径上有任何条目算（含目录、断链）。选中的文件读不出、不是合法 UTF-8 JSON 或结构不对时
+    抛 StylesFileError，不回退到另一个文件：出图脚本对同一份坏文件不套画风，两边才一致。
+    """
+    path = next((p for p in (_local_styles_path(), STYLES_PATH) if os.path.lexists(p)), None)
+    if path is None:
         return {"active": "default", "active_by_bot": {}, "styles": []}
-    with STYLES_PATH.open("r", encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        raise StylesFileError("画风文件读不出或格式不对：assets/%s" % path.name) from None
+    if not _styles_structure_ok(data):
+        raise StylesFileError("画风文件读不出或格式不对：assets/%s" % path.name)
     data.setdefault("active_by_bot", {})  # 老文件平滑迁移
+    data.setdefault("styles", [])
     return data
 
 
 def _save_styles_atomic(data: dict) -> None:
-    """同目录临时文件 + os.replace 原子替换：生图脚本随时直读该文件，防半截 JSON。"""
-    STYLES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(STYLES_PATH.parent),
+    """只写本地画风文件，出厂 styles.json 不动。同目录临时文件 + os.replace 原子替换：
+    生图脚本随时直读该文件，防半截 JSON。"""
+    local_path = _local_styles_path()
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(local_path.parent),
                                prefix=".styles.json-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
             f.write("\n")
-        os.replace(tmp, STYLES_PATH)
+        os.replace(tmp, local_path)
     except BaseException:
         try:
             os.remove(tmp)
