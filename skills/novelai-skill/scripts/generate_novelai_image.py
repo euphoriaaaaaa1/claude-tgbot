@@ -497,9 +497,10 @@ def build_payload(config: dict[str, Any], prompts: dict[str, str]) -> dict[str, 
             {"char_caption": c["positive"], "centers": [center]} for c, center in zip(characters, centers)
         ]
         params["v4_prompt"]["use_coords"] = use_coords
-        # 负面各槽固定空串、坐标与正面相同；负面词照旧由配置拼在 base。
+        # 负面各槽取该角色的 negative（没写为空串）、坐标与正面相同；全局负面词照旧由配置拼在 base。
         params["v4_negative_prompt"]["caption"]["char_captions"] = [
-            {"char_caption": "", "centers": [dict(center)]} for center in centers
+            {"char_caption": c.get("negative", ""), "centers": [dict(center)]}
+            for c, center in zip(characters, centers)
         ]
 
     return {
@@ -511,10 +512,30 @@ def build_payload(config: dict[str, Any], prompts: dict[str, str]) -> dict[str, 
     }
 
 
+def _drop_empty_negatives(intermediate: Any) -> Any:
+    """记录用的原始中间稿副本：去掉值为 null 或全空白的 characters[i].negative。
+
+    这类 negative 按没写处理，记录里也不留，结果文件与状态才与没写时逐字节相同；其余内容原样保留。
+    """
+    if not isinstance(intermediate, dict) or not isinstance(intermediate.get("characters"), list):
+        return intermediate
+    def empty(value: Any) -> bool:
+        return value is None or (isinstance(value, str) and not value.strip())
+    if not any(isinstance(c, dict) and "negative" in c and empty(c["negative"]) for c in intermediate["characters"]):
+        return intermediate
+    copied = dict(intermediate)
+    copied["characters"] = [
+        {k: v for k, v in c.items() if not (k == "negative" and empty(v))} if isinstance(c, dict) else c
+        for c in intermediate["characters"]
+    ]
+    return copied
+
+
 def flatten_characters(prompts: dict[str, Any]) -> dict[str, Any]:
     """把角色并回整段提示词：返回副本，final_positive_prompt 为 base 与各角色 positive 依序以 ", " 连接，角色清空。
 
     只给 400 平铺重发、5xx 精简请求体、开关文件三处用；交给 build_payload 得到的就是改造前的生产主请求形状。
+    角色的 negative 随角色一起丢弃：并进全局负面会压到其他人物。
     """
     flat = dict(prompts)
     positives = [c["positive"] for c in prompts.get("characters") or []]
@@ -890,7 +911,7 @@ def generate_image(
     image_path = save_response(
         response_body, output_dir, output_image_path=output_image_path
     )
-    source_request = intermediate
+    source_request = _drop_empty_negatives(intermediate)
     state = save_generation_state(
         actual_state_dir,
         {
