@@ -115,7 +115,7 @@ def test_create_style_persists_atomic_json(client, styles_env):
     assert entry["name"] == "赛博霓虹"
     assert entry["params"] == {"steps": 20, "cfg_scale": 5.5,
                                "sampler": "k_euler", "ucPreset": 2}
-    saved = json.loads(styles_routes.STYLES_PATH.read_text(encoding="utf-8"))
+    saved = json.loads(styles_routes._local_styles_path().read_text(encoding="utf-8"))
     assert saved["styles"][0]["id"] == entry["id"]
     # 原子写不留下临时文件
     assert not list(styles_routes.STYLES_PATH.parent.glob(".styles.json-*.tmp"))
@@ -123,10 +123,10 @@ def test_create_style_persists_atomic_json(client, styles_env):
 
 def test_update_style_keeps_sample_metadata(client, styles_env):
     entry = _create(client, id="s1")
-    data = json.loads(styles_routes.STYLES_PATH.read_text(encoding="utf-8"))
+    data = json.loads(styles_routes._local_styles_path().read_text(encoding="utf-8"))
     data["styles"][0]["sample_image"] = "/tmp/s1.png"
     data["styles"][0]["sample_ts"] = 111
-    styles_routes.STYLES_PATH.write_text(json.dumps(data), encoding="utf-8")
+    styles_routes._local_styles_path().write_text(json.dumps(data), encoding="utf-8")
 
     r = client.post("/api/styles", json={"id": "s1", "name": "改名"})
     assert r.status_code == 200
@@ -272,7 +272,7 @@ def test_sample_task_conflict_and_polling(client, monkeypatch):
     assert done["ok"] is True
     assert done["sample_image"].endswith("s1.png")
     assert done["sample_ts"] == 123
-    saved = json.loads(styles_routes.STYLES_PATH.read_text(encoding="utf-8"))
+    saved = json.loads(styles_routes._local_styles_path().read_text(encoding="utf-8"))
     assert saved["styles"][0]["sample_image"].endswith("s1.png")
 
 
@@ -334,7 +334,7 @@ def test_run_sample_success_writes_styles_atomically(client, monkeypatch, styles
     result = styles_routes._run_sample("s1")
     assert result["ok"] is True
     assert result["sample_image"].endswith("s1.png")
-    saved = json.loads(styles_routes.STYLES_PATH.read_text(encoding="utf-8"))
+    saved = json.loads(styles_routes._local_styles_path().read_text(encoding="utf-8"))
     assert saved["styles"][0]["sample_image"] == result["sample_image"]
     assert isinstance(saved["styles"][0]["sample_ts"], int)
     assert not list(styles_routes.STYLES_PATH.parent.glob(".styles.json-*.tmp"))
@@ -482,3 +482,22 @@ def test_run_sample_revalidates_style_id(tmp_path, monkeypatch, styles_env):
     with pytest.raises(ValueError):
         styles_routes._run_sample("../../x")
     assert not (tmp_path / "media" / "__styles__").exists()
+
+
+def test_local_styles_shadow_factory_and_bad_local_is_500_without_write(client, styles_env):
+    factory = styles_routes.STYLES_PATH
+    factory.parent.mkdir(parents=True, exist_ok=True)
+    factory.write_text(json.dumps({"active": "f", "styles": [{"id": "f", "name": "出厂"}]}), encoding="utf-8")
+    before = factory.read_bytes()
+    _create(client, id="s1")
+    assert factory.read_bytes() == before                      # 出厂只读
+    local = json.loads(styles_routes._local_styles_path().read_text(encoding="utf-8"))
+    assert [s["id"] for s in local["styles"]] == ["f", "s1"]   # 本地 = 出厂 + 本次修改
+
+    styles_routes._local_styles_path().write_text('{"active": 1}', encoding="utf-8")
+    r = client.get("/api/styles")
+    assert r.status_code == 500 and r.get_json() == {"error": "internal_server_error"}
+    assert client.get("/styles").status_code == 500
+    r = client.post("/api/styles", json={"name": "不该写"})
+    assert r.status_code == 500
+    assert styles_routes._local_styles_path().read_text(encoding="utf-8") == '{"active": 1}'
