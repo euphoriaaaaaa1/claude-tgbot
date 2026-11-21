@@ -1153,7 +1153,7 @@ export class WorkerManager {
         const home = process.env.HOME || homedir()
         const user = readSettingsFile(userSettingsPath())    // 用户级只读这一次，透传与 env 补回同源
         let prep: PrepareOk | PrepareDegraded = prepareWorkerIsolation({ botDir, home, user,
-          engineDir: resolve(process.env.NOVELAI_SKILL_ROOT || join(home, '.claude', 'skills', 'novelai-skill')) })
+          engineDir: resolve(process.env.NOVELAI_SKILL_ROOT || join(import.meta.dir, '..', 'skills', 'novelai-skill')) })
         const isoArgs = prep.status === 'ok' ? workerSpawnArgs(baseArgs, prep, botDir) : null
         if (prep.status === 'ok' && isoArgs) {
           args = isoArgs
