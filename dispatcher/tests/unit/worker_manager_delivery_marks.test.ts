@@ -53,7 +53,7 @@ afterAll(() => rmSync(TMP, { recursive: true, force: true }))
 const PHOTO = { active: true, opened_at_ms: 1, expires_at_ms: 2 }
 const COMIC = { active: true, opened_at_ms: 1, expires_at_ms: 2 }
 const COMIC_MARK = (n: number) =>
-  `[auto-comic] 第${n}轮：本轮回复按 image 技能出两页漫画，第一页第三人称、第二页 user 的第一视角，user 不在场时只出第一页；写法按 novelai-skill 的「漫画写法」；正文不写分镜、画格或生图过程。`
+  `[auto-comic] 第${n}轮：本轮回复按 image 技能出三页漫画，第一页第三人称、第二页 user 的第一视角、第三页你自己的第一视角，user 不在场时只出第一页和第三页；写法按 novelai-skill 的「漫画写法」；正文不写分镜、画格或生图过程。`
 
 /** 写一批同 chat 的收件件，返回一个能跑 pump 的 mgr；calls 记调了哪个端点，delivered 收投递正文 */
 function pumpMgr(metas: Record<string, unknown>[], round: (path: string) => number | null | Promise<number | null>) {
