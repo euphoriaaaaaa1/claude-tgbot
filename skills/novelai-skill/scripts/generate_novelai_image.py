@@ -208,6 +208,44 @@ def apply_style_params(config: dict[str, Any], params: Any) -> dict[str, Any]:
     return config
 
 
+def _styles_structure_ok(data: Any) -> bool:
+    """画风文件的结构检查，与 moments/styles_routes.py 同一口径：顶层是对象；styles 存在时是对象数组；
+    active_by_bot 存在时是对象；active 存在时是字符串。"""
+    if not isinstance(data, dict):
+        return False
+    styles = data.get("styles", [])
+    if not isinstance(styles, list) or not all(isinstance(s, dict) for s in styles):
+        return False
+    if "active_by_bot" in data and not isinstance(data["active_by_bot"], dict):
+        return False
+    if "active" in data and not isinstance(data["active"], str):
+        return False
+    return True
+
+
+def load_styles_data() -> dict[str, Any] | None:
+    """读生效的画风文件：本地 assets/styles.local.json 在就只读它，否则读出厂 assets/styles.json。
+
+    两个都不在：返回 None，不告警。选中的文件读不出、不是合法 UTF-8 JSON 或结构不对：返回 None，
+    stderr 记一行点名文件（只写文件名、不写内容），不回退到另一个文件——画风页对同一份坏文件报 500，
+    两边的生效画风才一致。位置可用 NOVELAI_SKILL_ROOT 覆盖（与 moments/styles_routes.py 同一个接缝），
+    令牌 .env.local 仍固定读脚本所在的 skill 根目录。
+    """
+    assets = Path(os.environ.get("NOVELAI_SKILL_ROOT") or skill_root()) / "assets"
+    # "存在"按路径上有任何条目算（含目录、断链），断链与目录随后按读不出处理。
+    path = next((p for p in (assets / "styles.local.json", assets / "styles.json") if os.path.lexists(p)), None)
+    if path is None:
+        return None
+    try:
+        data = load_json(path)
+    except (OSError, ValueError):
+        data = None
+    if data is None or not _styles_structure_ok(data):
+        sys.stderr.write(f"[novelai] 画风文件读不出或格式不对，本次不套画风：assets/{path.name}\n")
+        return None
+    return data
+
+
 def apply_active_style(config: dict[str, Any], agent_name: str | None = None) -> dict[str, Any]:
     """把激活的画风预设叠加到 config 上（可靠性优先，不依赖 LLM）。
 
@@ -222,16 +260,8 @@ def apply_active_style(config: dict[str, Any], agent_name: str | None = None) ->
       novelai_parameters），非法值丢弃并退回全局默认，见 apply_style_params
     - active 找不到对应 style 时，原样返回 config，不报错
     """
-    # styles.json 的位置可用 NOVELAI_SKILL_ROOT 覆盖（与 moments/styles_routes.py 同一个接缝）：
-    # 验收测试要在临时副本上改绑定，共用生产文件跑一次就会把真实 bot 画风绑定改乱。
-    # .env.local 仍固定读真实 skill 根目录——令牌不该跟着测试副本走。
-    styles_root = Path(os.environ.get("NOVELAI_SKILL_ROOT") or skill_root())
-    styles_path = styles_root / "assets" / "styles.json"
-    if not styles_path.exists():
-        return config
-    try:
-        styles_data = load_json(styles_path)
-    except Exception:
+    styles_data = load_styles_data()
+    if styles_data is None:
         return config
 
     explicit = os.getenv("NOVELAI_ACTIVE_STYLE_ID", "").strip()
