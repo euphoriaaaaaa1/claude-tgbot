@@ -512,25 +512,6 @@ def build_payload(config: dict[str, Any], prompts: dict[str, str]) -> dict[str, 
     }
 
 
-def _drop_empty_negatives(intermediate: Any) -> Any:
-    """记录用的原始中间稿副本：去掉值为 null 或全空白的 characters[i].negative。
-
-    这类 negative 按没写处理，记录里也不留，结果文件与状态才与没写时逐字节相同；其余内容原样保留。
-    """
-    if not isinstance(intermediate, dict) or not isinstance(intermediate.get("characters"), list):
-        return intermediate
-    def empty(value: Any) -> bool:
-        return value is None or (isinstance(value, str) and not value.strip())
-    if not any(isinstance(c, dict) and "negative" in c and empty(c["negative"]) for c in intermediate["characters"]):
-        return intermediate
-    copied = dict(intermediate)
-    copied["characters"] = [
-        {k: v for k, v in c.items() if not (k == "negative" and empty(v))} if isinstance(c, dict) else c
-        for c in intermediate["characters"]
-    ]
-    return copied
-
-
 def flatten_characters(prompts: dict[str, Any]) -> dict[str, Any]:
     """把角色并回整段提示词：返回副本，final_positive_prompt 为 base 与各角色 positive 依序以 ", " 连接，角色清空。
 
@@ -911,7 +892,7 @@ def generate_image(
     image_path = save_response(
         response_body, output_dir, output_image_path=output_image_path
     )
-    source_request = _drop_empty_negatives(intermediate)
+    source_request = intermediate
     state = save_generation_state(
         actual_state_dir,
         {
