@@ -251,6 +251,8 @@ compatibility:
 - 两人及以上有肢体接触的画面，镜头取平视、略俯、略仰、正面、侧面、三分之四侧面之一；不用 worm's-eye、bird's-eye、top-down、fisheye、ultra wide-angle、Dutch angle。景别按姿势选择，全身、膝上、腰上均可，不强制 full body。
 - 不写 dynamic pose、motion blur、mid-motion、bouncing、swaying 等运动词。
 - 两人及以上有肢体接触的画面，中间稿写 `"auto_compose": false`，景别与镜头由 `prompt` 自行写明。
+- 两人对视或一方看向另一方时，`prompt` 写 eye contact 或 looking at another，并在两人各自的项里写 `mutual#eye contact`（单向写 `source#looking at another` 与 `target#looking at another`）；镜头取侧面或三分之四侧面，不写 front view、looking at viewer。
+- 人物项的 `center` 按画面里的实际位置写：站立的人与跪、坐、躺的人上下拉开（矮的一方 y 更大）；面对面的两人左右分开，并在 `prompt` 写 facing each other。
 - 写完后逐个角色核对：动作的发起方与承受方是否与用户原话一致，每个生殖器是否只出现一次，每个角色的头与身体朝向是否相容。
 
 ### 第一视角
@@ -264,6 +266,9 @@ compatibility:
 - 角色自己的第一视角中，user 只写角色此刻看得到的部分：user 在角色身前或上方时写出 user 的身体；user 在角色身后时，user 那一项只写伸入画面的手臂或手，写明 only his arm and hand visible，不写 user 的脸与躯干。
 - 角色自己的第一视角中，user 在角色身后时，user 那一项写 negative：face, head, torso, full body。
 - user 在角色身前或上方时才用 female pov 标签；user 在角色身后时不用 female pov，改写 pov 与角色看向的方向。
+- 写在观看者身旁的人物落在画面左缘或右缘，只露出一部分；写在对面的人物才放在画面中上方。
+- 角色自己的第一视角不画作用在角色自己头、脸、嘴、舌头上的动作，这一张改为角色低头看到的对方身体与自己手部的局部。
+- 镜头与视角词（pov、first person、looking down、head out of frame 等）只写在 `prompt` 里，不写进人物项；权重只加在单个标签或两三个词的短语上，不用一个权重包住一整段描述。
 
 ### 特写
 - 特写画面与漫画特写格写出镜头窗口内可见的全部内容，不只写焦点对象；焦点所在身体区域的全貌、相邻的身体部位与物体都要写出。
@@ -297,6 +302,7 @@ compatibility:
 - 单句对白不超过约 20 字，过长时拆成同一人的连续两句。全页对白合计不超过 750 个字符。
 - 一页的角色项不超过约 12 个。各角色项的 `center` 决定分格的排布，同一格内各项的 `center` 落在该格区域内，不同格的 `center` 不交叉。
 - 分镜一律有主有次：一个主格占页面一半以上，画本轮最有张力的瞬间；其余为辅格，画特写、表情反应或局部，大小和形状随情节变化，可斜切边框、可嵌在主格角落或压在主格边缘、可出格。不画等宽等高的均分格，不画四格。整页布局句写明主格位置与各辅格的位置和大小。
+- 辅格之间大小不同，不把两个辅格并排平分一行；至少一个辅格嵌在主格角落或压在主格边缘，写 cut-in，并用一句英文完整句写明它的位置与大小。各人物项的 `center` 按所在格的实际位置写，不左右对称排列。
 - 写完核对：布局句中的格数与逐格描述的格数一致；每格的可见人物都有对应的角色项；每句对白都在说话人的项里；同一人物在各格的外貌一致，不同人物的区分特征没有互换。
 
 
