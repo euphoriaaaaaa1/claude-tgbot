@@ -248,7 +248,7 @@ bot 的 worker 默认只加载 bot 自己的项目设置与本地设置（`--set
 - 不再给 bot 用的：用户级钩子、插件、`~/.claude/skills/` 下的个人技能、全局 `CLAUDE.md`，以及 Claude Code 自带的通用技能（代码审查、定时任务、调试之类）。bot 只剩它自己目录 `.claude/skills/` 里的技能和生图技能。
 - 个人技能与个人命令（`~/.claude/commands/`）会自动按名字关掉。个人子代理（`~/.claude/agents/`）在 bot 文件夹位于家目录下时仍会进 bot，这是 Claude Code 的已知限制，bot 文件夹放在家目录以外的不受影响。
 - 依赖某个个人技能的，两条出路：把它放进 bot 目录的 `.claude/skills/`，或建下面的关闭标记。
-- 生图技能照常可用：dispatcher 在 `~/.claude/worker-shared/` 下建一个指向 `$NOVELAI_SKILL_ROOT`（默认 `~/.claude/skills/novelai-skill`）的链接挂给 bot；没装生图技能就不建。
+- 生图技能照常可用：dispatcher 在 `~/.claude/worker-shared/` 下建一个指向 `$NOVELAI_SKILL_ROOT`（默认为仓库内的 `skills/novelai-skill`）的链接挂给 bot；该目录不在就不建。
 - 跟随全局的：bot 自己没配的供应商、模型、思考强度。全局 `settings.json` 的 `env` 段整段带进 worker 的进程环境（bot 自己 env 里已有的键不被覆盖）；`effortLevel` 与 `modelSettings`、`alwaysThinkingEnabled`、`switchModelsOnFlag`、顶层 `model` 在 bot 两份设置都没设时照搬。
 - 全局的禁止规则 `permissions.deny` 与 bot 自己的合并后照样带给 bot；要约束 bot 的规则，请写进 bot 自己的 `.claude/settings.json`。worker 以跳过权限确认的模式运行，全局禁止规则在这种模式下是否生效尚未验证。
 - /clear 时生成摘要的那次模型调用同样不加载用户级设置，模型与供应商仍跟随全局。Windows 上这次调用的临时目录位于用户目录之下，全局 `CLAUDE.md`、个人技能与个人命令仍可能进入摘要调用，这是已知限制。
@@ -407,7 +407,13 @@ printf '%s\n' "$NOVELAI_TOKEN" | python3 scripts/set_novelai_key.py
 python3 scripts/set_novelai_key.py --check   # 只输出 set: true|false
 ```
 
-落点：`$NOVELAI_SKILL_ROOT/.env.local`（默认 `~/.claude/skills/novelai-skill/.env.local`），权限 0600，已在 `.gitignore`。不要把令牌贴进 README、issue、日志或 `configs/`。
+落点：`$NOVELAI_SKILL_ROOT/.env.local`（默认为仓库内的 `skills/novelai-skill/.env.local`），权限 0600，已在 `.gitignore`。不要把令牌贴进 README、issue、日志或 `configs/`。
+
+画风页保存的画风写在 `skills/novelai-skill/assets/styles.local.json`（不进 git）；仓库里的 `assets/styles.json` 是出厂默认，只读。本地文件存在时整份遮住出厂文件，之后上游在出厂文件里新增的内置画风在画风页看不到；想要时把本地文件改名备份，画风页会重新显示出厂内容，再把自己的预设重新存一遍。本地或出厂文件读不出、格式不对时，画风页报 500、不写盘，出图脚本本次不套画风并在 stderr 记一行，修好或移走该文件即可。
+
+令牌与本地画风都在仓库目录里：重新克隆仓库会丢，需要时先拷出来；打包分享仓库时排除这两个文件。不要对仓库运行 `git clean -x`，它会删掉所有被忽略的文件，包括令牌与本地画风。
+
+生图技能的位置由两个变量决定：`CLAUDEBOT_SKILLS_ROOT`（bot 技能里引用的技能根，默认仓库 `skills/`）与 `NOVELAI_SKILL_ROOT`（dispatcher、画风页、令牌脚本用的生图技能目录，默认仓库 `skills/novelai-skill`）。要把技能放到别处时两个一起改，并保持 `$NOVELAI_SKILL_ROOT` 等于 `$CLAUDEBOT_SKILLS_ROOT/novelai-skill`，否则 bot 读的规则与实际跑的脚本不同源。技能里的出图命令写的是 `$CLAUDEBOTLIFE_REPO/skills/novelai-skill/...`，这个变量由 dispatcher 传给 bot；不经 dispatcher 手动起的会话不在支持范围。
 
 bot 的 worker 不加载用户级设置，生图技能经共享目录 `~/.claude/worker-shared/` 挂给 bot（见 5.1），照常可用。
 
@@ -425,8 +431,8 @@ bot 的 worker 不加载用户级设置，生图技能经共享目录 `~/.claude
 ## 10. 聚会模式、摄像视角与漫画模式
 
 - **聚会模式（party）**：按群开启，群级共享，最长 6 小时；可带 `exclude`（不参与的 bot）和 `note`（场景说明）。入口有三处：bot 工具、群聊导演、管理台群聊页。关闭词包括“聚会结束”“结束聚会”“散了”等。
-- **摄像视角（photo）**：按 bot + 会话开启。消息里出现“拍照 / 摄像 / 摄影”“每轮拍照”“摄像机视角拍照”等会开启；每次图片投递算一轮；最长 24 小时。退出词包括“停 / 停下 / 别拍了 / 正常拍照”等。
-- **漫画模式（comic）**：按 bot + 会话开启，与摄像视角互斥（开一个会关掉另一个）。整条消息只发（漫画）（分镜）（四格）（漫画模式）之一（全角或半角括号）时开启；每次投递算一轮，每轮出两页漫画，第一页第三人称、第二页 user 的第一视角，user 不在场时只出第一页；最长 24 小时。退出词：停、不画了、结束漫画、退出漫画、正常聊（“停”同时退出摄像视角）。需要开启 image 功能，按 novelai-skill 的「漫画写法」出图；只对 NovelAI 引擎生效，引擎是 comfyui 时本轮按普通出图。本模式由本仓库的 dispatcher 实现，只对 Claude 底层 bot 生效。
+- **摄像视角（photo）**：按 bot + 会话开启。消息里出现“拍照 / 摄像 / 摄影”“每轮拍照”“摄像机视角拍照”等会开启；每次图片投递算一轮，每轮出三张（旁观摄影机视角、user 的第一视角、bot 自己的第一视角，只对 NovelAI 引擎生效）；最长 24 小时。退出词包括“停 / 停下 / 别拍了 / 正常拍照”等。
+- **漫画模式（comic）**：按 bot + 会话开启，与摄像视角互斥（开一个会关掉另一个）。整条消息只发（漫画）（分镜）（四格）（漫画模式）之一（全角或半角括号）时开启；每次投递算一轮，每轮出三页漫画，第一页第三人称、第二页 user 的第一视角、第三页 bot 自己的第一视角，user 不在场时只出第一页和第三页；最长 24 小时。退出词：停、不画了、结束漫画、退出漫画、正常聊（“停”同时退出摄像视角）。需要开启 image 功能，按 novelai-skill 的「漫画写法」出图；只对 NovelAI 引擎生效，引擎是 comfyui 时本轮按普通出图。本模式由本仓库的 dispatcher 实现，只对 Claude 底层 bot 生效。
 - 三者都是本地状态文件，不写数据库：`.party-mode/`、`.photo-mode/`、`.comic-mode/`。损坏、时钟回拨或过期按关闭处理。
 - 模板更新后，已建 bot 的 image 技能要刷新一次才生效：`python3 -m skill_gen --all --mode refresh --names image --apply`（只重写模板部分，形象段原样保留）。
 
@@ -499,7 +505,7 @@ dispatcher 会判断到 Telegram 的线路是否已知不通（代理挂掉、�
 
 - 8767 默认只监听 `127.0.0.1`，非回环地址直接拒绝启动。
 - 口令只存哈希；会话 cookie 名 `cb_provider`，可在页面退出或 `POST /api/panel/logout_all` 全部撤销。
-- 密钥文件：`<channels>/<bot>/.env`、`configs/providers.json`、`~/.claude/secrets/moments-panel*.env`、`~/.claude/skills/novelai-skill/.env.local`，均按 0600 写入，且已在 `.gitignore`。
+- 密钥文件：`<channels>/<bot>/.env`、`configs/providers.json`、`~/.claude/secrets/moments-panel*.env`、仓库内 `skills/novelai-skill/.env.local`，均按 0600 写入，且已在 `.gitignore`。
 - worker 隔离写在 bot 目录下的 `.worker-settings.json`（0600）只含隔离设置、透传的模型与思考设置和禁止规则，不含 env 与任何密钥；全局 `settings.json` 的 env 段（可能含供应商令牌）只进 worker 与摘要子进程的环境，不进日志、命令行和文件。
 - dsh 令牌只读，只进 `Authorization` 头；不进日志、异常文本或页面。
 
