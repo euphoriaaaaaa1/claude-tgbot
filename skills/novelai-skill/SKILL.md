@@ -395,6 +395,7 @@ compatibility:
 ## 调用脚本
 
 命令里的 `$CLAUDEBOTLIFE_REPO` 是本项目仓库根目录，由 dispatcher 传给 bot，照原样写，不展开成绝对路径。
+在 Windows 的 PowerShell 里写成 `$env:CLAUDEBOTLIFE_REPO`，在 cmd 里写成 `%CLAUDEBOTLIFE_REPO%`，路径分隔符用 `\`；Git Bash 里照下面的写法不变。
 
 ```bash
 # 新场景（首次/换场景）
