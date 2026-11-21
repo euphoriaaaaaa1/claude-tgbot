@@ -2,7 +2,7 @@
 """pub-nai-1121 · 出图脚本的人物 negative（行为清单 13、14、15、16）。
 
 只走命令行 + 本机假 NovelAI 服务；断言请求体里的角色负面槽，不碰脚本内部。
-金样本（zero/one）复用 tests/acceptance/pub_comic_nai/golden，它是"改前"的逐字节基准。
+金样本的请求体文件（zero/one.request.json）复用 tests/acceptance/pub_comic_nai/golden，它是"改前"的逐字节基准。
 """
 import copy
 import json
@@ -48,7 +48,8 @@ def test_行为13_角色写negative_对应负面槽是去首尾空白后的值_�
     pytest.param({"negative": None}, id="null"),
     pytest.param({"negative": " \t\n  "}, id="全空白"),
 ])
-def test_行为14_negative不写_null或全空白_请求体与结果文件与改前逐字节相同(tmp_path, fake, extra):
+def test_行为14_negative不写_null或全空白_发给NovelAI的请求体与改前逐字节相同(tmp_path, fake, extra):
+    # 2026-11-21 修订：只比对请求体；结果文件原样记录输入，不要求与改前逐字节相同，所以不再比对。
     case = copy.deepcopy(P.GOLDEN_CASES["one"])
     case["characters"][0].update(extra)
     sb = H.Sandbox(tmp_path / "b", fake)
@@ -57,8 +58,6 @@ def test_行为14_negative不写_null或全空白_请求体与结果文件与改
     assert len(reqs) == 1
     assert P.normalize(reqs[0]["body"], sb.root) == (P.GOLDEN_DIR / "one.request.json").read_bytes(), \
         "请求体与改前金样本不一致"
-    assert P.normalize(res.read_bytes(), sb.root) == (P.GOLDEN_DIR / "one.result.json").read_bytes(), \
-        "结果文件与改前金样本不一致"
 
 
 # 行为 15
