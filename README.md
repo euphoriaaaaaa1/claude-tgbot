@@ -415,6 +415,8 @@ python3 scripts/set_novelai_key.py --check   # 只输出 set: true|false
 
 生图技能的位置由两个变量决定：`CLAUDEBOT_SKILLS_ROOT`（bot 技能里引用的技能根，默认仓库 `skills/`）与 `NOVELAI_SKILL_ROOT`（dispatcher、画风页、令牌脚本用的生图技能目录，默认仓库 `skills/novelai-skill`）。要把技能放到别处时两个一起改，并保持 `$NOVELAI_SKILL_ROOT` 等于 `$CLAUDEBOT_SKILLS_ROOT/novelai-skill`，否则 bot 读的规则与实际跑的脚本不同源。技能里的出图命令写的是 `$CLAUDEBOTLIFE_REPO/skills/novelai-skill/...`，这个变量由 dispatcher 传给 bot；不经 dispatcher 手动起的会话不在支持范围。
 
+同时使用 dsh 底层时，把 dsh 配置里的 `image_skill_dir` 指到本仓的 `skills/novelai-skill`，或者让两边的 `NOVELAI_SKILL_ROOT` 指向同一个目录。本地画风文件 `styles.local.json` 只有本仓这份出图脚本会读，dsh 仓自带的旧脚本不认它。
+
 bot 的 worker 不加载用户级设置，生图技能经共享目录 `~/.claude/worker-shared/` 挂给 bot（见 5.1），照常可用。
 
 ### 9.3 ComfyUI（可选）
