@@ -60,7 +60,7 @@ compatibility:
 - 如果用户没有指定具体场景，要创造多样化的场景（不同地点、姿势、服装、视角）
 - 避免重复使用相同的提示词模板
 
-中间稿最少要有 `prompt`。可选字段为 `characters`、`position_mode`、`reply_text`、`mode`、`revision_instruction`、`override_full_prompt`、`comic`、`auto_compose`。`comic` 与 `auto_compose` 只能写 true 或 false：`comic: true` 出一页漫画（见「漫画写法」）；`auto_compose: false` 让脚本不补景别、镜头与运动词（见「多人互动」「第一视角」）。
+中间稿最少要有 `prompt`。可选字段为 `characters`、`position_mode`、`reply_text`、`mode`、`revision_instruction`、`override_full_prompt`、`comic`、`auto_compose`。`comic` 与 `auto_compose` 只能写 true 或 false：`comic: true` 出一页漫画（见「漫画写法」）；`auto_compose: false` 让脚本不补景别、镜头与运动词（见「多人互动」「第一视角」）。角色项除 `positive` 与 `center` 外可选写 `characters[].negative`，去除不想要的画面。
 
 推荐结构：
 
@@ -112,7 +112,8 @@ compatibility:
 - 写法：`1.3::long silver hair, blue eyes::`。
 
 ### 角色分段（characters）
-- 画面里每个可见角色写一项，单人画面也写一项；画面里没有人时写 `"characters": []`。
+- 画面里每个可见人物写一项，单人画面也写一项；画面里没有人时写 `"characters": []`。每一项写 `positive` 与 `negative`：`positive` 写这个人物本身的外貌、服装、表情、动作和属于他的身体部位，`negative` 写只针对这个人物、不该出现在他身上的东西。`prompt` 只写场景：构图、镜头、环境、光照、人数标签和人物之间的位置关系。
+- 女性人物项的 `negative` 写 futanari, penis, testicles。性场景中，男性人物项的 `positive` 写 adult man，`negative` 写 child, shota, young boy；女性人物项的 `positive` 写 adult woman，`negative` 加写 child, loli。
 - 人数标签只写在 `prompt` 里，`positive` 以不带数字的 `girl`、`boy` 或 `other` 开头。
 - 角色按画面从左到右的顺序排列。
 - 两人及以上需要固定站位时写 `"position_mode": "manual"`，并给每个角色写 `center`。`x` 与 `y` 取 0 到 1，`x` 从左到右增大，`y` 从上到下增大。同时在 `prompt` 里用自然语言写出位置关系。站位只是倾向，不保证精确。不需要固定站位时省略 `position_mode` 与 `center`。
@@ -244,7 +245,7 @@ compatibility:
 - 三人及以上的性行为与群体互动，用整组标签写在 `prompt` 中，如 ffm threesome、mmf threesome、harem、group sex、cooperative fellatio、cooperative paizuri、spitroast、teamwork。同一动作不在多个角色的 `positive` 中重复书写。
 - `source#`、`target#`、`mutual#` 只用于两名角色之间的单个动作，每个动作只写一组；三人及以上共同参与的动作改用上一条的整组标签。
 - 体位方向用体位标签确定，如 cowgirl position 与 reverse cowgirl position、missionary、doggystyle、upright straddle、sex from behind，不以描述句代替。
-- 生殖器在 `prompt` 的空间描述中写一次并标明归属与位置，不在多个角色项中各写一次。需要画出交合部位时，写明可见的部位与插入状态。
+- 生殖器与交合部位写在所属人物的项里，`prompt` 只写交合的位置关系，不在多个人物项中重复。所属人物是作为镜头、没有人物项的观看者时，写在 `prompt` 中并标明 pov。需要画出交合部位时，写明可见的部位与插入状态。
 - 身体部位一律带归属，写成 girl's、boy's、the man's、the woman's 加部位名，不写裸的部位名。
 - `prompt` 用一句英文写清每个角色的位置、朝向与接触点，角色项的 `center` 与这句描述一致。
 - 两人及以上有肢体接触的画面，镜头取平视、略俯、略仰、正面、侧面、三分之四侧面之一；不用 worm's-eye、bird's-eye、top-down、fisheye、ultra wide-angle、Dutch angle。景别按姿势选择，全身、膝上、腰上均可，不强制 full body。
@@ -253,11 +254,16 @@ compatibility:
 - 写完后逐个角色核对：动作的发起方与承受方是否与用户原话一致，每个生殖器是否只出现一次，每个角色的头与身体朝向是否相容。
 
 ### 第一视角
-- 第一视角下观看者就是镜头，不在 `characters` 中为观看者写项；观看者只以身体局部出现，写在 `prompt` 中，如 pov hands、pov crotch，以及标明归属的手、胸口、生殖器。
+- user 的第一视角下 user 就是镜头，不在 `characters` 中为 user 写项；user 只以身体局部出现，写在 `prompt` 中，如 pov hands、pov crotch，以及标明归属的手、胸口、生殖器。
 - 镜头随观看者姿势确定：站立时 from above，仰躺时 lying on back 与 from below，坐姿时 from above 或平视。不叠加 fisheye、ultra wide-angle、Dutch angle 与 full body。
 - 画面中的角色写 looking at viewer 或看向观看者身体的具体部位。
 - 第一视角的中间稿写 `"auto_compose": false`。
 - 观看者的身体局部只以静止状态出现在画面下缘或两侧边缘，不写观看者伸手、伸舌或伸出肢体去触碰对方。动作需要观看者的肢体伸入画面时，不用第一视角，改用低角度或高角度的第三人称机位，并让观看者出现在画面边缘。
+- 角色自己的第一视角以角色的双眼为镜头：角色本人在 `characters` 中照常写一项，人数标签把她算在内，该项只写低头或回头看得到的部位（胸、腹、大腿、手、垂下的发梢），写 head out of frame，不写脸；镜头随姿势确定，仰躺写 looking down at own body，侧躺写 looking down along own body，跪趴回头写 looking back over own shoulder。
+- 角色自己的第一视角中，角色的手只放在身体前方、两腿之间或撑在床面，不写伸向身后的手。
+- 角色自己的第一视角中，user 只写角色此刻看得到的部分：user 在角色身前或上方时写出 user 的身体；user 在角色身后时，user 那一项只写伸入画面的手臂或手，写明 only his arm and hand visible，不写 user 的脸与躯干。
+- 角色自己的第一视角中，user 在角色身后时，user 那一项写 negative：face, head, torso, full body。
+- user 在角色身前或上方时才用 female pov 标签；user 在角色身后时不用 female pov，改写 pov 与角色看向的方向。
 
 ### 特写
 - 特写画面与漫画特写格写出镜头窗口内可见的全部内容，不只写焦点对象；焦点所在身体区域的全貌、相邻的身体部位与物体都要写出。
@@ -278,17 +284,19 @@ compatibility:
 进入条件：消息带漫画模式系统标记，或用户在本条消息中明确要一页漫画。
 
 - 中间稿写 `"comic": true`，每份中间稿出一页，用 `--ratio portrait`；横向两格或三格时用 `--ratio landscape`。
-- 漫画模式每轮出两页时，两页各写一份中间稿，串行生成，各用随机种子，不加 `--reuse-seed`。第一页为第三人称机位，呈现本轮完整情节；第二页为观看者的第一视角，呈现同一情节中观看者眼中的画面。两页的场景、服装与人物外貌一致。
-- 第一视角页的每一格按「第一视角」写：观看者不写角色项，其身体局部写在该格描述中，`characters` 只为画面中的人物写项。观看者的话不写进图中，只写画面中人物的对白。
-- `prompt` 依次写：nsfw（如适用）、comic、格数标签（仅竖排四格写 4koma）、文字标签（按对白语言写 chinese text、japanese text 或 english text）、full color、一句英文完整句描述整页布局，随后按阅读顺序逐格描述，每格以 Panel 1、Panel 2 开头并写明位置与大小，最后写全页人数标签（按不同人物去重）。
+- 漫画模式每轮出三页，三页各写一份中间稿，串行生成，各用随机种子，不加 `--reuse-seed`。第一页为第三人称机位，呈现本轮完整情节；第二页为 user 的第一视角；第三页为角色自己的第一视角。三页的场景、服装与人物外貌一致。
+- user 第一视角页按「第一视角」写：user 不写角色项，其身体局部写在该格描述中，user 的话作为画外对白写进图中，气泡贴在画面下缘。角色第一视角页按「第一视角」中角色自己的第一视角写：角色本人只写看得到的部位，不写脸；角色说的话作为画外对白写，气泡贴在画面下缘；user 的对白写在 user 那一项，角色的心声写 thought bubble。
+- 写提示词前先为每页写台本：按格列出本格的对白、心声、旁白与拟音，每格至少一条，主格至少三条；性场景的每一格写拟音（肉体撞击声、水声、喘息）。台本里的每一条都写进图中，不删减、不合并。
+- `prompt` 依次写：nsfw（如适用）、comic、文字标签（按对白语言写 chinese text、japanese text 或 english text）、full color、一句英文完整句描述整页布局，随后按阅读顺序逐格描述，每格以 Panel 1、Panel 2 开头并写明位置与大小，随后写全页人数标签（按不同人物去重），有非人物文字时最后写 `Text:` 与原句。
 - 每格描述写明景别、镜头、场景以及该格所有可见人物的动作与位置；特写格按「特写」写。同一格只写一个时刻。
 - `characters` 为每一格中每一个可见人物各写一项。同一人物出现在几格就写几项，每项完整写出外貌与服装。`position_mode` 写 manual，`center` 落在该人物所在格的区域内。
-- 对白写在说话人那一项的末尾，格式为 `speech bubble. Text: 原句`；心声用 thought bubble，拟音用 sound effects。`Text:` 之后只写原句，不加引号或括号，不再写任何视觉词；一项只写一个 `Text:`，同一人在同一格说多句时用空行分隔。对白不写在 `prompt` 中。
+- 对白写在说话人那一项的末尾，格式为 `speech bubble. Text: 原句`；心声用 thought bubble，拟音用 sound effects。`Text:` 之后只写原句，不加引号或括号，不再写任何视觉词；一项只写一个 `Text:`，同一人在同一格说多句时用空行分隔。画内人物的对白不写在 `prompt` 中。
+- 旁白、拟音与画外对白不属于画内人物，写在 `prompt` 末尾的 `Text:` 之后，多条用空行分隔。旁白写 narration；拟音写 sound effects，不加气泡，直接嵌在格内；画外对白写 speech bubble，并用一句英文完整句写明气泡贴在声源一侧的格边、尾巴指向格外。这些类型词与位置句写在 `Text:` 之前。
 - 同一格内有两人及以上时，说话人那一项的气泡写成 `speech bubble on the left side of her head, tail pointing to her. Text: 原句`；说话人在格内偏右时写 right，男性写 his 与 him。
 - 同一格内不说话的人物，在该人物项和分格描述里都写 listening、closed mouth，不写说话、夸口、比划讲话这类动作，也不写气泡。
 - 单句对白不超过约 20 字，过长时拆成同一人的连续两句。全页对白合计不超过 750 个字符。
 - 一页的角色项不超过约 12 个。各角色项的 `center` 决定分格的排布，同一格内各项的 `center` 落在该格区域内，不同格的 `center` 不交叉。
-- 分镜风格按剧情选一种，写进整页布局句：四格（等高横格、起承转合）；轻松日常（规整横格、留白均匀）；恋爱（大格人物特写配装饰与花瓣）；成人向（一个主大格呈现全貌，角上嵌入局部特写小格）；动作（主格占半页以上、相邻格斜切边框）。
+- 分镜一律有主有次：一个主格占页面一半以上，画本轮最有张力的瞬间；其余为辅格，画特写、表情反应或局部，大小和形状随情节变化，可斜切边框、可嵌在主格角落或压在主格边缘、可出格。不画等宽等高的均分格，不画四格。整页布局句写明主格位置与各辅格的位置和大小。
 - 写完核对：布局句中的格数与逐格描述的格数一致；每格的可见人物都有对应的角色项；每句对白都在说话人的项里；同一人物在各格的外貌一致，不同人物的区分特征没有互换。
 
 
