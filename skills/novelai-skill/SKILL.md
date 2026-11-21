@@ -380,19 +380,21 @@ compatibility:
 
 ## 调用脚本
 
+命令里的 `$CLAUDEBOTLIFE_REPO` 是本项目仓库根目录，由 dispatcher 传给 bot，照原样写，不展开成绝对路径。
+
 ```bash
 # 新场景（首次/换场景）
-python3 ~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py \
+python3 "$CLAUDEBOTLIFE_REPO/skills/novelai-skill/scripts/generate_novelai_image.py" \
   --intermediate ~/resource/workspace/<agent>/intermediate.json \
-  --config ~/.claude/skills/novelai-skill/assets/default_config.json \
+  --config "$CLAUDEBOTLIFE_REPO/skills/novelai-skill/assets/default_config.json" \
   --ratio <portrait|landscape|square|wide> \
   --agent-name <当前agent名> \
   --chat-id <当前聊天的chat_id>
 
 # 同场景续图（房间/床/灯光要保持一致）
-python3 ~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py \
+python3 "$CLAUDEBOTLIFE_REPO/skills/novelai-skill/scripts/generate_novelai_image.py" \
   --intermediate ~/resource/workspace/<agent>/intermediate.json \
-  --config ~/.claude/skills/novelai-skill/assets/default_config.json \
+  --config "$CLAUDEBOTLIFE_REPO/skills/novelai-skill/assets/default_config.json" \
   --ratio <portrait|landscape|square|wide> \
   --reuse-seed \
   --agent-name <当前agent名> \
@@ -406,8 +408,8 @@ python3 ~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py \
 
 ```bash
 W=~/resource/workspace/<agent>
-G=~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py
-C=~/.claude/skills/novelai-skill/assets/default_config.json
+G="$CLAUDEBOTLIFE_REPO/skills/novelai-skill/scripts/generate_novelai_image.py"
+C="$CLAUDEBOTLIFE_REPO/skills/novelai-skill/assets/default_config.json"
 cat > "$W/im_1.json" <<'EOF'
 {"mode":"new","prompt":"<画面描述>","characters":[<角色>]}
 EOF
@@ -435,9 +437,9 @@ cat "$W/r1.json" "$W/r2.json" 2>/dev/null
 
 **示例（agent <agent>，全身自拍）：**
 ```bash
-python3 ~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py \
+python3 "$CLAUDEBOTLIFE_REPO/skills/novelai-skill/scripts/generate_novelai_image.py" \
   --intermediate ~/resource/workspace/<agent>/intermediate.json \
-  --config ~/.claude/skills/novelai-skill/assets/default_config.json \
+  --config "$CLAUDEBOTLIFE_REPO/skills/novelai-skill/assets/default_config.json" \
   --ratio portrait \
   --agent-name <agent> \
   --chat-id <chat_id>
