@@ -2,3 +2,7 @@
 outputs/
 *.pyc
 __pycache__/
+.env.local-*.tmp
+assets/styles.local.json
+assets/.styles.json-*.tmp
+assets/characters_off
