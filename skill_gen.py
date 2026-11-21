@@ -98,7 +98,8 @@ def _builtin_values(bot, bot_dir: str) -> dict:
         "channel_dir": os.path.realpath(bot_dir),
         "repo_dir": _repo_dir(),
         "python": sys.executable,
-        "skills_root": _env_path("CLAUDEBOT_SKILLS_ROOT", "~/.claude/skills"),
+        # 默认用仓库自带的 skills/（生图规则与脚本同源）；CLAUDEBOT_SKILLS_ROOT 设了用设的值。
+        "skills_root": _env_path("CLAUDEBOT_SKILLS_ROOT", os.path.join(_repo_dir(), "skills")),
         "media_root": _env_path("MOMENTS_MEDIA_ROOT", "~/resource/media"),
     }
 
