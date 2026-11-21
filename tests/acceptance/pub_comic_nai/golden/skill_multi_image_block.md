@@ -5,8 +5,8 @@
 
 ```bash
 W=~/resource/workspace/<agent>
-G=~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py
-C=~/.claude/skills/novelai-skill/assets/default_config.json
+G="$CLAUDEBOTLIFE_REPO/skills/novelai-skill/scripts/generate_novelai_image.py"
+C="$CLAUDEBOTLIFE_REPO/skills/novelai-skill/assets/default_config.json"
 cat > "$W/im_1.json" <<'EOF'
 {"mode":"new","prompt":"<画面描述>","characters":[<角色>]}
 EOF
