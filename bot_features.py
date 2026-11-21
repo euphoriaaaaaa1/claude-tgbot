@@ -78,7 +78,7 @@ KEYS = tuple(FEATURES)
 REQUIREMENT_TEXT = {
     "voice_id_missing": "缺语音编号。去哪填：本页语音块的“语音编号”",
     "novelai_key_missing": "没设 NovelAI 令牌。去哪填：画风页的 NovelAI 令牌",
-    "novelai_skill_missing": "生图工具目录不在。去哪处理：重新安装 novelai-skill",
+    "novelai_skill_missing": "生图工具目录不在。去哪处理：确认仓库里有 skills/novelai-skill（可用 git checkout -- skills/novelai-skill 恢复），或检查 NOVELAI_SKILL_ROOT",
     "moments_db_missing": "朋友圈库不在。去哪处理：先打开一次朋友圈页",
     "chat_id_missing": "不知道该主动找谁（配置里没有私聊编号）。去哪填：新建或重新配置这只 bot",
 }
