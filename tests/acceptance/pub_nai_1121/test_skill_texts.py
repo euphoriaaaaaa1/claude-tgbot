@@ -38,10 +38,38 @@ def test_行为19_image技能_恰好一行auto_photo_含三张且以同一句结
     assert lines[0].rstrip().endswith(COMFYUI_SENTENCE), lines[0]
 
 
-def test_行为19_image技能_机位景别与张力一节首条含带auto_photo系统标记时_且comfyui那句指向comfyui_skill的SKILL_md():
+def section_body(text, heading_part):
+    """含 heading_part 的标题行之后、到下一个同级或更高级标题之前的全部文本。"""
+    lines = text.splitlines()
+    idx = next(i for i, ln in enumerate(lines) if re.match(r"^#{1,6}\s", ln) and heading_part in ln)
+    level = len(re.match(r"^(#+)", lines[idx]).group(1))
+    body = []
+    for ln in lines[idx + 1:]:
+        m = re.match(r"^(#+)\s", ln)
+        if m and len(m.group(1)) <= level:
+            break
+        body.append(ln)
+    return "\n".join(body)
+
+
+def test_行为19_image技能_机位景别与张力一节_不含两张图():
+    section = section_body(H.default_rendered(), "机位、景别与张力")
+    assert section.strip(), "找不到「机位、景别与张力」一节或该节为空"
+    assert "两张图" not in section, "该节仍写着「两张图」"
+
+
+def test_行为19_image技能_机位景别与张力一节_含各张图从镜头视角词库取不同条目():
+    section = section_body(H.default_rendered(), "机位、景别与张力")
+    assert "各张图从镜头视角词库取不同条目" in section, section
+
+
+def test_行为19_image技能_机位景别与张力一节_含第一视角各张按novelai_skill的第一视角取景_不写full_body():
+    section = section_body(H.default_rendered(), "机位、景别与张力")
+    assert "第一视角的各张按 novelai-skill 的「第一视角」取景，不写 full body" in section, section
+
+
+def test_行为19_image技能_comfyui那句指向comfyui_skill的SKILL_md():
     text = H.default_rendered()
-    first = H.section_first_line(text, "机位、景别与张力")
-    assert "带 [auto-photo] 系统标记时" in first, first
     pointers = [ln for ln in lines_with(text, "comfyui-skill/SKILL.md") if "comfyui" in ln.replace("comfyui-skill", "")]
     assert pointers, "找不到指向 comfyui-skill/SKILL.md 的 comfyui 那一句"
 
