@@ -1,28 +1,28 @@
 // WorkerManager × worker 隔离白盒单测：用生产同形的 Node 句柄（on('exit')、stdout.on('data')）驱动启动自检，
 // 锁住基础参数全貌，并把 buildContent 输出与入站样例逐字比对（钉死 BOT_TZ，不随运行机时区变）。
-// 零副作用：HOME/CHANNEL_DIR/引擎全在临时目录；spawn、kill、计时器全注入，不起进程、不排退避；不联网。
+// 零副作用：HOME/CHANNEL_DIR/引擎全在临时目录（默认位置那条只读仓库技能目录、不往里写）；spawn、kill、计时器全注入，不起进程、不排退避；不联网。
 // 模块级 CHANNEL_DIR/BOT 在首次 import 时定死：先设 env 再动态 import。
 import { test, expect, afterAll, setSystemTime } from 'bun:test'
 import { EventEmitter } from 'events'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { join, resolve } from 'path'
 
 const BASE = mkdtempSync(join(tmpdir(), 'wm-iso-'))
+const ENGINE = join(BASE, 'engine', 'novelai-skill')          // 造的引擎：经 NOVELAI_SKILL_ROOT 指过来
 const HOME = join(BASE, 'home'), BOT_DIR = join(BASE, 'channels', 'bot1'), STUB = join(BASE, 'stub')
 for (const d of [HOME, join(BOT_DIR, '.claude'), STUB]) mkdirSync(d, { recursive: true })
 writeFileSync(join(STUB, 'claude'), '#!/bin/sh\nexit 97\n'); chmodSync(join(STUB, 'claude'), 0o755)
 Object.assign(process.env, {
   HOME, CHANNEL_DIR: BOT_DIR, BOT_NAME: 'bot1', BOT_NAMESPACE: '00000000-0000-4000-8000-0000000000aa',   // 测试用假命名空间
   CLAUDE_BIN: join(STUB, 'claude'), TELEGRAM_DISPATCHER_URL: 'http://127.0.0.1:9', TELEGRAM_BOT_TOKEN: 'FAKE-TOKEN-DO-NOT-LEAK',
-  NOVELAI_SKILL_ROOT: '', BOT_TZ: 'UTC',
+  NOVELAI_SKILL_ROOT: ENGINE, BOT_TZ: 'UTC',
 })
 delete process.env.CLAUDE_SETTINGS_PATH
 afterAll(() => { setSystemTime(); try { rmSync(BASE, { recursive: true, force: true }) } catch { /* ignore */ } })
 
 const { WorkerManager } = await import('./worker-manager')
 const MARK = join(BOT_DIR, '.worker-isolation-off')
-const ENGINE = join(HOME, '.claude', 'skills', 'novelai-skill')          // NOVELAI_SKILL_ROOT 为空串 → 默认位置
 const LINK = join(HOME, '.claude', 'worker-shared', '.claude', 'skills', 'novelai-skill')
 mkdirSync(ENGINE, { recursive: true }); writeFileSync(join(ENGINE, 'SKILL.md'), '# engine\n')
 
@@ -74,11 +74,24 @@ test('基础参数全貌锁定（开关关时与改动前逐字相同）', async
   } finally { rmSync(MARK, { force: true }) }
 })
 
-test('NOVELAI_SKILL_ROOT 为空串：按默认位置挂生图技能', async () => {
+test('NOVELAI_SKILL_ROOT 指向造的引擎：共享入口链接指向它', async () => {
   const s = await newManager().launch()
   expect(sources(s)).toBe('project,local')
   expect(readlinkSync(LINK)).toBe(ENGINE)
   expect(s.args).toContain(join(HOME, '.claude', 'worker-shared'))
+})
+
+test('NOVELAI_SKILL_ROOT 为空串：共享入口链接指向仓库 skills/novelai-skill（只建链接，不往默认位置写）', async () => {
+  process.env.NOVELAI_SKILL_ROOT = ''
+  try {
+    const s = await newManager().launch()
+    expect(sources(s)).toBe('project,local')
+    expect(readlinkSync(LINK)).toBe(resolve(import.meta.dir, '..', 'skills', 'novelai-skill'))
+  } finally {
+    process.env.NOVELAI_SKILL_ROOT = ENGINE
+    await newManager().launch()            // 链接改回造的引擎，后面的用例照旧
+    expect(readlinkSync(LINK)).toBe(ENGINE)
+  }
 })
 
 test('Node 句柄：init 里有被关掉的技能 → flag_ignored，下一次走旧参数；只看第一个 init', async () => {
