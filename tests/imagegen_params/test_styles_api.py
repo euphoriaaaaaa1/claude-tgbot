@@ -64,10 +64,10 @@ def test_留空的参数被剔除而不是写进去(api, blank):
 
 def test_编辑时保留示例图时间戳(api, styles_root):
     entry = _mk(api, params={"steps": 20})
-    data = json.loads(styles_root.read_text(encoding="utf-8"))
+    data = json.loads(styles_root.with_name("styles.local.json").read_text(encoding="utf-8"))
     data["styles"][0]["sample_image"] = "/tmp/x.png"
     data["styles"][0]["sample_ts"] = 1234567890
-    styles_root.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    styles_root.with_name("styles.local.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     code, updated = api.post("/api/styles", {"id": entry["id"], "name": "改名后"})
     assert code == 200
@@ -164,10 +164,10 @@ def test_改已有预设失败时原值不被改掉(api):
 
 def test_删除清理悬空绑定(api, styles_root):
     entry = _mk(api)
-    data = json.loads(styles_root.read_text(encoding="utf-8"))
+    data = json.loads(styles_root.with_name("styles.local.json").read_text(encoding="utf-8"))
     data["active"] = entry["id"]
     data["active_by_bot"] = {"somebot": entry["id"]}
-    styles_root.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    styles_root.with_name("styles.local.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     code, resp = api.delete("/api/styles/%s" % entry["id"])
     assert code == 200

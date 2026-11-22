@@ -16,7 +16,7 @@ description: 生图技能：按场景生成并发送图片
 ### 引擎与提示词
 - 每次生图前先运行 `{{python}} {{repo_dir}}/scripts/image_provider.py telegram` 确定引擎。参数 `telegram` 用于聊天里发图，包括电话中要图；发朋友圈动态配图与朋友圈评论回图时把参数换成 `moment`。
 - 脚本打印 `novelai` 时，写提示词前先读 {{skills_root}}/novelai-skill/SKILL.md，按其中的写法规则写：`prompt` 写整个画面，每个可见角色在 `characters` 里写一项。
-- 脚本打印 `comfyui` 时，按 ComfyUI 提示词语法写整段提示词并运行其脚本，语法细节以 `{{skills_root}}/comfyui-skill/scripts/` 下脚本的用法说明为准；命令带上技能圈内的「本 bot 参数」所列的 bot 名与配置路径。
+- 脚本打印 `comfyui` 时，按 ComfyUI 提示词语法写整段提示词并运行其脚本，写法与脚本用法以 `{{skills_root}}/comfyui-skill/SKILL.md` 为准；命令带上技能圈内的「本 bot 参数」所列的 bot 名与配置路径。
 - 两个引擎的提示词语法互不通用，不得混用。
 - `--ratio`、`--reuse-seed`、`mode=revise`、`characters` 与 `positive`、`--agent-name`、`--chat-id` 只对 NovelAI 有效，下文以（NovelAI）注明。引擎是 comfyui 时只按 comfyui-skill 的写法，这些参数不适用。
 - 引擎只在管理台切换。聊天里不切换引擎，也不答应切换；user 问起时按脚本结果说明当前所用的引擎。
@@ -26,14 +26,15 @@ description: 生图技能：按场景生成并发送图片
 
 ### 张数与先后
 - 入口指令写明张数时按入口执行，电话中要图出 1 张，朋友圈配图出 2 到 4 张。
-- 消息带 [auto-comic] 系统标记时，本轮出两页漫画，按 novelai-skill 的「漫画写法」写，不按两个机位出两张：第一页为第三人称机位，第二页为 user 的第一视角；本轮场景中 user 不在场时只出第一页。此条只对 NovelAI 有效，引擎是 comfyui 时本轮按普通出图。
+- 消息带 [auto-comic] 系统标记时，本轮出三页漫画，按 novelai-skill 的「漫画写法」写，不按两个机位出两张：第一页为第三人称机位，第二页为 user 的第一视角，第三页为你自己的第一视角；本轮场景中 user 不在场时只出第一页和第三页。此条只对 NovelAI 有效，引擎是 comfyui 时本轮按普通出图。
+- 消息带 [auto-photo] 系统标记时，本轮出三张，描写同一时刻同一动作：第一张为旁观摄影机视角，第二张为 user 的第一视角，第三张为你自己的第一视角，后两张按 novelai-skill 的「第一视角」写；本轮场景中 user 不在场时只出第一张和第三张。此条只对 NovelAI 有效，引擎是 comfyui 时本轮按普通出图。
 - 朋友圈评论回图的回写命令只能附一张图，出 1 张。
 - 其余场合每轮默认两张，描写同一动作的两个机位。
 - 多张一律串行跑，一张跑完再跑下一张。
 
 ### 机位、景别与张力
-- 两张图从镜头视角词库取两条不同条目，且不得同属俯、仰、平中的同一类，图B 的角度不得与图A 重复。图A 为第三人称机位；图B 在 user 与角色同框互动时用 user 的第一人称视角，无同框互动时用与图A 完全不同的第三人称机位，同样拍全身。出 3 到 4 张时，其余各张同样取与前几张都不同的机位。
-- 景别固定为全身，两张图都写 full body，人物从头到脚完整入镜、不裁切。只有 user 明确要求特写、近一点、只拍脸或拍某个局部时，才改用近景、中景或特写。
+- 各张图从镜头视角词库取不同条目，且不得同属俯、仰、平中的同一类。第一张为第三人称机位；第二张为 user 的第一视角，本轮场景中 user 不在场时不出第二张；第三张为角色自己的第一视角，按 novelai-skill 的「第一视角」写。出 4 张时，其余各张取与前几张都不同的机位。
+- 除自拍外，第三人称机位的各张景别固定为全身，写 full body，人物从头到脚完整入镜、不裁切；第一视角的各张按 novelai-skill 的「第一视角」取景，不写 full body。只有 user 明确要求特写、近一点、只拍脸或拍某个局部时，才改用近景、中景或特写。
 - 全身照靠机位和动作体现张力，每张至少满足以下三条中的两条。机位极端或倾斜，取 worm's-eye、high angle、Dutch angle、ultra wide-angle 或 over-the-shoulder；人物处在动作中段而非站定，衣摆与头发在动，写 dynamic pose 或 motion blur；构图不居中，带前景遮挡、强透视或对角线。全身构图下人物占画面高度不低于约三分之二，并写 detailed face。
 - 两人及以上有肢体接触的画面，景别与镜头按姿势选择，取平视、略俯、略仰、正面、侧面或三分之四侧面；不用正俯视、贴地仰拍、荷兰角、鱼眼、超广角，不强制全身，不写动作中段与运动模糊，不受上两条的全身与张力要求约束。
 - 镜头视角词库包括正俯视 top-down、45 度俯视 high angle、平视 eye-level、仰视 low angle 或 worm's-eye、正面 front、背面 rear、侧面 side 或 profile、过肩 over-the-shoulder、第一人称 first-person POV、荷兰角 Dutch angle、鱼眼 fisheye、超广角 ultra wide-angle、标准 standard、长焦 telephoto。

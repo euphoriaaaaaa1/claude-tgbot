@@ -7,8 +7,8 @@
     python3 scripts/set_novelai_key.py --check   # 只输出 set: true|false
 
 约束（INTERFACE §3.6）：
-- 写入 ``$NOVELAI_SKILL_ROOT/.env.local``（默认
-  ``~/.claude/skills/novelai-skill/.env.local``）的 ``NOVELAI_BEARER_TOKEN``；
+- 写入 ``$NOVELAI_SKILL_ROOT/.env.local``（默认仓库内
+  ``skills/novelai-skill/.env.local``，已被技能目录的 .gitignore 忽略）的 ``NOVELAI_BEARER_TOKEN``；
 - 同目录临时文件 + ``os.replace`` 原子替换，权限 0600；
 - 全程不打印、不记录令牌；
 - 退出码：0 成功；1 写失败/令牌为空；2 参数错。
@@ -24,8 +24,9 @@ NOVELAI_KEYS = ("NOVELAI_JWT", "NOVELAI_BEARER_TOKEN", "NOVELAI_TOKEN")
 
 
 def _skill_root() -> Path:
+    # 默认是本脚本所在仓库的 skills/novelai-skill：出图脚本按自己所在目录读令牌，两边同一处。
     return Path(os.environ.get("NOVELAI_SKILL_ROOT")
-                or os.path.expanduser("~/.claude/skills/novelai-skill"))
+                or Path(__file__).resolve().parent.parent / "skills" / "novelai-skill")
 
 
 def _env_path() -> Path:

@@ -79,3 +79,4 @@ GitHub Actions 里直接当一步跑：`python3 persona-sync/sync_snippet.py --c
 - 目标文件不存在时脚本报错退出（不会替你新建空人设——那多半是路径写错了）。
 - 写盘是"临时文件 + rename"的原子写，中断不会写坏人设；原文件权限保留。
 - `snippets/voice-reply.md` 与 `voice-bridge/persona-snippet.md` 内容同源：前者用于本工具自动同步，后者是 voice-bridge 文档里的人手并入说明，二选一即可。
+- 拟声词规则只作用于 `voice_text`；单语模式不写 `voice_text` 时，`text` 原样朗读，其中「」里的拟声词会被念出来。

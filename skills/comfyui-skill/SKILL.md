@@ -431,7 +431,7 @@ chalkboard, books and notebooks on desks
 
 | 项 | NovelAI | ComfyUI |
 |---|---|---|
-| 入口脚本 | `~/.claude/skills/novelai-skill/scripts/generate_novelai_image.py` | `$CLAUDEBOTLIFE_REPO/scripts/comfyui_gen.py` |
+| 入口脚本 | `$CLAUDEBOTLIFE_REPO/skills/novelai-skill/scripts/generate_novelai_image.py` | `$CLAUDEBOTLIFE_REPO/scripts/comfyui_gen.py` |
 | 权重 | `1.5::xxx::` | `(xxx:1.5)` |
 | 多角色 | `\|` | `BREAK` |
 | 配置 | skill 自带 default_config.json | `_global.yml.image_generation` |

@@ -70,10 +70,11 @@ def test_渲染后_没有任何未替换的占位符(rendered):
     assert re.findall(r"\{\{[^}]*\}\}", rendered) == []
 
 
-def test_渲染后_含auto_comic两页一条(rendered):
+def test_渲染后_含auto_comic三页一条(rendered):
     lines = [ln for ln in rendered.splitlines() if "[auto-comic]" in ln]
     assert len(lines) == 1, f"含 [auto-comic] 的行应恰好 1 条，实际 {len(lines)}"
-    assert "两页" in lines[0]
+    assert "三页" in lines[0]
+    assert "两页" not in lines[0]
 
 
 def test_渲染后_漫画那一条含引擎是comfyui时本轮按普通出图(rendered):

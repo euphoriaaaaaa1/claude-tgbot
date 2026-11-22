@@ -9,8 +9,9 @@ import type { Comic } from './_comic_harness.ts'
 
 afterEach(async () => { await stopAll() })
 
-const MARK = (n: number) =>
-  `[auto-comic] 第${n}轮：本轮回复按 image 技能出两页漫画，第一页第三人称、第二页 user 的第一视角，user 不在场时只出第一页；写法按 novelai-skill 的「漫画写法」；正文不写分镜、画格或生图过程。`
+// 标记以"[auto-comic] 第n轮："定位；正文按接口文件行为 17：三页（第一页第三人称、第二页 user 的第一视角、第三页你自己的第一视角，user 不在场时只出第一页和第三页）
+const MARK = (n: number) => `[auto-comic] 第${n}轮：`
+const MARK_BODY_PARTS = ['三页', '第一页第三人称', '第二页 user 的第一视角', '第三页你自己的第一视角', 'user 不在场时只出第一页和第三页']
 const count = (s: string, sub: string) => s.split(sub).length - 1
 const waitDeliveries = (c: Comic, n: number, label: string) =>
   c.eventually(() => c.deliveries().length >= n, label, 60000)
@@ -23,6 +24,9 @@ test('漫画开启后首次投递带第1轮标记且在场景标注之前_再一
   await waitDeliveries(c, 1, '首次投递')
   const d1 = c.deliveries()[0]
   expect(d1).toContain(MARK(1))
+  const seg = d1.slice(d1.indexOf('[auto-comic]')).split('\n')[0]
+  for (const part of MARK_BODY_PARTS) expect(seg).toContain(part)
+  expect(seg).not.toContain('两页')
   expect(d1.indexOf(MARK(1))).toBeLessThan(d1.indexOf('【私聊】'))
   c.say('你好')
   await waitDeliveries(c, 2, '第二次投递')

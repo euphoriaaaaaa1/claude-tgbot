@@ -821,9 +821,9 @@ const REPLY_REMINDER =
 
 // 投递标记固定文案（只由 meta + /photo_round、/comic_round 返回值追加；用户原文里的同名写法已转全角）。
 const AUTO_PHOTO_MARK = (round: number) =>
-  `[auto-photo] 第${round}轮：本轮回复按 image 技能的「旁观摄影机视角」规则生图并附上 2 张（同一场景不同机位）；正文不写镜头、拍照或动作描述。`
+  `[auto-photo] 第${round}轮：本轮回复按 image 技能生图并附上 3 张（同一时刻同一动作：旁观摄影机视角、user 的第一视角、你自己的第一视角）；正文不写镜头、拍照或动作描述。`
 const AUTO_COMIC_MARK = (round: number) =>
-  `[auto-comic] 第${round}轮：本轮回复按 image 技能出两页漫画，第一页第三人称、第二页 user 的第一视角，user 不在场时只出第一页；写法按 novelai-skill 的「漫画写法」；正文不写分镜、画格或生图过程。`
+  `[auto-comic] 第${round}轮：本轮回复按 image 技能出三页漫画，第一页第三人称、第二页 user 的第一视角、第三页你自己的第一视角，user 不在场时只出第一页和第三页；写法按 novelai-skill 的「漫画写法」；正文不写分镜、画格或生图过程。`
 
 export class WorkerManager {
   private proc: ChildProcessWithoutNullStreams | null = null
@@ -1153,7 +1153,7 @@ export class WorkerManager {
         const home = process.env.HOME || homedir()
         const user = readSettingsFile(userSettingsPath())    // 用户级只读这一次，透传与 env 补回同源
         let prep: PrepareOk | PrepareDegraded = prepareWorkerIsolation({ botDir, home, user,
-          engineDir: resolve(process.env.NOVELAI_SKILL_ROOT || join(home, '.claude', 'skills', 'novelai-skill')) })
+          engineDir: resolve(process.env.NOVELAI_SKILL_ROOT || join(import.meta.dir, '..', 'skills', 'novelai-skill')) })
         const isoArgs = prep.status === 'ok' ? workerSpawnArgs(baseArgs, prep, botDir) : null
         if (prep.status === 'ok' && isoArgs) {
           args = isoArgs
