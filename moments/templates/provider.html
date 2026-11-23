@@ -1413,8 +1413,11 @@ function fetchModelsFor(providerId) {
     if (providerId) {
       body = {provider_id: providerId, query_only: true};
     } else {
+      // 新建时把当前协议选择一并提交：拉取接口按协议选请求头（OpenAI 兼容上游不能收
+      // anthropic-version，否则返回的模型 ID 会被改写成 anthropic/ 前缀形态）
       body = {base_url: document.getElementById('pBaseUrl').value.trim(),
-              api_key: document.getElementById('pApiKey').value};
+              api_key: document.getElementById('pApiKey').value,
+              protocol: document.getElementById('pProtocol').value};
     }
     p = jsonFetch('/api/providers/models', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
