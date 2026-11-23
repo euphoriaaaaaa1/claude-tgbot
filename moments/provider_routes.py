@@ -613,6 +613,10 @@ def _fetch_models_once_ctx(base_url: str, api_key: str, protocol: str = "openai"
     # 错误只回状态码类别（不回上游 body）。**不做内网 IP 黑名单** —— 本机/LAN 上的 provider
     # 是合法用法（NO_PROXY=127.0.0.1,localhost 是既有事实），黑名单会把正常用法一起砍掉。
     # 同时禁用环境代理（ProxyHandler({})），避免请求被 http_proxy 静默劫持到第三方。
+    if not isinstance(api_key, str):
+        # 非字符串 key 在拼头时会被 %s 转成字符串而**照常发出**（旧实现靠 Request 头校验
+        # 意外拦住数组等类型）；与「请求组装不出来」同一契约，连接前拒发，且不回显值。
+        return (None, _UNSENDABLE, {})
     url = _models_url(base_url)
     from scripts import proxy_upstream   # 与探针同一浏览器式请求头基底（9.7，I 组）
     opener = urllib.request.build_opener(_NoRedirect, urllib.request.ProxyHandler({}))
