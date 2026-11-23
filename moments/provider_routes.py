@@ -452,8 +452,10 @@ def api_list_models():
         openai_base_url = ""
         base_url = body.get("base_url")
         api_key = body.get("api_key")
-        # 新建时按请求体 protocol 选请求头；缺省/无效值按 openai（接口契约缺省即 openai）
-        protocol = pc._normalize_protocol(body.get("protocol")) or "openai"
+        # 新建时：显式 protocol 优先；未传则按地址兜底（与 entry_protocol 同规则，
+        # 路径含 anthropic 段 → anthropic，否则 openai）
+        protocol = (pc._normalize_protocol(body.get("protocol"))
+                    or pc._protocol_from_base_url(base_url))
         # base_url 判据与 R3/R4 统一到 provider_config._valid_base_url（单一来源）
         if not pc._valid_base_url(base_url):
             return _err("base_url 必须是 http/https 开头的地址")
@@ -758,7 +760,9 @@ def api_model_candidates():
             openai_base_url = ""
     else:
         base_url, api_key = body.get("base_url"), body.get("api_key")
-        protocol = pc._normalize_protocol(body.get("protocol")) or "openai"
+        # 显式 protocol 优先；未传则按地址兜底（与 entry_protocol 同规则）
+        protocol = (pc._normalize_protocol(body.get("protocol"))
+                    or pc._protocol_from_base_url(base_url))
         if not pc._valid_base_url(base_url):
             return _err("base_url 必须是 http/https 开头的地址")
         if not isinstance(api_key, str) or not api_key:   # 数组、数字之类：与缺失同样对待
