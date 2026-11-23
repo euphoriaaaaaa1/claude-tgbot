@@ -1665,7 +1665,8 @@ document.getElementById('fetchModelsBtn').addEventListener('click', () => {
   openModelDialog(EDIT_ID
     ? {provider_id: EDIT_ID}
     : {base_url: document.getElementById('pBaseUrl').value.trim(),
-       api_key: document.getElementById('pApiKey').value});
+       api_key: document.getElementById('pApiKey').value,
+       protocol: document.getElementById('pProtocol').value});
 });
 // 新建表单里地址一变，之前勾的模型就不再对得上这个地址，作废
 document.getElementById('pBaseUrl').addEventListener('input', () => { if (!EDIT_ID) setFormModels(null); });
