@@ -60,7 +60,22 @@ class WebEnv:
         self.app = None
 
 
-@pytest.fixture(scope="session")
+_RELOAD_CHAIN = ("provider_config", "moments.panel_auth", "moments.web")
+
+
+def _reload_chain(only_loaded: bool = False):
+    """按顺序重载导入期读环境的模块链；返回 moments.web（only_loaded 时只重载已导入的）。"""
+    mod = None
+    for name in _RELOAD_CHAIN:
+        existing = sys.modules.get(name)
+        if existing is not None:
+            mod = importlib.reload(existing)
+        elif not only_loaded:
+            mod = importlib.import_module(name)
+    return mod
+
+
+@pytest.fixture(scope="module")
 def web_env():
     """临时 HOME/configs/channels + 设定登录口令，然后取应用入口的 Flask app。"""
     tmp = Path(tempfile.mkdtemp(prefix="openrouter_model_id_"))
@@ -79,8 +94,9 @@ def web_env():
     stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     stub.chmod(0o755)
 
-    saved = {k: os.environ.get(k) for k in SEAM_KEYS}
-    os.environ.update({
+    # 只在本模块内改环境：用 MonkeyPatch 记账，模块结束自动还原，不污染后续测试。
+    mp = pytest.MonkeyPatch()
+    for key, value in {
         "HOME": str(home),
         "CLAUDEBOT_CONFIG_DIR": str(configs),
         "CLAUDEBOT_CHANNELS_ROOT": str(channels),
@@ -90,34 +106,37 @@ def web_env():
         "CLAUDEBOT_PROXY_BIN": str(stub),       # 桩脚本，绝不调真实二进制
         "CLAUDEBOT_PROXY_LAUNCHCTL": "off",     # 绝不调 launchctl
         "MOMENTS_DISABLE_CONVERGER": "1",
-    })
+    }.items():
+        mp.setenv(key, value)
 
-    # 硬闸：接缝必须在临时目录下，防误碰真实环境。
-    for key in PATH_SEAM_KEYS:
-        got = Path(os.environ[key]).resolve()
-        assert got.is_relative_to(tmp.resolve()), f"接缝 {key} 逃出临时目录: {got}"
+    try:
+        # 硬闸：接缝必须在临时目录下，防误碰真实环境。
+        for key in PATH_SEAM_KEYS:
+            got = Path(os.environ[key]).resolve()
+            assert got.is_relative_to(tmp.resolve()), f"接缝 {key} 逃出临时目录: {got}"
 
-    proc = subprocess.run(
-        [sys.executable, "-m", "moments.panel_auth", "--set-password"],
-        cwd=str(REPO_ROOT),
-        env={**os.environ},
-        input=f"{PASSWORD}\n{PASSWORD}\n",
-        text=True,
-        capture_output=True,
-        timeout=60,
-    )
-    assert proc.returncode == 0, f"设置口令失败: {proc.stderr}"
+        proc = subprocess.run(
+            [sys.executable, "-m", "moments.panel_auth", "--set-password"],
+            cwd=str(REPO_ROOT),
+            env={**os.environ},
+            input=f"{PASSWORD}\n{PASSWORD}\n",
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+        assert proc.returncode == 0, f"设置口令失败: {proc.stderr}"
 
-    web = importlib.import_module("moments.web")   # 应用入口
-    env = WebEnv(tmp, configs)
-    env.app = web.app
-    yield env
-
-    for key, value in saved.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
+        # 全量跑时前面的测试可能已导入 moments.web（读的是别的配置目录），按当前接缝重载。
+        # provider_config（供应商文件路径、接缝成组判定）与 panel_auth（口令文件路径）在导入期读环境，
+        # 全量跑时可能已按别的环境导入过：按当前接缝依次重载，web 最后重载以绑定新的异常类。
+        web = _reload_chain()   # 应用入口
+        env = WebEnv(tmp, configs)
+        env.app = web.app
+        yield env
+    finally:
+        mp.undo()
+        # 环境还原后按原环境再重载一次，后续测试拿到的模块常量不再指向本模块的临时目录。
+        _reload_chain(only_loaded=True)
 
 
 @pytest.fixture()
