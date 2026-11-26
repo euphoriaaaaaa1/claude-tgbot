@@ -442,6 +442,8 @@ def api_list_models():
         if not api_key:
             return _err("该 provider 未存 api_key")
         base_url = entry.get("base_url")
+        # 有效协议走 provider_config 单一来源（显式 protocol → 地址兜底，永不返回空串）
+        protocol = pc.entry_protocol(entry)
         # 显式 OpenAI 侧地址同样要过 http/https 校验，不合格视为未设（回退会把同一把 key 发过去）
         openai_base_url = entry.get("openai_base_url")
         if not pc._valid_base_url(openai_base_url):
@@ -450,6 +452,10 @@ def api_list_models():
         openai_base_url = ""
         base_url = body.get("base_url")
         api_key = body.get("api_key")
+        # 新建时：显式 protocol 优先；未传则按地址兜底（与 entry_protocol 同规则，
+        # 路径含 anthropic 段 → anthropic，否则 openai）
+        protocol = (pc._normalize_protocol(body.get("protocol"))
+                    or pc._protocol_from_base_url(base_url))
         # base_url 判据与 R3/R4 统一到 provider_config._valid_base_url（单一来源）
         if not pc._valid_base_url(base_url):
             return _err("base_url 必须是 http/https 开头的地址")
@@ -457,7 +463,7 @@ def api_list_models():
             return _err("api_key required")
 
     clear_fetch_contexts()   # 旁路先清零：本次没抽到就不会写进上一轮的残留
-    models, error = _fetch_models(base_url, api_key, openai_base_url)
+    models, error = _fetch_models(base_url, api_key, openai_base_url, protocol)
     if error:
         # 失败时响应只含三个既有键（INTERFACE-provider-protocol-level §2.4：删除顶层 protocols 空壳）。
         return jsonify({"ok": False, "models": [], "error": error})
@@ -504,31 +510,33 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # 3xx 视为失败（不跟随重定向）
 
 
-def _fetch_models(base_url: str, api_key: str, openai_base_url: str = ""):
+def _fetch_models(base_url: str, api_key: str, openai_base_url: str = "",
+                  protocol: str = "openai"):
     """拉上游 ``/v1/models``。返回 ``(models, error)``；形状与既有完全一致（增强三项
     中的分页/上下文抽取走 ``_fetch_models_ctx`` 与旁路，R6 响应与元素形状零变化）。
 
     首次得到 404 且 OpenAI 侧地址（``effective_endpoints``）与 base_url 不同时，再用它回退请求一次
     （如 ``…/anthropic`` 下没有模型列表、根路径下才有）；其他错误不回退。两次都失败则拼接两次文案。
     """
-    models, error, _ = _fetch_models_ctx(base_url, api_key, openai_base_url)
+    models, error, _ = _fetch_models_ctx(base_url, api_key, openai_base_url, protocol)
     return models, error
 
 
-def _fetch_models_ctx(base_url: str, api_key: str, openai_base_url: str = ""):
+def _fetch_models_ctx(base_url: str, api_key: str, openai_base_url: str = "",
+                      protocol: str = "openai"):
     """同 ``_fetch_models``，另把当次抽到的上下文（id → int）一并返回（§5-2 旁路）。
 
     旁路同时落在**线程本地**（``take_fetch_contexts``），供只认两键返回值的 R6 视图取用。
     """
     clear_fetch_contexts()
-    models, error = _fetch_models_once(base_url, api_key)
+    models, error = _fetch_models_once(base_url, api_key, protocol)
     if error != _status_error(404):
         return models, error, (current_fetch_contexts() if not error else {})
     from scripts.derive_endpoints import effective_endpoints
     openai_url = effective_endpoints(base_url, "", openai_base_url)[1]
     if openai_url == base_url.rstrip("/"):
         return models, error, {}
-    models2, error2 = _fetch_models_once(openai_url, api_key)
+    models2, error2 = _fetch_models_once(openai_url, api_key, protocol)
     if error2:
         return None, "%s；改用 OpenAI 端点也失败：%s" % (error, error2), {}
     return models2, None, current_fetch_contexts()
@@ -576,19 +584,24 @@ def _extract_context(item: dict):
     return None
 
 
-def _fetch_models_once(base_url: str, api_key: str):
+def _fetch_models_once(base_url: str, api_key: str, protocol: str = "openai"):
     """向 ``base_url`` 发一次 ``/v1/models`` 请求并解析。返回 ``(models, error)``。
 
     ``models`` 条目**对外恒为 ``{id, label}`` 两键**（INTERFACE §5-3 全等断言）；
     抽到的上下文走线程本地旁路（见 ``_fetch_models_once_ctx``），不进元素。
     """
-    models, error, contexts = _fetch_models_once_ctx(base_url, api_key)
+    models, error, contexts = _fetch_models_once_ctx(base_url, api_key, protocol)
     _stash_contexts(contexts)
     return models, error
 
 
-def _fetch_models_once_ctx(base_url: str, api_key: str):
+def _fetch_models_once_ctx(base_url: str, api_key: str, protocol: str = "openai"):
     """一次 ``/v1/models`` 拉取（含 Anthropic 分页）。返回 ``(models, error, contexts)``。
+
+    请求头按 ``protocol`` 选：``openai``（缺省）只发 ``Authorization: Bearer``；
+    ``anthropic`` 发 ``x-api-key`` + ``anthropic-version``（另带 Bearer 兼容按 Bearer
+    认 key 的中转）。OpenRouter 等 OpenAI 兼容上游收到 ``anthropic-version`` 会切成
+    Anthropic 视图，模型 ID 被加上 ``anthropic/`` 前缀与 ``[1m]`` 后缀，故不能混发。
 
     分页（§5-1）：认顶层 ``has_more``+``last_id``，``&after_id=<last_id>`` 续拉，
     **总上限 500**（到顶即停，不再翻下一页，与现状"静默截断"一致）；多页合并**去重保序**。
@@ -600,6 +613,10 @@ def _fetch_models_once_ctx(base_url: str, api_key: str):
     # 错误只回状态码类别（不回上游 body）。**不做内网 IP 黑名单** —— 本机/LAN 上的 provider
     # 是合法用法（NO_PROXY=127.0.0.1,localhost 是既有事实），黑名单会把正常用法一起砍掉。
     # 同时禁用环境代理（ProxyHandler({})），避免请求被 http_proxy 静默劫持到第三方。
+    if not isinstance(api_key, str):
+        # 非字符串 key 在拼头时会被 %s 转成字符串而**照常发出**（旧实现靠 Request 头校验
+        # 意外拦住数组等类型）；与「请求组装不出来」同一契约，连接前拒发，且不回显值。
+        return (None, _UNSENDABLE, {})
     url = _models_url(base_url)
     from scripts import proxy_upstream   # 与探针同一浏览器式请求头基底（9.7，I 组）
     opener = urllib.request.build_opener(_NoRedirect, urllib.request.ProxyHandler({}))
@@ -612,11 +629,16 @@ def _fetch_models_once_ctx(base_url: str, api_key: str):
             return (None, paging_error, {})
         try:
             page = url + ("?after_id=" + urllib.parse.quote(after, safe="") if after else "")
-            req = urllib.request.Request(page, method="GET", headers=proxy_upstream.browser_headers({
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "Authorization": "Bearer %s" % api_key,
-            }))
+            if protocol == "anthropic":
+                headers = {
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Authorization": "Bearer %s" % api_key,
+                }
+            else:
+                headers = {"Authorization": "Bearer %s" % api_key}
+            req = urllib.request.Request(page, method="GET",
+                                         headers=proxy_upstream.browser_headers(headers))
             with opener.open(req, timeout=_MODELS_TIMEOUT) as resp:
                 raw = resp.read(_MAX_BODY + 1)
         except urllib.error.HTTPError as e:
@@ -736,17 +758,21 @@ def api_model_candidates():
         if not api_key:
             return _err("该 provider 未存 api_key")
         base_url = entry.get("base_url")
+        protocol = pc.entry_protocol(entry)   # 与拉取接口同口径：条目有效协议
         openai_base_url = entry.get("openai_base_url")
         if not pc._valid_base_url(openai_base_url):   # 与既有拉取同口径：不合格视为未设
             openai_base_url = ""
     else:
         base_url, api_key = body.get("base_url"), body.get("api_key")
+        # 显式 protocol 优先；未传则按地址兜底（与 entry_protocol 同规则）
+        protocol = (pc._normalize_protocol(body.get("protocol"))
+                    or pc._protocol_from_base_url(base_url))
         if not pc._valid_base_url(base_url):
             return _err("base_url 必须是 http/https 开头的地址")
         if not isinstance(api_key, str) or not api_key:   # 数组、数字之类：与缺失同样对待
             return _err("api_key required")
 
-    models, error, contexts = _fetch_models_ctx(base_url, api_key, openai_base_url)
+    models, error, contexts = _fetch_models_ctx(base_url, api_key, openai_base_url, protocol)
     clear_fetch_contexts()   # 线程本地的旁路只给写回形态用；这里用返回值，不留残留
     if error:
         return jsonify({"ok": False, "error": error, "candidates": []})

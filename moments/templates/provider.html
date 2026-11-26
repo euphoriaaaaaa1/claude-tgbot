@@ -1413,8 +1413,11 @@ function fetchModelsFor(providerId) {
     if (providerId) {
       body = {provider_id: providerId, query_only: true};
     } else {
+      // 新建时把当前协议选择一并提交：拉取接口按协议选请求头（非 Anthropic 兼容上游
+      // 不能收 anthropic-version，否则会被当成 Anthropic 请求，模型 ID 被改写）
       body = {base_url: document.getElementById('pBaseUrl').value.trim(),
-              api_key: document.getElementById('pApiKey').value};
+              api_key: document.getElementById('pApiKey').value,
+              protocol: document.getElementById('pProtocol').value};
     }
     p = jsonFetch('/api/providers/models', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
@@ -1662,7 +1665,8 @@ document.getElementById('fetchModelsBtn').addEventListener('click', () => {
   openModelDialog(EDIT_ID
     ? {provider_id: EDIT_ID}
     : {base_url: document.getElementById('pBaseUrl').value.trim(),
-       api_key: document.getElementById('pApiKey').value});
+       api_key: document.getElementById('pApiKey').value,
+       protocol: document.getElementById('pProtocol').value});
 });
 // 新建表单里地址一变，之前勾的模型就不再对得上这个地址，作废
 document.getElementById('pBaseUrl').addEventListener('input', () => { if (!EDIT_ID) setFormModels(null); });
