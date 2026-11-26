@@ -482,6 +482,38 @@ class ComicFieldError(ValueError):
         super().__init__(f"{key} 不合法：{key} 只能是 true 或 false，收到 {_shown(value)}")
 
 
+COMIC_TEXT_MARK = re.compile(r"\bText:")
+COMIC_PANEL_MARK = re.compile(r"\bPanel\s*\d", re.IGNORECASE)
+COMIC_TEXT_EXAMPLE = (
+    '正确写法示例："prompt": "…, Panel 1, …, narration box at the top of panel 1, '
+    'Panel 2, …, sound effects beside them in panel 2, 2girls. Text: 旁白原句\\n\\n拟音原句"'
+    "（各格描述里不写 Text:，旁白、拟音、画外对白的原句统一放在最后唯一的 Text: 之后，用空行分隔）"
+)
+
+
+class ComicTextError(ValueError):
+    """漫画 prompt 里 Text: 不止一处或其后还有分格描述：NovelAI 把 Text: 之后的全部内容当文字画进图里。"""
+
+    example = COMIC_TEXT_EXAMPLE
+
+
+def check_comic_text(prompt_body: str) -> None:
+    """漫画模式：整段 prompt 只许一处 Text:，且其后不再出现 Panel 编号。角色项里的 Text: 不在此查。"""
+    marks = [m.start() for m in COMIC_TEXT_MARK.finditer(prompt_body)]
+    if not marks:
+        return
+    if len(marks) > 1:
+        raise ComicTextError(
+            f"漫画 prompt 里写了 {len(marks)} 处 Text:，只能写一处并放在 prompt 最末尾，"
+            "否则其后的画面描述会被当成文字画进图里"
+        )
+    if COMIC_PANEL_MARK.search(prompt_body, marks[0]):
+        raise ComicTextError(
+            "漫画 prompt 的 Text: 之后还有 Panel 描述，Text: 只能放在 prompt 最末尾，"
+            "否则其后的画面描述会被当成文字画进图里"
+        )
+
+
 def check_comic_fields(source: Any) -> dict[str, bool]:
     """校验本次写出的 comic、auto_compose（先 comic 后 auto_compose，遇到第一个错就抛 ComicFieldError）。
 
@@ -778,6 +810,8 @@ def build_prompts(
     # intent、reply_text、上一张的回复原文、画风前缀都不参与；"上一张是色图"本身也不沿用。
     prompt_body = dedupe_nsfw_tags(prompt_body)
     nsfw_enabled = count_nsfw_tags(prompt_body) > 0
+    if comic_fields["comic"]:
+        check_comic_text(prompt_body)
 
     if normalized.get("override_full_prompt"):
         final_positive = prompt_body
