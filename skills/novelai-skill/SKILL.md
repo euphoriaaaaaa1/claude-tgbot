@@ -296,7 +296,7 @@ compatibility:
 - 每格描述写明景别、镜头、场景以及该格所有可见人物的动作与位置；特写格按「特写」写。同一格只写一个时刻。
 - `characters` 为每一格中每一个可见人物各写一项。同一人物出现在几格就写几项，每项完整写出外貌与服装。`position_mode` 写 manual，`center` 落在该人物所在格的区域内。
 - 对白写在说话人那一项的末尾，格式为 `speech bubble. Text: 原句`；心声用 thought bubble，拟音用 sound effects。`Text:` 之后只写原句，不加引号或括号，不再写任何视觉词；一项只写一个 `Text:`，同一人在同一格说多句时用空行分隔。画内人物的对白不写在 `prompt` 中。
-- 旁白、拟音与画外对白不属于画内人物，写在 `prompt` 末尾的 `Text:` 之后，多条用空行分隔。旁白写 narration；拟音写 sound effects，不加气泡，直接嵌在格内；画外对白写 speech bubble，并用一句英文完整句写明气泡贴在声源一侧的格边、尾巴指向格外。这些类型词与位置句写在 `Text:` 之前。
+- 旁白、拟音与画外对白不属于画内人物，统一写在 `prompt` 最末尾；整段 `prompt` 只出现一次 `Text:`，各格描述中不写 `Text:`，多条用空行分隔。旁白写 narration；拟音写 sound effects，不加气泡，嵌在所属格内；画外对白写 speech bubble，并用一句英文完整句写明气泡贴在声源一侧的格边、尾巴指向格外。这些类型词与位置句写在对应的格描述中。
 - 同一格内有两人及以上时，说话人那一项的气泡写成 `speech bubble on the left side of her head, tail pointing to her. Text: 原句`；说话人在格内偏右时写 right，男性写 his 与 him。
 - 同一格内不说话的人物，在该人物项和分格描述里都写 listening、closed mouth，不写说话、夸口、比划讲话这类动作，也不写气泡。
 - 单句对白不超过约 20 字，过长时拆成同一人的连续两句。全页对白合计不超过 750 个字符。

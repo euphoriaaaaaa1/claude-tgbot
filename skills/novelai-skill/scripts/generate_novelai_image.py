@@ -28,6 +28,7 @@ from prompt_builder import (  # noqa: E402
     MAX_COMIC_CHARACTERS,
     CharactersError,
     ComicFieldError,
+    ComicTextError,
     build_prompts,
     check_characters,
     check_comic_fields,
@@ -1086,8 +1087,8 @@ def main() -> None:
             state_dir=Path(args.state_dir).expanduser() if args.state_dir else None,
             agent_name=agent_name,
         )
-    except ComicFieldError as exc:
-        # 退出码 3 = "intermediate 的字段写错，按首行改了重跑"：comic、auto_compose 与角色字段共用。
+    except (ComicFieldError, ComicTextError) as exc:
+        # 退出码 3 = "intermediate 的字段写错，按首行改了重跑"：comic、auto_compose、漫画 Text: 位置与角色字段共用。
         sys.stderr.write(f"[novelai] {exc}\n")
         sys.stderr.write(f"[novelai] {exc.example}\n")
         sys.exit(3)
